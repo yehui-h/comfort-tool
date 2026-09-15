@@ -125,7 +125,7 @@ const tailwindSyntax = [
 
 export default [
   {
-    ignores: ["dist/**", "node_modules/**", "coverage/**", "playwright-report/**", "test-results/**"],
+    ignores: ["dist/**", "node_modules/**", "coverage/**"],
   },
   {
     ...js.configs.recommended,
