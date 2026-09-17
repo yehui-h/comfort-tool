@@ -79,7 +79,7 @@ while the CBE tool displays fpm — display units were never the library's busin
 ## How to use this plan
 
 Each Phase is designed to be executed in **its own new Claude chat**. When opening a new chat, start with:
-"Read `docs/adr-0001-architecture.md` and `CLAUDE.md`, then execute Phase N".
+"Read `docs/adr/0001-architecture.md` and `CLAUDE.md`, then execute Phase N".
 
 **Model and effort.** Set once with `/model` at the start of each chat; do not change it mid-Phase
 (switching models invalidates the prompt cache).
