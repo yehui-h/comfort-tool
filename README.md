@@ -16,7 +16,7 @@ no backend runtime is required.
 > all thermal-comfort logic lives in the `jsthermalcomfort` library and the app
 > only declares and renders models.
 >
-> - [Architecture decision record](docs/adr-0001-architecture.md)
+> - [Architecture decision record](docs/adr/0001-architecture.md)
 > - [Phased rewrite plan](docs/rewrite-plan.md)
 >
 > The previous implementation is preserved on the `refactor-draft` branch.
