@@ -23,7 +23,6 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    setupFiles: ["./vitest.setup.ts"],
     // .scratch/ holds evidence scripts, not the suite; one runs alone with
     // `npx vitest run --dir .scratch <path>`.
     exclude: [...configDefaults.exclude, ".scratch/**"],
