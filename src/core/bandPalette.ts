@@ -51,5 +51,4 @@ export const chartInk = {
   isoline: "#cbd5e1",
   saturationLine: "#94a3b8",
   marker: "#111827",
-  markerEdge: "#ffffff",
 } as const;
