@@ -55,8 +55,8 @@ const displayUnits = {
   },
   percentage: sameInBothSystems({ symbol: "%", step: 1 }),
   // A ratio of masses: the same number in both systems (the library spells its
-  // IP unit "kg/kg" for the same reason). Only the psychrometric chart's y axis
-  // reads it until humidity entry modes arrive.
+  // IP unit "kg/kg" for the same reason). The psychrometric chart's y axis and
+  // the humidity-ratio entry mode both read it.
   humidityRatio: sameInBothSystems({ symbol: "kg/kg", step: 0.001 }),
   metabolicRate: sameInBothSystems({ symbol: "met", step: 0.1 }),
   clothingInsulation: sameInBothSystems({ symbol: "clo", step: 0.1 }),
