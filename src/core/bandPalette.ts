@@ -131,5 +131,4 @@ export const chartInk = {
   ground: "#ffffff",
   isoline: "#cbd5e1",
   saturationLine: "#94a3b8",
-  markerEdge: "#ffffff",
 } as const;
