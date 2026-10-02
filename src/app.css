@@ -67,4 +67,36 @@
 	html {
 		@apply font-sans;
 	}
+	/* Every page's frame, headings and navigation (ADR-0002 decision 57). How they look is Phase 5c's. */
+	main {
+		padding: 1.5rem;
+	}
+	h1 {
+		font-size: 1.25rem;
+		font-weight: 600;
+	}
+	h2 {
+		font-size: 1rem;
+		font-weight: 600;
+	}
+	nav a {
+		color: var(--muted-foreground);
+		text-decoration: none;
+	}
+	nav a:hover {
+		text-decoration: underline;
+	}
+	nav a[aria-current="page"] {
+		color: var(--foreground);
+		font-weight: 500;
+	}
+	/* A group's name — Standard's heading, the Explore link — one level above the links inside a group. */
+	nav strong.nav-group,
+	nav a.nav-group {
+		color: var(--foreground);
+		font-weight: 600;
+	}
+	nav .nav-item {
+		padding-left: 0.75rem;
+	}
 }

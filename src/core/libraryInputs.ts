@@ -1,147 +1,98 @@
-import { v_relative } from "jsthermalcomfort";
-import { humidityMode, temperatureMode, type HumidityMode, type TemperatureMode } from "./entryModes";
-import { hasHumidityGroup, hasTemperatureGroup, type ModelResult, type RegisteredModel } from "./modelDeclaration";
+import { temperatureMode } from "./entryModes";
+import {
+  hasClothingGroup,
+  hasHumidityGroup,
+  hasTemperatureGroup,
+  takesRelativeAirSpeed,
+  type OptionSpec,
+  type OptionsReader,
+  type RegisteredModel,
+  type Values,
+} from "./modelDeclaration";
 import { quantities, type Quantity } from "./quantities";
-
-/**
- * The slice of an input slot this module reads. A plain interface, so core/
- * never imports state/ (ADR §5).
- */
-export interface SlotInputs {
-  readonly values: ReadonlyMap<Quantity, number>;
-  readonly humidity: { readonly mode: HumidityMode; readonly value: number };
-  readonly temperature: { readonly mode: TemperatureMode };
-}
+import { dynamicClothingOf, expandOperative, relativeAirSpeedOf, relativeHumidityOf, requireValue, type Slot } from "./slot";
 
 const q = quantities;
-
-export function requireValue(values: ReadonlyMap<Quantity, number>, quantity: Quantity): number {
-  const value = values.get(quantity);
-  if (value === undefined) {
-    throw new Error(`Slot has no value for ${quantity.label}`);
-  }
-  return value;
-}
-
-/**
- * The slot's dry-bulb temperature: the entered `tdb`, or the operative entry
- * standing in for it under operative mode.
- */
-export function resolvedTdb(slot: SlotInputs): number {
-  return slot.values.get(q.tdb) ?? requireValue(slot.values, q.operative_tmp);
-}
-
-/**
- * The slot's humidity as the library's `rh`, converted from whatever the user
- * entered at the slot's dry-bulb temperature (the operative temperature under
- * operative entry, ADR §4.5). The one place the mode's conversion is invoked.
- */
-export function relativeHumidityOf(slot: SlotInputs): number {
-  return slot.humidity.mode.toRelativeHumidity(slot.humidity.value, resolvedTdb(slot));
-}
 
 /**
  * Entry-group representations → the SI quantities the library model takes
  * (ADR §4.5): operative temperature expands to `tdb = tr = operative_tmp`, the
- * humidity entry becomes `rh`, and `v` becomes `vr` when the model asks for it.
+ * humidity entry becomes `rh` at `atmosphericPressure`, and `v` becomes `vr`
+ * when the model asks for it, where an entered `vr` is handed over as it is
+ * and nothing is derived (ADR-0002 decision 54). A model with the clothing
+ * entry group is given the dynamic clothing insulation under `clo`, the
+ * library's key for it: the entered clothing insulation corrected by the rule
+ * of the model's standard, or an entered dynamic one as it is. So `clo` among
+ * the resolved values is the library's, and among a slot's the entry. No
+ * `p_atm` is filled: no registered model takes one (ADR-0002 decision 49).
  */
-export function resolveQuantities(slot: SlotInputs, model: RegisteredModel): Map<Quantity, number> {
+export function resolveQuantities(slot: Slot, model: RegisteredModel, atmosphericPressure: number): Map<Quantity, number> {
   const resolved = new Map(slot.values);
 
   if (hasTemperatureGroup(model) && slot.temperature.mode === temperatureMode.operative) {
-    const operative = requireValue(resolved, q.operative_tmp);
-    resolved.set(q.tdb, operative);
-    resolved.set(q.tr, operative);
-    resolved.delete(q.operative_tmp);
+    expandOperative(resolved);
   }
 
   if (hasHumidityGroup(model)) {
-    resolved.set(q.rh, relativeHumidityOf(slot));
+    resolved.set(q.rh, relativeHumidityOf(slot, atmosphericPressure));
   }
 
-  if (model.relativeAirSpeed) {
-    resolved.set(q.vr, v_relative(requireValue(resolved, q.v), requireValue(resolved, q.met)));
+  if (takesRelativeAirSpeed(model)) {
+    resolved.set(q.vr, relativeAirSpeedOf(slot));
     resolved.delete(q.v);
+  }
+
+  if (hasClothingGroup(model)) {
+    resolved.set(q.clo, dynamicClothingOf(slot, model));
+    resolved.delete(q.clo_dynamic);
   }
 
   return resolved;
 }
 
 /**
- * The keyed record `run` takes: SI values keyed by `Quantity.key`. Besides
- * shareLink, this is the only place in the app that reads `Quantity.key` in
- * this direction (ADR §4.0). The declaration's own `run` hardcodes
+ * The values a declaration reads for `slot`, in `run` and in a polygons
+ * chart's `comfortZones`: its resolved quantities, wrapped by {@link valuesReader}.
+ * On the `run` side, the declaration hardcodes
  * `limit_inputs: false` — `core/applicability.ts` gates entered values
  * against `_INFO` before calling, and the library then always returns numbers
  * rather than NaN, the behaviour of the deployed CBE tool. The rows a run
- * still breaks (derived, output, or the `v` row when `vr = v + 0.3(met − 1)`
- * breaks it while the entered `v` does not) are reported, not gated, by
- * `applicability.derivedViolations` and `applicability.outputViolations`.
+ * still breaks (derived, output, or the air-speed row when the relative air
+ * speed breaks a limit the gate does not hold the entry to) come back on the result's
+ * `warnings` and are reported, not gated, by `applicability.violationRows`.
  */
-export function toLibraryInputs(slot: SlotInputs, model: RegisteredModel): Record<string, number> {
-  return Object.fromEntries([...resolveQuantities(slot, model)].map(([quantity, value]) => [quantity.key, value]));
+export function toLibraryInputs(slot: Slot, model: RegisteredModel, atmosphericPressure: number): Values {
+  return valuesReader(resolveQuantities(slot, model, atmosphericPressure));
 }
 
 /**
- * The mirror read: a quantity's value off the model's own result object, by
- * key. `undefined` for a key the result does not carry. The one cast onto
- * `ModelResult`'s deliberately unindexed `object` (`core/modelDeclaration.ts`).
+ * `values` as the object a declaration's `run` reads: one getter per
+ * `Quantity`, under its key, and a throw naming the quantity the map does not
+ * carry (ADR-0002 decision 34). Never a silent `undefined` — a missing input
+ * that reaches the library unnoticed is the failure this shape exists to rule
+ * out.
  */
-export function resultValue(result: ModelResult, quantity: Quantity): number | string | undefined {
-  return (result as Record<string, number | string>)[quantity.key];
+export function valuesReader(values: ReadonlyMap<Quantity, number>): Values {
+  const object = {};
+  for (const [key, quantity] of Object.entries(quantities)) {
+    Object.defineProperty(object, key, { enumerable: true, get: () => requireValue(values, quantity) });
+  }
+  // `defineProperty` cannot tell the compiler what it added; the loop above
+  // defines exactly the table's keys, which is what `Values` promises.
+  return object as Values;
 }
 
 /**
- * The quantities the user actually types, in panel order: the model's inputs
- * with its temperature rows replaced by the current mode's. The input panel
- * lays these out and the dynamic chart offers them as axes.
+ * `options` as the reader a declaration's `run` asks: the boolean the slot
+ * holds for the option, and a throw naming an option the map does not carry,
+ * for the reason {@link valuesReader} gives (ADR-0002 decision 36).
  */
-export function enteredQuantities(model: RegisteredModel, mode: TemperatureMode): Quantity[] {
-  const separate: readonly Quantity[] = temperatureMode.separate.panel;
-  const rows: Quantity[] = [];
-  for (const { quantity } of model.inputs) {
-    if (!separate.includes(quantity)) {
-      rows.push(quantity);
-    } else if (quantity === separate[0]) {
-      rows.push(...mode.panel);
+export function optionsReader(options: ReadonlyMap<OptionSpec, boolean>): OptionsReader {
+  return (option) => {
+    const value = options.get(option);
+    if (value === undefined) {
+      throw new Error(`Slot has no value for ${option.label}`);
     }
-  }
-  return rows;
-}
-
-/**
- * What the user entered for `quantity`, humidity included. `rh` is answered
- * in every mode — the dynamic chart sweeps and marks the library's `rh`, not
- * the entered representation.
- */
-export function enteredValue(slot: SlotInputs, quantity: Quantity): number | undefined {
-  if (quantity === slot.humidity.mode.quantity) {
-    return slot.humidity.value;
-  }
-  if (quantity === q.rh) {
-    return relativeHumidityOf(slot);
-  }
-  return slot.values.get(quantity);
-}
-
-/**
- * The same slot with some entered values replaced — how the dynamic chart
- * sweeps its axes. Replacing before resolution keeps the derivations honest:
- * an overridden `v` is still turned into `vr`, an overridden `operative_tmp`
- * still expands to `tdb = tr`.
- */
-export function withEnteredValues(slot: SlotInputs, overrides: ReadonlyMap<Quantity, number>): SlotInputs {
-  const values = new Map(slot.values);
-  let humidity = slot.humidity;
-  for (const [quantity, value] of overrides) {
-    if (quantity === humidity.mode.quantity) {
-      humidity = { mode: humidity.mode, value };
-    } else if (quantity === q.rh) {
-      // An rh sweep overrides the humidity entry outright: the chart's axis is the library's rh.
-      humidity = { mode: humidityMode.rh, value };
-    } else {
-      values.set(quantity, value);
-    }
-  }
-  return { values, humidity, temperature: slot.temperature };
+    return value;
+  };
 }

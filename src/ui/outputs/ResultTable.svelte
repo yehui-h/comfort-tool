@@ -1,67 +1,41 @@
 <script lang="ts">
-  import { warningFor, type ViolationRow } from "$lib/core/applicability";
-  import { colorForBand } from "$lib/core/bandPalette";
-  import { resultValue } from "$lib/core/libraryInputs";
-  import type { ModelResult, RegisteredModel } from "$lib/core/modelDeclaration";
-  import { formatNumber } from "$lib/core/numberFormat";
-  import { quantityFor, type Quantity } from "$lib/core/quantities";
+  import { splitViolations, warningFor } from "$lib/core/applicability";
+  import type { RegisteredModel } from "$lib/core/modelDeclaration";
+  import { classifiedOutputs, formatResultCell } from "$lib/core/resultCell";
   import { standards } from "$lib/core/standard";
-  import { displayUnitFor } from "$lib/core/units";
   import type { UnitSystem } from "$lib/core/unitSystem";
+  import type { SlotOutputs } from "$lib/state/compute.svelte";
   import { copy } from "$lib/text/copy";
   import * as Table from "$lib/ui/primitives/table";
 
   interface Props {
     model: RegisteredModel;
-    /** The slot's last valid result; `null` before the first run. */
-    result: ModelResult | null;
+    /** One row per compared slot, in slot order. */
+    rows: readonly SlotOutputs[];
     unitSystem: UnitSystem;
-    slotName: string;
-    outOfRange: boolean;
-    violations: readonly ViolationRow[];
+    /** While Compare is on, a row wears its slot's hue and a caption line names the row it is about. */
+    compare: boolean;
   }
 
-  let { model, result, unitSystem, slotName, outOfRange, violations }: Props = $props();
-
-  interface ClassifiedOutput {
-    readonly quantity: Quantity;
-    readonly category: string | number;
-    readonly color: string | undefined;
-  }
+  let { model, rows, unitSystem, compare }: Props = $props();
 
   // ADR §4.3: the Compliance column appears only when the model has a
-  // classified output or a broken output row. Colour a category by its
-  // position in the output's own classifier (ADR-0002 decision 8).
-  // An output-role violation also opens the column: a PMV of 2.4 is shown, with
-  // the row it broke as its caveat.
-  const classified = $derived<readonly ClassifiedOutput[]>(
-    result
-      ? Object.entries(model.info.outputs).flatMap(([key, variable]) => {
-          const classifier = variable.classifier;
-          const quantity = classifier ? quantityFor(key) : undefined;
-          if (!classifier || !quantity) {
-            return [];
-          }
-          const category = resultValue(result, quantity);
-          if (category === undefined) {
-            return [];
-          }
-          return [{ quantity, category, color: colorForBand(classifier, category) }];
-        })
-      : [],
+  // classified output or a broken output row. An output-role violation also
+  // opens the column: a PMV of 2.4 is shown, with the row it broke as its caveat.
+  const tableRows = $derived(
+    rows.map((row) => ({
+      row,
+      classified: classifiedOutputs(model, row.result),
+      caveats: splitViolations(row.violations).outputs,
+    })),
   );
-  const caveats = $derived(violations.filter((violation) => violation.role === "output"));
-  const hasCompliance = $derived(classified.length > 0 || caveats.length > 0);
+  const hasCompliance = $derived(tableRows.some((entry) => entry.classified.length > 0 || entry.caveats.length > 0));
+  const uncalculatedRows = $derived(rows.filter((row) => row.notCalculated));
   const standardEntry = $derived(model.standard ? standards.find((entry) => entry.id === model.standard) : undefined);
 
-  function cellText(quantity: Quantity): string {
-    const value = result ? resultValue(result, quantity) : undefined;
-    if (typeof value !== "number" || !Number.isFinite(value)) {
-      return copy.notAvailable;
-    }
-    const unit = displayUnitFor(quantity, unitSystem);
-    const text = formatNumber(unit.fromSi(value));
-    return unit.symbol ? `${text} ${unit.symbol}` : text;
+  function notCalculatedNote(row: SlotOutputs): string {
+    const note = row.result ? copy.outOfRangeKeptResult : copy.outOfRangeEmptyResult;
+    return compare ? copy.slotNote(row.badge.name, note) : note;
   }
 </script>
 
@@ -79,31 +53,44 @@
       </Table.Row>
     </Table.Header>
     <Table.Body>
-      <Table.Row>
-        <Table.Cell>{slotName}</Table.Cell>
-        {#if hasCompliance}
+      {#each tableRows as { row, classified, caveats } (row)}
+        <Table.Row>
           <Table.Cell>
-            {#each classified as entry (entry.quantity)}
+            {#if compare}
               <span class="band">
-                <span class="swatch" style:background-color={entry.color}></span>
-                {entry.category}
+                <span class="swatch" style:background-color={row.badge.hue.zoneLine}></span>
+                {row.badge.name}
               </span>
-            {/each}
-            {#each caveats as violation (violation)}
-              <span class="band caveat">{warningFor(violation, unitSystem)}</span>
-            {/each}
+            {:else}
+              {row.badge.name}
+            {/if}
           </Table.Cell>
-        {/if}
-        {#each model.table as quantity (quantity)}
-          <Table.Cell>{cellText(quantity)}</Table.Cell>
-        {/each}
-      </Table.Row>
+          {#if hasCompliance}
+            <Table.Cell>
+              {#each classified as entry (entry.quantity)}
+                <span class="band">
+                  {#if entry.color}
+                    <span class="swatch" style:background-color={entry.color}></span>
+                  {/if}
+                  {entry.quantity.label}: {entry.category}
+                </span>
+              {/each}
+              {#each caveats as violation (violation)}
+                <span class="band caveat">{warningFor(violation, unitSystem)}</span>
+              {/each}
+            </Table.Cell>
+          {/if}
+          {#each model.table as quantity (quantity)}
+            <Table.Cell>{formatResultCell(row.result, quantity, unitSystem)}</Table.Cell>
+          {/each}
+        </Table.Row>
+      {/each}
     </Table.Body>
-    {#if outOfRange || standardEntry}
+    {#if uncalculatedRows.length > 0 || standardEntry}
       <Table.Caption>
-        {#if outOfRange}<span>{copy.outOfRange}</span>{/if}
+        {#each uncalculatedRows as row (row)}<span class="note">{notCalculatedNote(row)}</span>{/each}
         {#if standardEntry}
-          <span class="edition">{copy.standardCaption(standardEntry.displayName, standardEntry.year)}</span>
+          <span class="standard">{copy.standardCaption(standardEntry.displayName, standardEntry.year)}</span>
         {/if}
       </Table.Caption>
     {/if}
@@ -140,7 +127,8 @@
     white-space: normal;
   }
 
-  .edition:not(:first-child) {
+  .note:not(:first-child),
+  .standard:not(:first-child) {
     margin-left: 0.75em;
   }
 </style>

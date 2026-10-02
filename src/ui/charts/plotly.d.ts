@@ -12,12 +12,6 @@ declare module "plotly.js-cartesian-dist-min" {
   export type PlotlyAnnotation = Record<string, unknown>;
 
   interface PlotlyModule {
-    newPlot(
-      element: HTMLElement,
-      data: readonly PlotlyData[],
-      layout?: PlotlyLayout,
-      config?: PlotlyConfig,
-    ): Promise<unknown>;
     react(
       element: HTMLElement,
       data: readonly PlotlyData[],
@@ -25,6 +19,10 @@ declare module "plotly.js-cartesian-dist-min" {
       config?: PlotlyConfig,
     ): Promise<unknown>;
     purge(element: HTMLElement): void;
+    Plots: {
+      /** Fits a drawn plot to its element's current size. */
+      resize(element: HTMLElement): Promise<unknown>;
+    };
   }
 
   const Plotly: PlotlyModule;

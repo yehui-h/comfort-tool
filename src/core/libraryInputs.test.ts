@@ -1,148 +1,165 @@
 import { describe, expect, it } from "vitest";
-import { v_relative } from "jsthermalcomfort";
-import { Standard } from "jsthermalcomfort";
-import { pmvIso } from "$lib/models/pmvIso";
-import { humidityMode, temperatureMode } from "./entryModes";
-import { enteredQuantities, enteredValue, toLibraryInputs, withEnteredValues, type SlotInputs } from "./libraryInputs";
-import { quantities, type Quantity } from "./quantities";
+import { clo_dynamic_ashrae, clo_dynamic_iso, v_relative } from "jsthermalcomfort";
+import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
+import { pmvPpdIso } from "$lib/models/pmvPpdIso";
+import { enteredSlotFor } from "./declarationTestSlots";
+import { humidityMode, type HumidityMode } from "./entryModes";
+import { optionsReader, resolveQuantities, toLibraryInputs, valuesReader } from "./libraryInputs";
+import type { OptionSpec } from "./modelDeclaration";
+import { DEFAULT_ATMOSPHERIC_PRESSURE, quantities, type Quantity } from "./quantities";
+import { relativeHumidityOf, startingSlot, type Slot } from "./slot";
 
 const q = quantities;
 
-function separateSlot(overrides: Partial<Record<"tdb" | "tr" | "v" | "met" | "clo", number>> = {}): SlotInputs {
-  const values = { tdb: 25, tr: 25, v: 0.1, met: 1.1, clo: 0.5, ...overrides };
-  return {
-    values: new Map<Quantity, number>([
-      [q.tdb, values.tdb],
-      [q.tr, values.tr],
-      [q.v, values.v],
-      [q.met, values.met],
-      [q.clo, values.clo],
-    ]),
-    humidity: { mode: humidityMode.rh, value: 50 },
-    temperature: { mode: temperatureMode.separate },
-  };
-}
+/** PMV (ISO 7730)'s own defaults, which the slots below start from. */
+const { tdb, v, met } = valuesReader(startingSlot(pmvPpdIso).values);
+const rh = relativeHumidityOf(startingSlot(pmvPpdIso), DEFAULT_ATMOSPHERIC_PRESSURE);
 
-function operativeSlot(operative: number): SlotInputs {
-  return {
-    values: new Map<Quantity, number>([
-      [q.operative_tmp, operative],
-      [q.v, 0.1],
-      [q.met, 1.1],
-      [q.clo, 0.5],
-    ]),
-    humidity: { mode: humidityMode.rh, value: 50 },
-    temperature: { mode: temperatureMode.operative },
-  };
-}
-
-describe("toLibraryInputs", () => {
-  it("produces exactly the keys the PMV wrapper takes, in SI", () => {
-    const init = toLibraryInputs(separateSlot(), pmvIso);
-    expect(Object.keys(init).sort()).toEqual(["clo", "met", "rh", "tdb", "tr", "vr"]);
-    expect(init.rh).toBe(50);
+describe("resolveQuantities", () => {
+  it("resolves exactly the quantities the PMV wrapper takes, in SI", () => {
+    const resolved = resolveQuantities(startingSlot(pmvPpdIso), pmvPpdIso, DEFAULT_ATMOSPHERIC_PRESSURE);
+    expect(new Set(resolved.keys())).toEqual(new Set([q.tdb, q.tr, q.vr, q.rh, q.met, q.clo]));
+    expect(resolved.get(q.rh)).toBe(rh);
   });
 
   it("derives vr with the library's v_relative when the model asks for it", () => {
-    const init = toLibraryInputs(separateSlot({ v: 0.1, met: 1.1 }), pmvIso);
-    expect(init.vr).toBe(v_relative(0.1, 1.1));
-    expect(init.vr).toBeGreaterThan(0.1);
+    const resolved = resolveQuantities(startingSlot(pmvPpdIso), pmvPpdIso, DEFAULT_ATMOSPHERIC_PRESSURE);
+    expect(resolved.get(q.vr)).toBe(v_relative(v, met));
+    expect(resolved.get(q.vr)).toBeGreaterThan(v);
+  });
+
+  it("hands over the entered vr unchanged under relative air speed entry, and derives nothing", () => {
+    const resolved = resolveQuantities(enteredSlotFor(pmvPpdIso, { vr: 0.3, met: 2 }), pmvPpdIso, DEFAULT_ATMOSPHERIC_PRESSURE);
+    expect(resolved.get(q.vr)).toBe(0.3);
+    expect(resolved.has(q.v)).toBe(false);
+  });
+
+  it("gives PMV (ISO 7730) the clothing corrected by ISO 7730's rule, under the library's key for it", () => {
+    for (const entered of [{}, { v: 0.4, met: 2, clo: 1 }]) {
+      const slot = enteredSlotFor(pmvPpdIso, entered);
+      const values = valuesReader(slot.values);
+      const resolved = resolveQuantities(slot, pmvPpdIso, DEFAULT_ATMOSPHERIC_PRESSURE);
+      expect(resolved.get(q.clo)).toBe(clo_dynamic_iso(values.clo, values.met, values.v));
+      expect(resolved.get(q.clo)).not.toBe(values.clo);
+      expect(resolved.has(q.clo_dynamic)).toBe(false);
+    }
+  });
+
+  it("gives PMV (ASHRAE 55) the clothing corrected by ASHRAE 55's rule above 1.2 met, and as entered at or below it", () => {
+    const active = resolveQuantities(enteredSlotFor(pmvPpdAshrae, { met: 2, clo: 1 }), pmvPpdAshrae, DEFAULT_ATMOSPHERIC_PRESSURE);
+    expect(active.get(q.clo)).toBe(clo_dynamic_ashrae(1, 2));
+    expect(active.get(q.clo)).toBe(0.8);
+    for (const met of [1, 1.1, 1.2]) {
+      const resting = resolveQuantities(enteredSlotFor(pmvPpdAshrae, { met, clo: 1 }), pmvPpdAshrae, DEFAULT_ATMOSPHERIC_PRESSURE);
+      expect(resting.get(q.clo), `${met} met`).toBe(1);
+    }
+  });
+
+  it("hands over the entered dynamic clothing insulation unchanged under dynamic clothing entry, and derives nothing", () => {
+    for (const model of [pmvPpdIso, pmvPpdAshrae]) {
+      const resolved = resolveQuantities(enteredSlotFor(model, { clo_dynamic: 0.9, met: 2 }), model, DEFAULT_ATMOSPHERIC_PRESSURE);
+      expect(resolved.get(q.clo), model.info.label).toBe(0.9);
+      expect(resolved.has(q.clo_dynamic), model.info.label).toBe(false);
+    }
+  });
+
+  it("passes the clothing through untouched for a model whose standard has no correction", () => {
+    const uncorrected = { ...pmvPpdIso, standard: undefined };
+    const resolved = resolveQuantities(enteredSlotFor(pmvPpdIso, { met: 2, clo: 1 }), uncorrected, DEFAULT_ATMOSPHERIC_PRESSURE);
+    expect(resolved.get(q.clo)).toBe(1);
   });
 
   it("passes v through untouched when the model does not", () => {
-    const withoutRelative = { ...pmvIso, relativeAirSpeed: false };
-    const init = toLibraryInputs(separateSlot(), withoutRelative);
-    expect(init.v).toBe(0.1);
-    expect(init).not.toHaveProperty("vr");
+    const inputs = Object.fromEntries(Object.entries(pmvPpdIso.info.inputs).filter(([key]) => key !== q.vr.key));
+    const withoutRelative = { ...pmvPpdIso, info: { ...pmvPpdIso.info, inputs } };
+    const resolved = resolveQuantities(startingSlot(pmvPpdIso), withoutRelative, DEFAULT_ATMOSPHERIC_PRESSURE);
+    expect(resolved.get(q.v)).toBe(v);
+    expect(resolved.has(q.vr)).toBe(false);
   });
 
   it("expands operative temperature to tdb = tr", () => {
-    const init = toLibraryInputs(operativeSlot(24), pmvIso);
-    expect(init.tdb).toBe(24);
-    expect(init.tr).toBe(24);
-    expect(init).not.toHaveProperty("operative_tmp");
+    const resolved = resolveQuantities(enteredSlotFor(pmvPpdIso, { operative_tmp: 24 }), pmvPpdIso, DEFAULT_ATMOSPHERIC_PRESSURE);
+    expect(resolved.get(q.tdb)).toBe(24);
+    expect(resolved.get(q.tr)).toBe(24);
+    expect(resolved.has(q.operative_tmp)).toBe(false);
   });
 
-  it("feeds the declared model a finite result end to end", () => {
-    const result = pmvIso.run(toLibraryInputs(separateSlot(), pmvIso));
-    expect(Number.isFinite(result.pmv)).toBe(true);
-    expect(result.tsv).toBeDefined();
+  // ADR §7's acceptance item 9 asks for all five representations.
+  //
+  // The library's `psy_ta_rh` returns `t_dp` and `t_wb` rounded to 0.1 °C, so
+  // entering the dew point it reports and converting back lands 0.055 %rh away
+  // (wet bulb 0.012), while the other three round-trip exactly. The tolerance
+  // is that rounding, measured, not slack for the inverses: the dew point
+  // holds to the whole percent, the wet bulb to one decimal.
+  const roundTripDigits = new Map<HumidityMode, number>([
+    [humidityMode.rh, 9],
+    [humidityMode.humidityRatio, 9],
+    [humidityMode.vapourPressure, 9],
+    [humidityMode.wetBulb, 1],
+    [humidityMode.dewPoint, 0],
+  ]);
+
+  it("derives rh from every humidity representation, at the slot's dry-bulb temperature", () => {
+    // A mode without a tolerance is a mode this test does not round-trip.
+    expect(new Set(roundTripDigits.keys())).toEqual(new Set(Object.values(humidityMode)));
+    for (const [mode, digits] of roundTripDigits) {
+      const slot: Slot = { ...startingSlot(pmvPpdIso), humidity: { mode, value: mode.fromRelativeHumidity(rh, tdb, DEFAULT_ATMOSPHERIC_PRESSURE) } };
+      const resolved = resolveQuantities(slot, pmvPpdIso, DEFAULT_ATMOSPHERIC_PRESSURE);
+      expect(resolved.get(q.rh), mode.id).toBeCloseTo(rh, digits);
+      // Only the library's own rh reaches the call; the entered representation does not.
+      expect(resolved.has(mode.quantity), mode.id).toBe(mode.quantity === q.rh);
+    }
   });
 
-  it("sends no rh to a model whose inputs do not name it", () => {
-    const withoutHumidity = { ...pmvIso, inputs: pmvIso.inputs.filter((entry) => entry.quantity !== q.rh) };
-    expect(toLibraryInputs(separateSlot(), withoutHumidity)).not.toHaveProperty("rh");
+  it("resolves no rh for a model whose inputs do not name it", () => {
+    const withoutHumidity = { ...pmvPpdIso, inputs: pmvPpdIso.inputs.filter((entry) => entry.quantity !== q.rh) };
+    expect(resolveQuantities(startingSlot(pmvPpdIso), withoutHumidity, DEFAULT_ATMOSPHERIC_PRESSURE).has(q.rh)).toBe(false);
   });
 
   it("does not expand an operative entry for a model without separate temperatures", () => {
     const withoutTemperatures = {
-      ...pmvIso,
-      inputs: pmvIso.inputs.filter((entry) => entry.quantity !== q.tdb && entry.quantity !== q.tr),
+      ...pmvPpdIso,
+      inputs: pmvPpdIso.inputs.filter((entry) => entry.quantity !== q.tdb && entry.quantity !== q.tr),
     };
-    const init = toLibraryInputs(operativeSlot(24), withoutTemperatures);
-    expect(init).not.toHaveProperty("tdb");
-    expect(init).not.toHaveProperty("tr");
-    expect(init.operative_tmp).toBe(24);
+    const resolved = resolveQuantities(enteredSlotFor(pmvPpdIso, { operative_tmp: 24 }), withoutTemperatures, DEFAULT_ATMOSPHERIC_PRESSURE);
+    expect(resolved.has(q.tdb)).toBe(false);
+    expect(resolved.has(q.tr)).toBe(false);
+    expect(resolved.get(q.operative_tmp)).toBe(24);
   });
 });
 
-describe("entered values", () => {
-  it("reads the humidity entry from where the slot keeps it", () => {
-    expect(enteredValue(separateSlot(), q.rh)).toBe(50);
-    expect(enteredValue(separateSlot({ tdb: 27 }), q.tdb)).toBe(27);
-    expect(enteredValue(separateSlot(), q.vr)).toBeUndefined();
-  });
-
-  it("lists the panel rows of the current temperature mode", () => {
-    expect(enteredQuantities(pmvIso, temperatureMode.separate)).toEqual([q.tdb, q.tr, q.v, q.rh, q.met, q.clo]);
-    expect(enteredQuantities(pmvIso, temperatureMode.operative)).toEqual([q.operative_tmp, q.v, q.rh, q.met, q.clo]);
-  });
-
-  it("re-derives everything downstream of a swept value", () => {
-    const swept = withEnteredValues(separateSlot(), new Map([[q.v, 0.6]]));
-    expect(toLibraryInputs(swept, pmvIso).vr).toBe(v_relative(0.6, 1.1));
-    expect(separateSlot().values.get(q.v)).toBe(0.1);
-  });
-
-  it("sweeps the humidity entry as well, without touching the original", () => {
-    const slot = separateSlot();
-    const swept = withEnteredValues(slot, new Map([[q.rh, 80]]));
-    expect(toLibraryInputs(swept, pmvIso).rh).toBe(80);
-    expect(slot.humidity.value).toBe(50);
-  });
-
-  it("derives rh from a dew-point entry at the slot's dry-bulb temperature", () => {
-    const dewPoint = humidityMode.dewPoint.fromRelativeHumidity(50, 25);
-    const slot: SlotInputs = { ...separateSlot(), humidity: { mode: humidityMode.dewPoint, value: dewPoint } };
-    expect(toLibraryInputs(slot, pmvIso).rh).toBeCloseTo(50, 0);
-    expect(enteredValue(slot, q.dew_point_tmp)).toBe(dewPoint);
-    expect(enteredValue(slot, q.rh)).toBeCloseTo(50, 0);
-  });
-
-  it("derives rh from the operative temperature under operative entry", () => {
-    const dewPoint = humidityMode.dewPoint.fromRelativeHumidity(50, 24);
-    const slot: SlotInputs = { ...operativeSlot(24), humidity: { mode: humidityMode.dewPoint, value: dewPoint } };
-    expect(toLibraryInputs(slot, pmvIso).rh).toBeCloseTo(50, 0);
-  });
-
-  it("sweeps rh as rh whatever the entry mode", () => {
-    const slot: SlotInputs = { ...separateSlot(), humidity: { mode: humidityMode.dewPoint, value: 10 } };
-    const swept = withEnteredValues(slot, new Map([[q.rh, 70]]));
-    expect(swept.humidity).toEqual({ mode: humidityMode.rh, value: 70 });
-    expect(toLibraryInputs(swept, pmvIso).rh).toBe(70);
-    expect(slot.humidity.mode).toBe(humidityMode.dewPoint);
-  });
-
-  it("expands a swept operative temperature to both temperatures", () => {
-    const swept = withEnteredValues(operativeSlot(24), new Map([[q.operative_tmp, 28]]));
-    const init = toLibraryInputs(swept, pmvIso);
-    expect(init.tdb).toBe(28);
-    expect(init.tr).toBe(28);
+describe("toLibraryInputs", () => {
+  it("feeds the declared model a finite result end to end", () => {
+    const result = pmvPpdIso.run(toLibraryInputs(startingSlot(pmvPpdIso), pmvPpdIso, DEFAULT_ATMOSPHERIC_PRESSURE));
+    expect(Number.isFinite(result.pmv)).toBe(true);
+    expect(result.tsv).toBeDefined();
   });
 });
 
-describe("standard", () => {
-  it("pins ISO 7730:2005", () => {
-    expect(pmvIso.standard).toBe(Standard.iso_7730_2005);
+describe("valuesReader", () => {
+  it("answers each quantity under its own key", () => {
+    const resolved = new Map<Quantity, number>([
+      [q.tdb, 25],
+      [q.rh, 50],
+    ]);
+    const values = valuesReader(resolved);
+    expect([values.rh, values.tdb, values.rh]).toEqual([50, 25, 50]);
+  });
+
+  it("throws naming the quantity the map does not carry, rather than answering undefined", () => {
+    const values = valuesReader(resolveQuantities(startingSlot(pmvPpdIso), pmvPpdIso, DEFAULT_ATMOSPHERIC_PRESSURE));
+    expect(() => values.wme).toThrow(`Slot has no value for ${q.wme.label}`);
+  });
+});
+
+describe("optionsReader", () => {
+  const control: OptionSpec = { key: "airspeed_control", label: "Occupants control the air speed", default: false };
+
+  it("answers what the map holds for the option, not its default", () => {
+    expect(optionsReader(new Map([[control, true]]))(control)).toBe(true);
+  });
+
+  it("throws naming the option the map does not carry, rather than answering undefined", () => {
+    expect(() => optionsReader(new Map())(control)).toThrow(`Slot has no value for ${control.label}`);
   });
 });

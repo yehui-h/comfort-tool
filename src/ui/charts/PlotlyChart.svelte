@@ -1,53 +1,7 @@
-<script lang="ts">
+<script module lang="ts">
   import type { PlotlyAnnotation, PlotlyConfig, PlotlyData, PlotlyLayout } from "plotly.js-cartesian-dist-min";
-  import type { Annotation, BandTrace, ChartSpec, PathTrace, PointTrace } from "$lib/core/charts/chartSpec";
 
-  interface Props {
-    spec: ChartSpec;
-  }
-
-  let { spec }: Props = $props();
-
-  type Plotly = typeof import("plotly.js-cartesian-dist-min").default;
-
-  let element = $state.raw<HTMLElement | undefined>(undefined);
-  let plotly = $state.raw<Plotly | undefined>(undefined);
-  let drawn = false;
-
-  // The bundle is 3 MB, so it loads with the first chart rather than with the
-  // app. The attachment deliberately reads no chart data: it must not tear the
-  // plot down and rebuild it every time an input changes.
-  function mount(node: HTMLElement) {
-    element = node;
-    void import("plotly.js-cartesian-dist-min").then((module) => {
-      plotly = module.default;
-    });
-    return () => {
-      plotly?.purge(node);
-      element = undefined;
-      drawn = false;
-    };
-  }
-
-  // Plotly is an external system, so synchronising it is what $effect is for
-  // (ADR §6). `react` diffs against the drawn figure and keeps the viewport.
-  $effect(() => {
-    const data = toData(spec);
-    const layout = toLayout(spec);
-    const node = element;
-    const api = plotly;
-    if (!node || !api) {
-      return;
-    }
-    if (drawn) {
-      void api.react(node, data, layout, CONFIG);
-    } else {
-      drawn = true;
-      void api.newPlot(node, data, layout, CONFIG);
-    }
-  });
-
-  const CONFIG: PlotlyConfig = {
+  const plotlyConfig: PlotlyConfig = {
     responsive: true,
     displaylogo: false,
     // plotly 4 shows the Chart Studio upload button by default (ADR §2.1).
@@ -64,16 +18,86 @@
       "hoverCompareCartesian",
     ],
   };
+</script>
+
+<script lang="ts">
+  import { chartInk } from "$lib/core/bandPalette";
+  import type {
+    Annotation,
+    AxisSpec,
+    BandFill,
+    BandTrace,
+    ChartSpec,
+    ContourZoneTrace,
+    HoverGridTrace,
+    HoverMode,
+    PathTrace,
+    PointTrace,
+  } from "$lib/core/charts/chartSpec";
+
+  interface Props {
+    spec: ChartSpec;
+  }
+
+  let { spec }: Props = $props();
+
+  type Plotly = typeof import("plotly.js-cartesian-dist-min").default;
+
+  let element = $state.raw<HTMLElement | undefined>(undefined);
+  let plotly = $state.raw<Plotly | undefined>(undefined);
+
+  // The bundle is 3 MB, so it loads with the first chart rather than with the
+  // app. The attachment deliberately reads no chart data: it must not tear the
+  // plot down and rebuild it every time an input changes.
+  function mount(node: HTMLElement) {
+    element = node;
+    void import("plotly.js-cartesian-dist-min").then((module) => {
+      plotly = module.default;
+    });
+    // `responsive` follows the window alone, and the chart's column also
+    // narrows with the window unchanged: when Compare widens the inputs.
+    // Only a drawn plot is resized.
+    const observer = new ResizeObserver(() => {
+      if (node.classList.contains("js-plotly-plot")) {
+        void plotly?.Plots.resize(node);
+      }
+    });
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+      plotly?.purge(node);
+      element = undefined;
+    };
+  }
+
+  // Plotly is an external system, so synchronising it is what $effect is for
+  // (ADR §6). `react` draws the plot on a node that holds none (plotly.js
+  // 4.0.0 hands it to `newPlot`), and afterwards diffs against the drawn
+  // figure and keeps the viewport.
+  $effect(() => {
+    const data = toData(spec);
+    const layout = toLayout(spec);
+    const node = element;
+    const api = plotly;
+    if (!node || !api) {
+      return;
+    }
+    void api.react(node, data, layout, plotlyConfig);
+  });
 
   function toData(source: ChartSpec): PlotlyData[] {
-    return source.traces.map((trace) => {
+    return source.traces.flatMap((trace) => {
       switch (trace.kind) {
         case "path":
-          return pathData(trace);
+          return [pathData(trace)];
         case "point":
-          return pointData(trace);
+          return [pointData(trace)];
         case "bands":
           return bandData(trace);
+        case "hoverGrid":
+          return [hoverGridData(trace)];
+        case "contourZone":
+          return [contourZoneData(trace)];
       }
     });
   }
@@ -89,10 +113,7 @@
       fillcolor: trace.fill,
       name: trace.label ?? "",
       text: trace.label ?? "",
-      // A filled band answers anywhere inside itself rather than at its
-      // vertices, which is what "the field never snaps" means for a polygon.
-      hoveron: "fills",
-      hoverinfo: trace.hover === "off" ? "skip" : "text",
+      hoverinfo: hoverInfo(trace.hover),
       showlegend: false,
     };
   }
@@ -106,38 +127,124 @@
       marker: { color: trace.color, size: 11, line: { color: "#ffffff", width: 2 } },
       name: trace.label,
       // ADR §4.4: the slot markers do not capture the pointer either.
-      hoverinfo: trace.hover === "off" ? "skip" : "text",
+      hoverinfo: hoverInfo(trace.hover),
       text: trace.label,
       showlegend: false,
     };
   }
 
-  function bandData(trace: BandTrace): PlotlyData {
-    return {
-      // ADR §4.4 calls for a contour: a heatmap paints one rectangle per grid
-      // cell, so every band edge came out as a 100-step staircase.
+  /**
+   * One trace per band, each filling that band's own interval of the surface.
+   * ADR §4.4 calls for a contour rather than a heatmap, which paints one
+   * rectangle per grid cell and so draws every boundary as a staircase; and
+   * one contour draws levels at a single fixed spacing, while a classifier's
+   * Edges need not be evenly spaced, so each band brings its own.
+   *
+   * Every band fills up to the top of the contiguous bands from it up, those
+   * that meet Edge to Edge, and they are drawn in band order, so each boundary
+   * among them is one fill's edge laid over the next fill's interior. Two
+   * fills meeting edge to edge can show a seam; a fill over an interior
+   * cannot. Contiguity ends where an uncoloured band was left out, so its
+   * interval stays unpainted rather than showing the fill below it.
+   *
+   * Measured on plotly.js 4.0.0, not read off its documentation: a constraint
+   * paints the side that *fails* the operation. So `"]["` paints inside the
+   * interval and `">"` paints below the value. Nothing in the test suite
+   * renders a chart, which is why the package is pinned to exactly that
+   * version — an upgrade has to re-measure this before it ships.
+   */
+  function bandData(trace: BandTrace): PlotlyData[] {
+    return trace.bands.map((band, index) => ({
       type: "contour",
       x: trace.x,
       y: trace.y,
       z: trace.z,
-      text: trace.z.map((row) => row.map((band) => (band === null ? "" : trace.bands[band].label))),
-      // One flat step per band. zmin/zmax straddle the indices by half a band
-      // so index k lands in the middle of its own step.
-      colorscale: trace.bands.flatMap((band, index) => [
-        [index / trace.bands.length, band.color],
-        [(index + 1) / trace.bands.length, band.color],
-      ]),
-      zmin: -0.5,
-      zmax: trace.bands.length - 0.5,
-      autocontour: false,
-      contours: { start: -0.5, end: trace.bands.length - 0.5, size: 1, coloring: "fill", showlines: false },
+      contours: { ...constrainFill(band, contiguousTopOf(trace.bands, index)), showlines: false },
+      fillcolor: band.color,
       line: { width: 0 },
       connectgaps: false,
       showscale: false,
-      hoverinfo: trace.hover === "off" ? "skip" : "text",
-      hovertemplate: "%{x}, %{y}<br>%{text}<extra></extra>",
+      hoverinfo: hoverInfo(trace.hover),
+      showlegend: false,
+    }));
+  }
+
+  /** The upper Edge of the last of the bands from `bands[index]` up that meet Edge to Edge. */
+  function contiguousTopOf(bands: readonly BandFill[], index: number): number {
+    let top = bands[index].upper;
+    for (const band of bands.slice(index + 1)) {
+      if (band.lower !== top) {
+        break;
+      }
+      top = band.upper;
+    }
+    return top;
+  }
+
+  /** From the band's lower Edge, or from below for the band that is open below, up to `top`. */
+  function constrainFill(band: BandFill, top: number) {
+    return band.lower === undefined
+      ? { type: "constraint", operation: ">", value: top }
+      : { type: "constraint", operation: "][", value: [band.lower, top] };
+  }
+
+  /**
+   * A Comfort zone cut from a scanned field: one contour filling the surface
+   * between the zone's two limits, `"]["` painting inside the interval as
+   * {@link bandData} measured, and outlined where the surface crosses them.
+   */
+  function contourZoneData(trace: ContourZoneTrace): PlotlyData {
+    return {
+      type: "contour",
+      x: trace.x,
+      y: trace.y,
+      z: trace.z,
+      contours: { type: "constraint", operation: "][", value: [trace.lower, trace.upper], showlines: true },
+      fillcolor: trace.fill,
+      line: { color: trace.color, width: trace.width },
+      connectgaps: false,
+      showscale: false,
+      name: trace.label,
+      hoverinfo: hoverInfo(trace.hover),
       showlegend: false,
     };
+  }
+
+  /**
+   * A field's hover readout, written whole by the spec builder: the component
+   * only breaks its lines, and adds no template of its own.
+   */
+  function carryHover(trace: HoverGridTrace) {
+    return {
+      text: trace.hoverText.map((row) => row.map((lines) => lines.join("<br>"))),
+      hoverinfo: hoverInfo(trace.hover),
+      // Plotly tints a hover label with the trace's own colour, a heatmap's
+      // from its colour scale; the chart reads one grey label over every band
+      // and zone.
+      hoverlabel: { bgcolor: "#444444" },
+    };
+  }
+
+  /**
+   * Cells the pointer reads but nobody sees: a heatmap, which answers per cell
+   * as the contour does, drawn fully transparent. Its `z` only sizes the grid.
+   */
+  function hoverGridData(trace: HoverGridTrace): PlotlyData {
+    return {
+      type: "heatmap",
+      x: trace.x,
+      y: trace.y,
+      z: trace.hoverText.map((row) => row.map(() => 0)),
+      opacity: 0,
+      showscale: false,
+      ...carryHover(trace),
+      showlegend: false,
+    };
+  }
+
+  /** What Plotly reads off a trace's hover mode: its text, or nothing at all. */
+  function hoverInfo(mode: HoverMode): "skip" | "text" {
+    return mode === "off" ? "skip" : "text";
   }
 
   function annotation(entry: Annotation): PlotlyAnnotation {
@@ -172,18 +279,17 @@
       showlegend: false,
       hovermode: "closest",
       annotations: source.annotations.map(annotation),
-      plot_bgcolor: "#ffffff",
+      plot_bgcolor: chartInk.ground,
       paper_bgcolor: "rgba(0, 0, 0, 0)",
       xaxis: axis(source.layout.x),
       yaxis: axis(source.layout.y),
     };
   }
 
-  function axis(axisSpec: ChartSpec["layout"]["x"]) {
+  function axis(axisSpec: AxisSpec) {
     return {
       title: { text: axisSpec.title },
       range: [...axisSpec.range],
-      tickformat: axisSpec.tickFormat,
       zeroline: false,
       gridcolor: "#eef1f5",
       linecolor: "#cbd5e1",

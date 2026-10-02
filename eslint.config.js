@@ -14,8 +14,8 @@ import { quantities } from "./src/core/quantities.ts";
 // the boundary is the model-function names themselves, read off the package's
 // `models` namespace. `Standard`, `classifyFromBins` and the psychrometrics
 // stay importable everywhere; only the model functions are confined to
-// src/models/ (which binds `run` and reads label/limits off them) and
-// src/workers/ (the only caller). A new upstream model needs no lint edit.
+// src/models/, which binds `run` and reads label/limits off them. A new
+// upstream model needs no lint edit.
 const libraryModelFunctionNames = Object.entries(jsthermalcomfort.models)
   .filter(([name, value]) => typeof value === "function" && name !== "classifyFromBins")
   .map(([name]) => name);
@@ -25,7 +25,7 @@ const libraryModelImports = {
     {
       name: "jsthermalcomfort",
       importNames: libraryModelFunctionNames,
-      message: "Library model functions are referenced only in src/models/ and called only in src/workers/.",
+      message: "Library model functions are referenced only in src/models/.",
     },
   ],
 };
@@ -37,10 +37,39 @@ const coreBoundary = {
   message: "core/ is plain TypeScript: no svelte, state, ui or routes.",
 };
 
+// ADR-0002 decision 24: the temporary library is written so that moving it
+// upstream is a file cut, so it may import jsthermalcomfort and its own files
+// and nothing else from src/. core/ importing it is fine; the reverse is not.
+const temporaryLibraryBoundary = {
+  group: ["$lib", "$lib/**", "..", "../**"],
+  message: "src/temporary-library/ imports jsthermalcomfort and its own files only (ADR-0002 decision 24).",
+};
+
+// ADR-0002 decision 40: a model is added, changed or removed in its own
+// declaration file and one registry line, so one declaration importing
+// another would make that model's file a dependency of the other's. Two
+// declarations that share inputs copy them. A declaration may not import the
+// registry either: that makes every other declaration its dependency and
+// closes a cycle. The registry imports every declaration by design and is
+// exempt below. Patterns see the import string, not the resolved file, so any
+// path through a `models` segment is barred, and a file in a subdirectory
+// also may not climb one level with `../`, which lands back in src/models/.
+const declarationMessage =
+  "A declaration never imports another declaration, nor the registry; copy what they share (ADR-0002 decision 40).";
+const declarationBoundary = {
+  group: [".", "./", "./**", "**/models", "**/models/**"],
+  message: declarationMessage,
+};
+const declarationSubdirectoryBoundary = {
+  regex: "^\\.\\.(/([^.]|$)|$)",
+  message: declarationMessage,
+};
+
 // ADR §4.4: the moment the chart component knows what a model is, every new
-// model starts needing an edit here.
+// model starts needing an edit here. The chart's request names a model and a
+// slot, so it is the builders' and not the component's (ADR-0002 decision 50).
 const chartBoundary = {
-  group: ["**/models/**", "**/state/**", "jsthermalcomfort"],
+  group: ["**/models/**", "**/state/**", "jsthermalcomfort", "**/charts/chartRequest"],
   message: "Chart components consume a ChartSpec and nothing else.",
 };
 
@@ -82,14 +111,17 @@ const untrackSyntax = [
 ];
 
 // Narrower than it looks: in state/ an $effect exists to synchronise something
-// outside Svelte, and there is nothing outside Svelte in that directory. In ui/
-// the same assignment is often legitimate (writing to a DOM node), so the rule
-// is not applied there.
+// outside Svelte, and there is nothing outside Svelte in that directory, nor in
+// a page, which composes state and components and talks to the router through
+// navigation.ts (ADR-0002 decision 43). In ui/ the same assignment is often
+// legitimate (writing to a DOM node), so the rule is not applied there. The
+// rule is syntactic: it sees an assignment written inside the effect, not one
+// made by a function the effect calls, which stays with review.
 const effectPuritySyntax = [
   {
     selector: "CallExpression[callee.name='$effect'] AssignmentExpression",
     message:
-      "An $effect in state/ must not assign. Derived values belong in $derived (ADR §6, Svelte Best practices).",
+      "An $effect in state/ or in a page must not assign. Derived values belong in $derived (ADR §6, Svelte Best practices).",
   },
 ];
 
@@ -204,9 +236,41 @@ export default [
     },
   },
   {
+    // Pages, like state/, have nothing outside Svelte to synchronise: the
+    // address reaches the session through the router's after-load hook, not
+    // an $effect (ADR-0002 decision 43). This block catches only an assignment
+    // written inside a page's effect, as effectPuritySyntax says.
+    files: ["src/routes/**/*.svelte"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...legacySvelteSyntax,
+        ...wireStringSyntax,
+        ...tailwindSyntax,
+        ...untrackSyntax,
+        ...effectPuritySyntax,
+      ],
+    },
+  },
+  {
     // Model declarations bind `run: io.<model>` and read label/limits off the
-    // library model function; the worker is the one place that calls them.
-    files: ["src/models/**/*.ts", "src/workers/**/*.ts"],
+    // library model function. Compute is synchronous and calls `run` through
+    // the declaration, so no other directory names one (ADR-0002 decision 29).
+    // The registry is the one file here that imports declarations.
+    files: ["src/models/**/*.ts"],
+    ignores: ["src/models/index.ts"],
+    rules: {
+      "no-restricted-imports": ["error", { patterns: [declarationBoundary] }],
+    },
+  },
+  {
+    files: ["src/models/*/**/*.ts"],
+    rules: {
+      "no-restricted-imports": ["error", { patterns: [declarationBoundary, declarationSubdirectoryBoundary] }],
+    },
+  },
+  {
+    files: ["src/models/index.ts"],
     rules: {
       "no-restricted-imports": "off",
     },
@@ -224,6 +288,16 @@ export default [
     rules: {
       "no-restricted-imports": "off",
       "no-restricted-syntax": "off",
+    },
+  },
+  {
+    // After the test block on purpose: the fence holds for the directory's
+    // tests too, since they move upstream with it. The model-function rule
+    // does not: this is library code, and calls a model as the library's own
+    // functions do (ADR-0002 decision 24).
+    files: ["src/temporary-library/**/*.ts"],
+    rules: {
+      "no-restricted-imports": ["error", { patterns: [temporaryLibraryBoundary] }],
     },
   },
 ];

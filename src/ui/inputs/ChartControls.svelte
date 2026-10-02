@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { dynamicAxisQuantities, resolvedAxes } from "$lib/core/charts/dynamicChart";
-  import { chartType } from "$lib/core/chartType";
-  import type { RegisteredModel } from "$lib/core/modelDeclaration";
-  import type { ChartState, InputSlot } from "$lib/state/session.svelte";
+  import type { ChartAxes, RegisteredModel } from "$lib/core/modelDeclaration";
+  import type { Quantity } from "$lib/core/quantities";
+  import type { DrawnAxes } from "$lib/state/compute.svelte";
+  import type { ChartState } from "$lib/state/session.svelte";
   import { copy } from "$lib/text/copy";
   import Inline from "$lib/ui/layout/Inline.svelte";
   import { Button } from "$lib/ui/primitives/button";
@@ -11,69 +11,56 @@
 
   interface Props {
     model: RegisteredModel;
-    inputSlot: InputSlot;
     chart: ChartState;
+    /** The axes of the chart on screen, not of the live slot; `null` hides the picker. */
+    drawnAxes: DrawnAxes | null;
   }
 
-  let { model, inputSlot, chart }: Props = $props();
+  let { model, chart, drawnAxes }: Props = $props();
 
   const id = $props.id();
-  // Options are addressed by position in this list rather than by any string
+  // Options are addressed by position in these lists rather than by any string
   // id: a <select> value is text, and a Quantity is compared by identity.
-  const axisChoices = $derived(dynamicAxisQuantities(model, inputSlot.temperature.mode));
-  const showAxes = $derived(chart.type === chartType.dynamic);
-  // The chart remembers the axis the user picked; the entry mode decides which
-  // temperature quantity that actually is right now.
-  const selected = $derived(resolvedAxes(model, chart.axes, inputSlot.temperature.mode));
   // ADR §4.4: each axis excludes the quantity the other one holds — x === y is
   // not a chart.
-  const xChoices = $derived(axisChoices.filter((quantity) => quantity !== selected.y));
-  const yChoices = $derived(axisChoices.filter((quantity) => quantity !== selected.x));
+  const xChoices = $derived(drawnAxes?.choices.filter((quantity) => quantity !== drawnAxes.selected.y) ?? []);
+  const yChoices = $derived(drawnAxes?.choices.filter((quantity) => quantity !== drawnAxes.selected.x) ?? []);
 </script>
 
 <Inline gap="4" align="baseline">
   <Inline gap="2" align="center">
     <span>{copy.chart}</span>
-    {#each model.charts as declaration (declaration.type)}
+    {#each model.charts as declaredChart (declaredChart.type)}
       <Button
         size="sm"
-        variant={chart.type === declaration.type ? "default" : "outline"}
-        onclick={() => chart.setType(declaration.type)}
+        variant={chart.type === declaredChart.type ? "default" : "outline"}
+        onclick={() => (chart.type = declaredChart.type)}
       >
-        {declaration.type.title}
+        {declaredChart.type.title}
       </Button>
     {/each}
   </Inline>
 
-  {#if showAxes}
+  {#if drawnAxes}
     <Inline gap="2" align="center">
-      <Label for="{id}-x">{copy.xAxis}</Label>
-      <Select.Root
-        type="single"
-        value={String(xChoices.indexOf(selected.x))}
-        onValueChange={(value) => chart.setAxes({ x: xChoices[Number(value)] })}
-      >
-        <Select.Trigger id="{id}-x">{selected.x.label}</Select.Trigger>
-        <Select.Content>
-          {#each xChoices as quantity, index (quantity)}
-            <Select.Item value={String(index)} label={quantity.label} />
-          {/each}
-        </Select.Content>
-      </Select.Root>
-
-      <Label for="{id}-y">{copy.yAxis}</Label>
-      <Select.Root
-        type="single"
-        value={String(yChoices.indexOf(selected.y))}
-        onValueChange={(value) => chart.setAxes({ y: yChoices[Number(value)] })}
-      >
-        <Select.Trigger id="{id}-y">{selected.y.label}</Select.Trigger>
-        <Select.Content>
-          {#each yChoices as quantity, index (quantity)}
-            <Select.Item value={String(index)} label={quantity.label} />
-          {/each}
-        </Select.Content>
-      </Select.Root>
+      {@render axisPicker("x", copy.xAxis, xChoices, drawnAxes.selected.x)}
+      {@render axisPicker("y", copy.yAxis, yChoices, drawnAxes.selected.y)}
     </Inline>
   {/if}
 </Inline>
+
+{#snippet axisPicker(axis: keyof ChartAxes, label: string, choices: readonly Quantity[], selected: Quantity)}
+  <Label for="{id}-{axis}">{label}</Label>
+  <Select.Root
+    type="single"
+    value={String(choices.indexOf(selected))}
+    onValueChange={(value) => chart.setAxes({ [axis]: choices[Number(value)] })}
+  >
+    <Select.Trigger id="{id}-{axis}">{selected.label}</Select.Trigger>
+    <Select.Content>
+      {#each choices as quantity, index (quantity)}
+        <Select.Item value={String(index)} label={quantity.label} />
+      {/each}
+    </Select.Content>
+  </Select.Root>
+{/snippet}

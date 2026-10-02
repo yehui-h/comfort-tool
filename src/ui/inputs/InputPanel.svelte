@@ -1,95 +1,74 @@
 <script lang="ts">
-  import { enteredBound, warningFor, type ViolationRow } from "$lib/core/applicability";
-  import { humidityMode, temperatureMode, type HumidityMode } from "$lib/core/entryModes";
-  import { enteredQuantities, enteredValue } from "$lib/core/libraryInputs";
-  import { hasHumidityGroup, hasTemperatureGroup, type RegisteredModel } from "$lib/core/modelDeclaration";
+  import { enteredBound, splitViolations, warningFor, type ViolationRow } from "$lib/core/applicability";
+  import type { RegisteredModel } from "$lib/core/modelDeclaration";
+  import { presetsFor } from "$lib/core/presets";
   import type { Quantity } from "$lib/core/quantities";
+  import { enteredValue, panelQuantities } from "$lib/core/slot";
   import type { UnitSystem } from "$lib/core/unitSystem";
   import type { InputSlot } from "$lib/state/session.svelte";
   import { copy } from "$lib/text/copy";
   import Inline from "$lib/ui/layout/Inline.svelte";
   import Stack from "$lib/ui/layout/Stack.svelte";
-  import { Button } from "$lib/ui/primitives/button";
+  import { Checkbox } from "$lib/ui/primitives/checkbox";
+  import { Label } from "$lib/ui/primitives/label";
+  import PresetInput from "./PresetInput.svelte";
   import QuantityInput from "./QuantityInput.svelte";
 
   interface Props {
     model: RegisteredModel;
     inputSlot: InputSlot;
     unitSystem: UnitSystem;
-    outOfRange: readonly Quantity[];
+    /** The session's, in Pa: the slot converts its humidity entry at it. */
+    atmosphericPressure: number;
+    outOfRangeQuantities: readonly Quantity[];
     violations: readonly ViolationRow[];
   }
 
-  let { model, inputSlot, unitSystem, outOfRange, violations }: Props = $props();
+  let { model, inputSlot, unitSystem, atmosphericPressure, outOfRangeQuantities, violations }: Props = $props();
 
-  // The panel shows the entered representation in the rh row's place; the chart keeps rh.
-  const rows = $derived(
-    enteredQuantities(model, inputSlot.temperature.mode).map((quantity) =>
-      quantity === humidityMode.rh.quantity ? inputSlot.humidity.mode.quantity : quantity,
-    ),
-  );
-  const showTemperatureRow = $derived(hasTemperatureGroup(model));
-  const showHumidityRow = $derived(hasHumidityGroup(model));
+  const id = $props.id();
 
-  // Everything but the result's own bound. Entered values are gated before the call, so an `input` row
-  // here comes from a value the panel did not show as an input: the relative air speed vr = v + 0.3(met − 1),
-  // which the standard bounds instead of `v` — so the sentence is the one the entered speed would give.
-  const hints = $derived(violations.filter((violation) => violation.role !== "output"));
+  const rows = $derived(panelQuantities(model, inputSlot));
 
-  function valueOf(quantity: Quantity): number {
-    return enteredValue(inputSlot, quantity) ?? Number.NaN;
-  }
+  // Everything but the result's own bound. Entered values are gated before the call against every row of the
+  // model's info, so an `input` row here is a limit the info does not carry: PMV (ASHRAE 55)'s on the relative
+  // air speed at the operative temperature — so the sentence names the relative air speed, under either air-speed mode.
+  const hints = $derived(splitViolations(violations).inputs);
 
-  function commit(quantity: Quantity, si: number) {
-    if (quantity === inputSlot.humidity.mode.quantity) {
-      inputSlot.setHumidityValue(si);
-    } else {
-      inputSlot.values.set(quantity, si);
-    }
-  }
-
-  function variantFor(mode: typeof temperatureMode.separate | typeof temperatureMode.operative) {
-    return inputSlot.temperature.mode === mode ? "default" : "outline";
-  }
-
-  function humidityVariantFor(mode: HumidityMode) {
-    return inputSlot.humidity.mode === mode ? "default" : "outline";
+  function shownValueFor(quantity: Quantity): number {
+    return enteredValue(inputSlot, quantity, model, atmosphericPressure) ?? Number.NaN;
   }
 </script>
 
 <Stack gap="4">
-  {#if showTemperatureRow}
-    <Inline gap="2" align="center">
-      <span>{copy.temperatureInput}</span>
-      <Button size="sm" variant={variantFor(temperatureMode.separate)} onclick={() => inputSlot.setTemperatureMode(temperatureMode.separate)}>
-        {copy.separateTemperatures}
-      </Button>
-      <Button size="sm" variant={variantFor(temperatureMode.operative)} onclick={() => inputSlot.setTemperatureMode(temperatureMode.operative)}>
-        {copy.operativeTemperature}
-      </Button>
-    </Inline>
-  {/if}
-
-  {#if showHumidityRow}
-    <Inline gap="2" align="center">
-      <span>{copy.humidityInput}</span>
-      {#each Object.values(humidityMode) as mode (mode)}
-        <Button size="sm" variant={humidityVariantFor(mode)} onclick={() => inputSlot.setHumidityMode(mode)}>
-          {mode.quantity.label}
-        </Button>
-      {/each}
-    </Inline>
-  {/if}
-
   {#each rows as quantity (quantity)}
-    <QuantityInput
-      {quantity}
-      value={valueOf(quantity)}
-      {unitSystem}
-      bound={enteredBound(model, quantity, inputSlot.temperature.mode)}
-      outOfRange={outOfRange.includes(quantity)}
-      oncommit={(si) => commit(quantity, si)}
-    />
+    {@const rowProps = {
+      quantity,
+      value: shownValueFor(quantity),
+      unitSystem,
+      bound: enteredBound(model, quantity, inputSlot, atmosphericPressure),
+      outOfRange: outOfRangeQuantities.includes(quantity),
+      oncommit: (si: number) => inputSlot.setEntered(quantity, si),
+    }}
+    {@const presets = presetsFor(quantity)}
+    {#if presets}
+      <PresetInput {...rowProps} {presets} />
+    {:else}
+      <QuantityInput {...rowProps} />
+    {/if}
+  {/each}
+
+  <!-- Always shown and always live: whether an option applies at the entered values is the library's to say.
+       Addressed by position: an option's key is the library's and the share link's string, not the markup's. -->
+  {#each model.options as option, index (option)}
+    <Inline gap="2" align="center">
+      <Checkbox
+        id="{id}-option-{index}"
+        checked={inputSlot.options.get(option)}
+        onCheckedChange={(checked) => inputSlot.setOption(option, checked)}
+      />
+      <Label for="{id}-option-{index}">{option.label}</Label>
+    </Inline>
   {/each}
 
   {#if hints.length > 0}
