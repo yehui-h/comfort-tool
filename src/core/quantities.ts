@@ -4,7 +4,7 @@
  * The library publishes no such table, so the app owns this one. `key` is the
  * library's name for the quantity, the `ModelInfo` key wherever a model info
  * names it. Outside tests, this table is the one place a quantity's key is
- * written as a string, besides the share link that will carry it; every other
+ * written as a string, besides the share link that carries it; every other
  * module holds the row itself, compared by identity, never the key.
  *
  * `kindBounds`, beside the kinds, holds the range a kind is defined over,

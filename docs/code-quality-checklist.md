@@ -29,7 +29,7 @@ checklist line below turns out to be mechanisable, it should move up into the ma
 | `core/` imports no `svelte` / `state` / `ui` / `routes` | eslint `coreBoundary` | ADR §5 |
 | `ui/charts/` imports no model, state or `jsthermalcomfort` | eslint `chartBoundary` | ADR §4.4 |
 | Library model functions imported only in `models/` and `temporary-library/` | eslint `libraryModelImports` | ADR §3 |
-| No quantity wire string outside `shareLink.ts` | eslint `wireStringSyntax` | ADR §4.0, DRY |
+| No quantity wire string outside `quantities.ts` and `shareLink.ts` | eslint `wireStringSyntax` | ADR §4.0, DRY |
 | Tailwind utilities only in `ui/primitives/` and `ui/layout/` | eslint `tailwindSyntax` | ADR §2 |
 | No `export let` / `$:` / `on:` / `<slot>` / `<svelte:component>` | eslint `legacySvelteSyntax` | Svelte Best practices |
 | No `any` | eslint `no-explicit-any` | TS Do's and Don'ts |
@@ -63,7 +63,7 @@ Read the diff once against each of these. They are judgement calls; none of them
 
 - Is a type annotation adding meaning, or restating what inference already knows? *(Google TS Style Guide: rely on
   inference; annotate where it aids readability.)*
-- Do mapped and conditional types still read plainly? `Omit<RegisteredModel, "run">` in `defineModel`, the three
+- Do mapped and conditional types still read plainly? `Values`, mapped over the quantity table, the three
   `Extract<DeclaredChart, …>` aliases and `RegisteredModel`'s union over the scan are the current ones. *("A little bit of repetition or verbosity is often much
   cheaper than the long term cost of complex type expressions.")*
 - Callbacks whose return value is ignored are typed `void`, not `any`.
