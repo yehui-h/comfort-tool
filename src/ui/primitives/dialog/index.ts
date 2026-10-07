@@ -1,4 +1,3 @@
-import Close from "./dialog-close.svelte";
 import Content from "./dialog-content.svelte";
 import Description from "./dialog-description.svelte";
 import Footer from "./dialog-footer.svelte";
@@ -19,7 +18,6 @@ export {
 	Overlay,
 	Content,
 	Description,
-	Close,
 	//
 	Root as Dialog,
 	Title as DialogTitle,
@@ -30,5 +28,4 @@ export {
 	Overlay as DialogOverlay,
 	Content as DialogContent,
 	Description as DialogDescription,
-	Close as DialogClose,
 };
