@@ -19,8 +19,8 @@ export type LibraryInputs = { readonly [K in keyof typeof quantities]: number };
  * number: a switch (yes or no, `airspeed_control`) or a choice among named
  * values (GLOSSARY.md **Option**). It has no unit, no bound and is never on an
  * axis. Declared in the model's own file and referred to by identity, as a
- * `Quantity` is (ADR-0002 decision 36). `key` is what the share link will
- * carry, `label` what the panel shows, `default` what a slot starts from.
+ * `Quantity` is (ADR-0002 decision 36). `key` is what the share link
+ * carries, `label` what the panel shows, `default` what a slot starts from.
  * Switches only so far; a field telling a switch from a choice waits for the
  * first choice.
  */
@@ -220,7 +220,7 @@ interface CommonDeclaration {
    * The library's own `_INFO` object: name, label, description, inputs,
    * outputs, derived quantities, applicability bounds and classifiers. Its
    * `name` is the library's function name and the model's one name (ADR-0002
-   * decision 30): the share link will carry it as written, the route spells
+   * decision 30): the share link carries it as written, the route spells
    * it with hyphens, and the declaration's own file and constant spell it in
    * camelCase.
    * The pre-call gate reads its applicability bounds in
