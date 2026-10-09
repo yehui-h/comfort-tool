@@ -204,7 +204,6 @@ export const chartColors = {
   isolineWidth: 1,
   saturationLine: palette.lineHeavy,
   saturationLineWidth: 1.5,
-  markerEdge: palette.background,
   /** The hover readout on the pointer (ADR-0002 decision 67, rule 5): the page's text in its caption's size, on its background, bordered with a rule. */
   readoutFont: { family: lettering.family, size: lettering.captionSize, color: palette.foreground },
   readoutBackground: palette.background,
