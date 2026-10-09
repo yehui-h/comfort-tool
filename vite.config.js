@@ -22,7 +22,6 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    setupFiles: ["./vitest.setup.ts"],
   },
   build: {
     // The tool's floor (ADR-0001 §2): Vite 8's default baseline with Firefox
