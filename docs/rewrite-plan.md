@@ -737,7 +737,8 @@ Everything in `core/entryModes.ts`, `core/libraryInputs.ts`, `core/modelDeclarat
    omitted (library default 101325 Pa) until the "Set pressure" calculator brings `environment`; the SI pressure
    display unit becomes kPa via `/1000`, because the library's `p_vap` / `p_atm` are in Pa while `core/units.ts`
    had been treating its kPa symbol as identity — harmless while nothing displayed a pressure.
-   Design: `docs/specs/2026-09-08-humidity-entry-modes-design.md`.
+   Landed in `src/core/entryModes.ts`, `src/core/libraryInputs.ts`, and `src/ui/inputs/InputPanel.svelte`
+   (`docs/specs/2026-09-08-humidity-entry-modes-design.md` is the landing note).
    **Decided 2026-09-28**: "Set pressure" and `environment` are Phase 4c; from then on these conversions read the
    session's pressure instead of the library's default.
    **Done 2026-09-29** (Phase 4c, `7239c30`): all five take the session's pressure; humidity ratio's pass it on as
