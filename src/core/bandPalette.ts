@@ -182,7 +182,6 @@ export const chartInk = {
   isolineWidth: 1,
   saturationLine: palette.lineHeavy,
   saturationLineWidth: 1.5,
-  markerEdge: palette.paper,
   /** The hover readout on the pointer (ADR-0002 decision 67, rule 5): the page's text in its caption's size, on its paper, edged with a rule. */
   readoutFont: { family: lettering.family, size: lettering.captionSize, color: palette.ink },
   readoutGround: palette.paper,
