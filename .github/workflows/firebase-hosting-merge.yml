@@ -1,0 +1,21 @@
+name: Deploy to Firebase Hosting
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci && npm run build
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/77211200777/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-action-1337922692@yehui-comfort-tool.iam.gserviceaccount.com
+      - run: npx firebase-tools@latest deploy --only hosting --project yehui-comfort-tool --non-interactive
