@@ -1,0 +1,120 @@
+/**
+ * The restricted chart description `ui/charts/` consumes (ADR §4.4). Every
+ * number is already in display units and every colour is already resolved, so
+ * the chart component converts nothing and imports no model.
+ */
+
+/**
+ * What the pointer reads on a trace (ADR §4.4). `"off"` never captures the
+ * pointer: chrome — the relative-humidity isolines, the zone outlines, a
+ * Band's Edges, the slot markers — and the zones and Bands themselves, whose
+ * fills cannot say where the pointer is, so a {@link HoverGridTrace} reads
+ * for them. `"field"` reports whatever is under the cursor without snapping
+ * to a drawn datum. Snapping is reserved for the line charts added later,
+ * where the drawn point *is* the reading.
+ */
+export type HoverMode = "off" | "field";
+
+/**
+ * What the pointer reads at one cell of a field, one line per entry, already
+ * formatted: each axis value as `Label: value unit`, then whatever that chart
+ * reads there. The chart component only lays the lines out.
+ */
+export type HoverReadout = readonly string[];
+
+/** How a legend entry is drawn. */
+export type Swatch = "fill" | "line" | "marker";
+
+export interface LegendEntry {
+  readonly label: string;
+  readonly swatch: Swatch;
+  readonly color: string;
+}
+
+export interface AxisSpec {
+  /** Already includes the unit symbol; the name itself comes from `Quantity.label`. */
+  readonly title: string;
+  readonly range: readonly [number, number];
+}
+
+/**
+ * One piece of a {@link PathTrace}: a polyline, or a closed ring whose last
+ * vertex joins its first.
+ */
+export interface PathPiece {
+  readonly x: readonly number[];
+  readonly y: readonly number[];
+}
+
+/**
+ * A path of one or more pieces. With `fill` set they are closed rings, filled
+ * by the nonzero rule, so a ring wound opposite to the ring around it is a
+ * hole; without, they are polylines.
+ */
+export interface PathTrace {
+  readonly kind: "path";
+  readonly pieces: readonly PathPiece[];
+  readonly color: string;
+  readonly width: number;
+  readonly fill?: string;
+  readonly hover: HoverMode;
+  /**
+   * The path's name (a zone's, a Band's or an isoline's), handed to Plotly as
+   * its trace name; no path takes the pointer today, so nothing shows it.
+   */
+  readonly label?: string;
+}
+
+/** A single point — one slot's current inputs. */
+export interface PointTrace {
+  readonly kind: "point";
+  readonly x: number;
+  readonly y: number;
+  readonly color: string;
+  readonly hover: HoverMode;
+  readonly label: string;
+}
+
+/**
+ * A field that is read but never seen: `hoverText[yIndex][xIndex]` is what
+ * the pointer reads at that cell, for a chart whose drawn shapes cannot report
+ * where the pointer is — filled zones and bands.
+ */
+export interface HoverGridTrace {
+  readonly kind: "hoverGrid";
+  readonly hover: HoverMode;
+  readonly x: readonly number[];
+  readonly y: readonly number[];
+  readonly hoverText: readonly (readonly HoverReadout[])[];
+}
+
+/** Drawn in order, so the first trace is at the bottom. */
+export type Trace = PathTrace | PointTrace | HoverGridTrace;
+
+/** Text placed at a point of the plot — the isoline labels, and nothing else so far. */
+export interface Annotation {
+  readonly x: number;
+  readonly y: number;
+  readonly text: string;
+}
+
+/**
+ * A line the chart card draws under the plot: the note of a slot whose
+ * Comfort zones are all empty (ADR-0002 decision 83 rule 1), already worded,
+ * named by the slot while the slots are named.
+ */
+export interface ChartNote {
+  readonly text: string;
+  /** The slot's swatch colour, its marker's, while the slots are named; absent otherwise, as the text then names no slot. */
+  readonly color?: string;
+}
+
+export interface ChartSpec {
+  readonly traces: readonly Trace[];
+  readonly layout: { readonly x: AxisSpec; readonly y: AxisSpec };
+  /** The chart's one legend (ADR §4.4). Plotly's own is switched off. */
+  readonly legend: readonly LegendEntry[];
+  readonly annotations: readonly Annotation[];
+  /** The lines under the plot, one per slot whose Comfort zones are all empty, in slot order; an Image draws none. */
+  readonly notes: readonly ChartNote[];
+}

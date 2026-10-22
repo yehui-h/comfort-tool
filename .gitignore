@@ -1,5 +1,16 @@
-/node_modules/
-/dist/
-/.vite/
-/coverage/
-/.idea/
+node_modules/
+dist/
+.vite/
+coverage/
+playwright-report/
+test-results/
+.idea/
+.cursor/
+local-docs/
+
+# Playwright MCP session output
+.playwright-mcp/
+
+# Agent-local config and scratch tickets (never committed)
+.claude/
+.scratch/

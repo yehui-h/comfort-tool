@@ -1,0 +1,779 @@
+# ADR-0001 · CBE Thermal Comfort Tool rewrite: stack and architecture baseline
+
+- Status: consensus reached (2026-09-03); **superseded in part by [ADR-0002](0002-library-interface-model-info.md) (2026-09-13)** — the marked sections below describe the pre-meeting fork contract and are kept as the baseline, not edited
+- Scope: v1 (target 2026-10-01), and long-term maintenance thereafter
+- Supersedes: the prototype repository `main repo/comfort-tool` (Svelte 5, about 49k lines). The prototype is unmaintainable because of excessive layering; **no code is reused, only verified behaviour is borrowed**.
+- Companion: the `typescript` branch of the `jsthermalcomfort` fork (the calculation library; TypeScript, its build output consumed through a symlink, developed in parallel with this project). Section 4 also gives the library's public interface contract.
+- Revision 2026-09-03: narrowed the library / app boundary per the test in §3 (§3, §4.1, §4.3, §5); `epsilon` changed to PMV residual (§1, §2, §4.7). Second round: limits are a source in the library, not a mirror; standard membership moves into the library (§4.1.2); closed sets become `as const` object collections (§4.0, §4.2); operative mode uses the `t_o` quantity and `psychrometricZone.trFollowsDb` (§4.1.4, §4.4, §4.5); quantity names come only from `Quantity.label` (§6). Revision 2026-09-04 (Phase 2): the Compliance column colours a `category` by band position from the app's one palette (§4.3); PMV applies `v_relative` (§4.5); objects compared by identity live in `$state.raw` (§6). Revision 2026-09-04 (post-Phase 3 scope review): PMV (ASHRAE 55) enters the v1 scope, so v1 models do have options (§4.3, §7); chart axis ranges and the dynamic chart's zone source move into the model declaration (§4.4); hover never snaps on a field chart (§4.4); the ES5 summary page is downgraded to a static notice (§2, §7); the library gains `suppressWarnings` for grid scans (§3); constant naming and the `$effect` prohibition are spelled out (§6); a code-quality audit joins the acceptance criteria (§7); visual design gets a phase of its own rather than being assumed (§1, §7). Revision 2026-09-05 (Phase 3.5 + library alignment): the fork tracks upstream's naming as well as its logic, and quantity keys follow it (§3, §4.1.1); a limit row may name a derived quantity or an output (§4.1.2); `psychrometricZone` takes the model function instead of a `standard` string (§4.1.4); `axisRanges` is one table per model rather than one per chart (§4.3, §4.4); each trace carries a `hover` mode, the surface is a contour, and the probe layer is deferred to Phase 5 (§4.4).
+
+---
+
+## 1. Background and constraints
+
+| Item | Fact |
+|---|---|
+| Team | v1 is built by 1 person (equally familiar with React 19 / Svelte 5); 1 researcher with a strong Python background does review; the maintainer three years from now is most likely a Python-background researcher plus the open-source community |
+| Way of working | AI writes most of the code; humans only do architecture and review |
+| Time | Deliver v1 before 2026-10-01; v1 is the full feature set, implemented in phases, not scheduled by week |
+| Backend | None. Pure static SPA, deployed to Netlify first |
+| Calculation library | Fork of the `typescript` branch of `jsthermalcomfort`, ported from `pythermalcomfort`; the library contains only models and their **generic** properties (name, description, classification scale, applicability limits), and no field that exists only for this tool; the app calls the library in SI only; **no adapter layer**: the frontend is developed directly against the interface in section 4 |
+| Interaction | Change one input and the chart follows immediately; Standard / Explore have no calculate button; Time-series does |
+| Reference precision | The old tool's comfort zone is boundary root-finding: one line per 10% RH, PMV residual 0.001 (the comment in `static/js/psychchart.js` says "ta precision", but it is actually a PMV residual) |
+| Browsers | Full experience in modern browsers; **very old browsers must still be able to open a link and see the prefilled inputs** |
+| Visuals | Redesign is allowed; keep the three-column information architecture (left navigation / centre inputs / right results + chart); no dark mode in v1. **Visual design is its own phase** (added 2026-09-04): the token and primitive groundwork lands in Phase 3.6, the design itself in Phase 5c — after Compare, Explore and the threshold editor have settled the layout, and before the v1 wrap-up. Designing earlier would be designing a layout that Phase 5 then replaces |
+| Testing | Before v1, unit tests for pure functions only; UI / e2e / visual tests after v1. **Noted 2026-10-07** (`.scratch/proxy-notice/` ticket 01, `224ba0b`, `3b5a85d`): before v1 the unit tests also cover the state classes (`src/state/*.svelte.test.ts`), and no test renders a component. One browser test runs ahead of v1, `tests/browser/proxyNotice.behaviour.ts` (renamed `browserNotice.behaviour.ts` 2026-10-07, ticket 02, since it also removes `toSorted`); `npm run test:browser` runs it when a change touches `index.html`, `tests/browser/` or `playwright.config.ts`, and at the end of every Phase |
+| Analytics | One-line Google Analytics script, recorded by path |
+| Open source | Public, MIT, PRs accepted |
+| Precision display | Uniform across the project: at most two decimals, trailing zeros not shown |
+
+---
+
+## 2. Decision summary
+
+| Area | Decision | Main reason | Rejected alternatives |
+|---|---|---|---|
+| Framework | **Svelte 5 (runes only) + Vite 8 + TypeScript 6** | Single developer equally familiar with both frameworks, so React's only decisive advantage (the reviewer knowing only React) does not hold; less code, and `$state / $derived` naturally fit live updating; the prototype can serve as a reference for hard spots; the official Svelte MCP + autofixer are already available | React 19; SvelteKit (no backend, and Kit 3 is mid-migration in RC) |
+| Routing | **sv-router 0.18**, all usage wrapped in `routes/navigation.ts` | Typed routes, maintained, already used by the prototype; the 0.x risk is isolated to one place | Hand-written; `@keenmate/svelte-spa-router` |
+| UI | **shadcn-svelte + Bits UI + Tailwind 4**; utility classes are allowed **only** in `ui/primitives/` (CLI-generated, never hand-edited) and `ui/layout/` (`Stack / Grid / Inline`, gap becomes props); a utility class in any other directory is a lint error | Ready-made controls + consistent spacing (Mantine feel), the most stable AI output, and the code belongs to the project | Carbon Components Svelte (IBM visuals, 0.x); Bits UI + hand-written CSS |
+| State | Runes classes in `.svelte.ts`, **no state library**; the address bar reflects only the path, the share payload is generated only on Export Link. **Amended 2026-10-06 by [ADR-0002](0002-library-interface-model-info.md) decision 63: the tab keeps the session in `sessionStorage`, so it survives a reload; the address bar still holds the path alone, a link's `share` parameter being removed once it is read** | Simple and readable; the prototype's approach | Live address-bar sync |
+| Charts | **plotly.js 4.0** (`plotly.js-cartesian-dist-min`, dynamically imported on demand; native TS types); our own `PlotlyChart.svelte` using `{@attach}`; chart components receive only a "chart spec" and know nothing about models; a banded field is a `contour` trace, never a `heatmap` — a heatmap draws the grid as discrete cells and the band edges come out stepped. **Amended 2026-09-28 (review after Phase 4b, Proposal 11): the bundle ships no types, and the app carries its own declaration file; see §2.1**. **Amended 2026-10-18 by [ADR-0002](0002-library-interface-model-info.md) decision 78: a banded field is neither a contour nor a heatmap; the app traces each Band and Comfort zone over its scan, and Plotly draws the paths.** | Zoom and similar interactions; 4.0 exports types natively | 3.x; `svelte-plotly.js` (no Svelte 5 version) |
+| Computation | A single Web Worker + **Comlink**; the main thread discards stale results by sequence number; library model functions are called only inside the Worker. **Superseded 2026-09-21 by [ADR-0002](0002-library-interface-model-info.md) decision 29: no Worker in v1, compute is synchronous** | Readability first | Hand-written postMessage protocol; Worker pool |
+| Precision | Standard compliance zone: **boundary root-finding** (RH every 5%, PMV residual 0.001, secant method falling back to bisection, saturation line every 0.5 °C); Explore field chart: **100×100 grid**, the same for all models. **Amended 2026-09-21 by ADR-0002 decisions 27 and 28: a 51×51 grid of the numeric output, contoured at the band edges**. **Amended 2026-10-18 by [ADR-0002](0002-library-interface-model-info.md) decision 78: traced at them, where a bound ends a Comfort zone bisected on the run.** | Same origin as the old tool and finer; keep the old chart while PHS takes about 2.4 s | Grid everywhere; adaptive refinement |
+| Forms | No form library, no Zod; `bind:value` + the range validation the library provides | The library already provides hard ranges | — |
+| Validation | Outside the hard range: mark red, do not compute, keep the previous valid value | The library provides only this one set of ranges | Two-level ranges |
+| Links | **`?share=v1.<Base64URL(JSON)>`**; Time-series is `?share=v1z.<Base64URL(deflate)>` (`fflate`); version prefix + `migrate()`; on parse failure fall back to defaults and notify. **Amended 2026-10-06 by [ADR-0002](0002-library-interface-model-info.md) decision 63: a link that is refused restores the session the tab kept, or else the defaults, and the person is notified; `migrate()` waits for a v2** | Not compressing keeps it decodable by the ES5 summary page. **Noted 2026-10-07** (`.scratch/proxy-notice/` ticket 01, `224ba0b`): there is no summary page; a browser without `Proxy` gets the Browsers row's static notice, which decodes nothing, so this reason no longer holds. The `v1.` link is still uncompressed JSON | `?s=` (abbreviation violates the naming rules); `#share=`; compatibility with old Berkeley links (not needed) |
+| Browsers | Full app floor Chrome 87 / Firefox 83 / Safari 14 (Svelte 5's hard floor); `index.html` embeds an ES5 feature check, and a browser without `Proxy` gets a **static notice naming the required versions** — decided 2026-09-04, downgraded from a share-decoding summary page, which would need a second ES5 code path pinned to a share schema that only freezes at the end of Phase 5; Tailwind 4's floor is 2023, 2020–2023 browsers are "usable but imperfectly styled". **Raised 2026-10-07** (`.scratch/proxy-notice/` ticket 02, `c08739f`): the full app floor is Chrome 111 / Firefox 115 / Safari 16.4, written as `build.target` in `vite.config.js` and named by the notice, and the check also shows the notice when `Array.prototype.toSorted` is missing. Chrome 87 / Firefox 83 / Safari 14 was never the real floor: sv-router calls `Array.prototype.toSorted` on every route match, the first load included (Chrome 110 / Firefox 115 / Safari 16); Vite 8's default build target is Chrome 111 / Firefox 114 / Safari 16.4; and the build carries class fields and private methods (Firefox 90, Safari 15). Chrome 87–109, Firefox 83–114 and Safari 14–15 have `Proxy` and got a blank page. Chrome and Edge 110 and Safari 16.0–16.3, which have `toSorted`, and Firefox 115–127 are below Tailwind 4's floor (Chrome 111 / Safari 16.4 / Firefox 128) and still get the app, possibly imperfectly styled | Satisfies "very old browsers can open and see prefilled inputs". **Noted 2026-10-07** (`.scratch/proxy-notice/` ticket 01, `224ba0b`): the notice shows no inputs; in v1 the requirement is §7 criterion 5's, a notice and never a blank page. **Noted 2026-10-07** (ticket 02, `c08739f`): it holds up to the raised floor, since the check looks for `toSorted` as well as `Proxy` | Tailwind 3.4; polyfill plugin |
+| Analytics | One line of gtag; send `page_view` manually on path change; `page_location` strips the query string | Do not send the share payload to Google | Consent banner |
+| Engineering | pnpm, TS `strict` + `erasableSyntaxOnly` + `verbatimModuleSyntax`, ESLint flat + Prettier, Node 24, GitHub Actions (typecheck + lint + build), Netlify PR previews, UI copy centralised in one dictionary module (English only in v1). **Amended 2026-09-28 by [ADR-0002](0002-library-interface-model-info.md) decision 42: copy inside a generated primitive stays where the CLI wrote it, the one exception** | — | TypeScript `enum` (non-erasable syntax) |
+
+### 2.1 plotly.js 4.0 changes to watch
+
+> **Amended 2026-09-28** (review after Phase 4b, Proposal 11; `.scratch/review-after-4b/decisions.md`, round 14): the last bullet does not hold for the bundle the app installs. `plotly.js-cartesian-dist-min@4.0.0` ships no `.d.ts` and no `types` field, so the app carries its own declaration file, `src/ui/charts/plotly.d.ts`, declaring only the surface `PlotlyChart.svelte` calls. `@types/plotly.js` stays uninstalled.
+>
+> **Noted 2026-10-07** ([ADR-0002](0002-library-interface-model-info.md) decision 64; `.scratch/image-export/` ticket 07): the declaration file covers two callers, `PlotlyChart.svelte` and the image's `ui/charts/plotlyImage.ts`, which adds `toImage` to the surface and calls `newPlot` and `purge` on a node of its own (`3e1623e`).
+
+- The colour library is now culori: fractional `rgb()` and `hsv()` are no longer accepted; the fourth argument of `rgb()` is now alpha. The project uses hex colours + `rgba()` throughout.
+- Chart Studio related `config` properties are removed, and the "Upload to Cloud" button is shown by default: set `config.showSendToCloud = false` and trim the modebar.
+- MathJax v2 is no longer supported (not used in this project).
+- hover / click events return real data values.
+- 4.0 exports TypeScript types natively; `@types/plotly.js` is no longer installed.
+
+---
+
+## 3. System boundary: library vs app
+
+> **Superseded in part by [ADR-0002](0002-library-interface-model-info.md)** (2026-09-13): the library column below describes the fork. Quantities are now an app table, the `io` / `reference` / `charts` layers are gone, comfort-zone geometry lives in the app, and the library ships `ModelInfo` — see ADR-0002 Context and decisions 1, 2, 9, 10.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decisions 12, 24 and 29**: the convention paragraph below has no `src/workers/`; v1 has no Worker, and a model is called synchronously through its declaration's `run` (decision 29). The library's model functions are imported only in `src/models/` and in `src/temporary-library/`, which calls a model as the library's own functions do (decision 24, revised 2026-09-27). Lint draws the boundary with `importNames` on the package root, since root-only imports leave no subpath to fence, so `Standard`, `classifyFromBins` and the psychrometrics are importable anywhere but `src/ui/charts/`, whose boundary is unchanged (decision 12).
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 61** (2026-10-02): the "Comfort-zone geometry" row below is withdrawn for PMV. The psychrometric chart's Comfort zones are contours of the app's scan, as the dynamic chart's are, so no root finder exists on either side of the boundary; `adaptive_ashrae_zone` is the one geometry the temporary library keeps.
+>
+> **Noted 2026-10-02** ([ADR-0002](0002-library-interface-model-info.md) decision 61's note of the same day; `.scratch/explore/` ticket 09): "no root finder exists on either side of the boundary" is said of the Comfort zones. The temporary library still bisects in one place, `clo_dynamic_inverse`, the inverse of the clothing correction (ADR-0002 decision 54).
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 78** (2026-10-18): "no root finder exists on either side of the boundary" no longer holds. The zones are traced in `core/charts/`, not by Plotly's contour, and the scan bisects where a run starts to break a bound to place the drawn boundary, which returns no value a person reads (decision 78 rules 1 and 5).
+
+
+**The test (consensus 2026-09-03): would pythermalcomfort ship it?** `jsthermalcomfort` is its port, and its audience is researchers and arbitrary tools. Anything where "another tool with a completely different design would need exactly the same value for the same model" belongs to the library; anything that might differ from one tool to the next belongs to the app.
+
+| Library (`jsthermalcomfort`, fork `typescript` branch) | App |
+|---|---|
+| Quantity definitions `io.quantities`: key, kind, label, SI/IP unit **symbols** | Display units and SI↔IP conversion (°C↔°F, m/s↔fpm), input step, display formatting (two decimals, trailing zeros stripped) |
+| Model functions and `io` wrappers; the name, description, **standard membership** (`model.standard`), classification scale (`tsv`, `offsets`) and **applicability limits** (min/max prescribed by the standard, `reference/` data, the single source) attached to the model function | Input order, default values, options and their copy, result table columns (`table`), the state and switching of entry groups (humidity / temperature) |
+| Unified output `Measure { quantity, value, unit, category, intervals }` (§4.1.3) | Compliance decision = interpretation of `Measure.category` / `intervals`; Explore's editable Bands |
+| Comfort-zone geometry: `charts.psychrometricZone` (boundary root-finding, including `trFollowsDb` for operative mode), `charts.adaptiveAshraeZone` | Grid scan, `ChartSpec`, legend, colours, viewport clipping, all Plotly specs |
+| The formulas behind input calculators (`clo_dynamic_ashrae` / `clo_dynamic_iso`, `v_relative`, `running_mean_outdoor_temperature`, solar gain, globe temperature…) | Which model offers which calculator button (declaration file) |
+| Psychrometric functions (dew point / wet bulb / humidity ratio / vapour pressure ↔ RH, operative temperature) | Path segments for standards (`core/standard.ts`, keyed by the library's `reference.standards` objects), model-switching rules, share links, unit switching, UI |
+| Sequential simulation of stateful models (PHS, after v1) | Time-series row editor and session |
+| Out-of-range inputs return results + warnings instead of throwing; no DOM / `node-fetch` dependency, runs in a Worker | — |
+| `suppressWarnings` on the `io` inputs (2026-09-04): a parameter sweep calls a model tens of thousands of times and `cooling_effect` logs a line every time it cannot solve — 300 lines per 100×100 ASHRAE grid. `charts.psychrometricZone` already silences its own trace; any tool drawing a field needs the same, so the switch belongs to the library | — |
+| `Outcome.violations` (2026-09-07): the applicability rows a call broke, as the `ApplicabilityLimit` objects themselves, computed whatever `limit_inputs` says — any consumer that renders applicability needs the row and its `role`, not a sentence | What each `role` does on screen: an entered value blocks the call and turns red, a derived or output bound is reported beside the result |
+
+**And the library follows pythermalcomfort** (2026-09-05). The test above decides *what* the library carries; this decides
+what it looks like once it is there. The fork adopts upstream's logic **and** its naming by default, and deviates only
+where TypeScript requires it, with the reason written at the site — a kwargs object where upstream has keyword
+arguments, no export where upstream uses a `_` prefix, `edition` where upstream's `model` parameter would collide with
+this project's meaning of "model". Where the fork is genuinely ahead — `reference/` as public data, the `io` layer,
+`charts/` — it stays ahead, and says so. What it may not do is keep jsthermalcomfort 1.4.0's vocabulary out of inertia:
+that vocabulary tracks an *older* upstream, and letting it drift is how `clo_dynamic(…, "ISO")` came to compute neither
+standard's equation. The first full audit against upstream ran on 2026-09-05 (rewrite plan, "Library alignment").
+
+Two explicitly stated exceptions:
+
+- **Unit conversion lives in the app.** "The app never implements a formula" is about comfort formulas and thresholds; display conversions such as °C↔°F are a presentation concern, and the app's IP display unit (fpm) differs from the library's IP call unit (fps) anyway. The app calls the library in SI only; the library's `ipUnit` strings and `units_converter` are its own calling convention, which the app does not read.
+- **The library carries no field that "exists only for this tool".** No `step`, `defaultValue`, `OptionSpec`, route path segments, or `ModelDefinition` registry. Those all belong to the app's declaration files or `core/` (§4.2 / §4.3).
+
+Convention: the library's **model functions** (the `jsthermalcomfort` root, `jsthermalcomfort/models`) are imported only in `src/models/` (binding `run`, reading metadata) and `src/workers/` (the actual call); lint blocks anything else. The `io` / `psychrometrics` / `reference` / `charts` subpaths can be imported anywhere, because `io.quantities` is the single definition of the quantities; the model wrappers in `io` are **called** only in the worker, and this rule relies on convention rather than lint.
+
+---
+
+## 4. Core contracts
+
+### 4.0 Three rules that run through the whole project
+
+> **Rule 1 amended by [ADR-0002](0002-library-interface-model-info.md) decision 2**: quantities are defined in the app's `core/quantities.ts`, keyed by the library's `ModelInfo` keys; dot access and `===` are unchanged.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 34** (2026-09-22): rule 2 names `core/libraryInputs.ts` as a reader of `Quantity.key` because it assembled the library's keyed init object; it no longer builds one — a declaration's `run` reads values by `Quantity` and calls the model function positionally, so no quantity key is written on the way in, and §4.1.3's one-line `Object.fromEntries` bullet goes with the init object. The key survives in the app only on the way out, reading a value off the result (`resultValue`), and in `shareLink.ts`; the two boundaries themselves are unchanged.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 36** (2026-09-23): rule 2's boundary strings gain an option's `key`, written in its model's declaration: the library kwarg the option feeds, proved by a registry-wide test, and the option's name on the share link. Nothing looks an option up by it, so rule 1 is unchanged.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decisions 3, 5 and 34** (2026-09-25 and 2026-09-26): the decision-34 marker above is retracted on two points. `run` is not a positional call: it passes the model one params object, in which the declaration writes each quantity's key by name and the compiler checks it (decision 34 as revised 2026-09-25, decision 3 as revised 2026-09-26). And the key is read on more than the way out: `axisRangeFor` falls back to `info.inputs[quantity.key].applicability` for a quantity with no declared range (decision 5). The two boundaries themselves are unchanged.
+>
+> **Noted 2026-10-02** ([ADR-0002](0002-library-interface-model-info.md) decision 57; `.scratch/explore/` ticket 09): "workspaces" and `workspace.explore` in rule 1 below are pages and `page.explore` (`core/page.ts`).
+
+
+1. **One definition, referenced everywhere.** Quantities, models, workspaces, chart types, unit systems and so on are objects; code references them with dot access (`io.quantities.tdb`, `workspace.explore`), not string keys and not `Record<string, …>` dictionaries. `Quantity.kind` is a string union type exported by the library; the app treats it as a typed discriminant (`core/units.ts` looks up the display-unit table by kind, and `satisfies Record<QuantityKind, …>` guarantees exhaustiveness), which does not count as a string key.
+2. **Strings appear only at two boundaries.** The library-internal `Quantity.key` (such as `"tdb"`) and share-link serialisation. The former is read only by the library, by `core/libraryInputs.ts` (which assembles the library's init object from `Quantity.key`, and is the library boundary) and by `shareLink.ts`; the latter is confined to `shareLink.ts`.
+3. **Erasable syntax.** No `enum`, `namespace`, or constructor parameter properties. Closed sets are plain `as const` object collections plus a union type derived from them, the same style as the library's `quantities`; behaviour is written as plain functions, with no class hierarchies and no `switch` scattered everywhere.
+
+### 4.1 The library's public interface (contract)
+
+> **Superseded in full by [ADR-0002](0002-library-interface-model-info.md)** (2026-09-13). The contract is now the main repository's `ModelInfo` / `_INFO` / `ClassifierBins` / `Standard`, imported from the package root. Kept as the record of the fork contract.
+
+
+The library already has four layers: `models` / `reference` / `io` / `charts`. Only the parts the app depends on are listed below. **Phase 1 adds four things: applicability-limit data (source, not mirror), standard membership, the two missing quantities, and `trFollowsDb` on `psychrometricZone`.** Everything else already exists.
+
+#### 4.1.1 Quantities (`jsthermalcomfort/io`, existing)
+
+```ts
+export type QuantityKind = "temperature" | "airSpeed" | "percentage" | "humidityRatio" | "metabolicRate"
+                         | "clothingInsulation" | "thermalSensation" | "pressure";
+export interface Quantity { readonly key: string; readonly kind: QuantityKind; readonly label: string;
+                            readonly siUnit: string; readonly ipUnit: string; }        // units are just symbol strings
+export const quantities = { tdb, tr, operative_tmp, v, vr, rh, hr, dew_point_tmp, wet_bulb_tmp,
+                            p_vap, p_atm, met, clo, wme, t_running_mean, pmv, ppd, tmp_cmf } as const;
+```
+
+The app **does not redeclare quantities**; after `import { io } from 'jsthermalcomfort'` it references `io.quantities.tdb` with dot access. `siUnit` / `ipUnit` are the library's own calling convention; the app reads only `label` and `kind`, and display units are looked up by kind in `core/units.ts`. Whenever a model is added, any missing quantity is one added line in the library.
+
+**Key names follow pythermalcomfort** (§3): `operative_tmp`, `dew_point_tmp` and `wet_bulb_tmp` are upstream's spellings,
+not the abbreviations jsthermalcomfort 1.4.0 inherited from an older upstream. The app never writes a key anyway — it
+holds the `Quantity` object — so a rename upstream costs the app only the import sites that name the quantity.
+
+#### 4.1.2 Reference data (`jsthermalcomfort/reference`)
+
+- Classification scales, existing: `isoThermalSensation` / `ashraeThermalSensation` (`IntervalScale`, `classify()` / `labelFor()`), `adaptiveAshraeOffsets` / `adaptiveEnOffsets`, `enCategoryPmvLimits`.
+- **Applicability limits, new in Phase 1**: one table per standard, keyed by `Quantity` objects, `readonly { quantity, min, max }[]`. **The table is the single source**: compliance functions read min/max from the table, and warning copy is templated from the table, with no separate copies. Attached to the model function: `pmv_ppd_iso.limits`, `adaptive_ashrae.limits` (including `t_running_mean` 10..33.5), the same pattern as `label` / `tsv`. `en16798AdaptiveLimits` (2026-09-07) completes the set: it is what `adaptive_en.limits` publishes and what `adaptive_en` itself reads for its running-mean bound, so the check, the row and the sentence have one home.
+- **A limit row may name a quantity the user never types** (2026-09-05). ISO 7730's applicability includes the derived
+  vapour pressure `p_vap ≤ 2700 Pa` and the **output** bound `pmv ∈ [−2, 2]`; both are rows in `pmv_ppd_iso.limits`
+  alongside the entered ones. A consumer therefore cannot assume "one row = one input field", and the three kinds want
+  different treatment on screen — an entered value can be corrected, a derived or output bound can only be reported.
+  Resolved 2026-09-07: the library evaluates all three and hands the failed rows back on `Outcome.violations`
+  (§4.1.3); the app dispatches on `role` and never evaluates a row itself.
+- **Standard membership, new in Phase 1**: `reference.standards = { iso7730, ashrae55, en16798 }`, each a plain `{ id, name }` object; `pmv_ppd_iso.standard = standards.iso7730`. Models without a `standard` (UTCI) appear only in Explore. The existing `utilities.Standard` in the library is the compliance dispatch key (including `FAN_HEATWAVES`, `ANKLE_DRAFT`), which is not this; the names must stay distinct.
+
+#### 4.1.3 Unified inputs and outputs (`jsthermalcomfort/io`, existing)
+
+```ts
+io.pmvPpdIso({ tdb, tr, vr, rh, met, clo, units: "SI", edition: "7730-2005" })   // → PmvPpdIsoOutputs
+  .toMeasures()   // Measure[]: { quantity, value, unit, category?, intervals }
+  .violations     // readonly ApplicabilityLimit[] — the limit rows this call broke, whatever `limit_inputs` says
+  .warnings       // readonly string[] — violations.map((v) => v.warning)
+  .edition        // "7730-2005"
+```
+
+- The field names of the input object are exactly `Quantity.key`, so `Map<Quantity, number>` → init is a one-line `Object.fromEntries`, done in the app's `core/libraryInputs.ts`.
+- Classification is not a separate output: `Measure.category` is the scale label the value falls into (PMV's tsv), and `Measure.intervals` are the evaluated comfort intervals and whether each is satisfied (Adaptive's 80% / 90%). **Compliance decision = the app's interpretation of these two fields**; the Compliance column of the result table displays them directly.
+- The model function carries `label` / `description` / `standard` / `tsv` or `offsets` / `limits`; declaration files read from here and never write copy or transcribe numbers.
+- **`violations` (2026-09-07).** A consumer that displays applicability needs to know *which* row failed and its `role`, and a string cannot say. So the `io` outcomes carry the rows themselves, computed regardless of `limit_inputs` (which keeps gating only whether the result is NaN'd), input rows first and the ISO-only derived / output rows last. `warnings` is derived from it and keeps its byte-pinned strings (plus the one ASHRAE cross-field air-speed rule, which has no row). Upstream has no such field — it has no `io` layer either — so this is one of the places the fork is ahead (§3); the public model functions still return what upstream's do. **Decided 2026-09-08**: the app renders `violations` only, so that row-less ASHRAE sentence is not shown; its one real consumer is Phase 3.7's ASHRAE model with `airspeed_control`, and how to render it is decided there, with the model on screen, rather than blind.
+- **`edition` (2026-09-07).** Accepted on the init and echoed on the outcome, so a result can name the edition it was computed under. The app pins `"7730-2005"` (rewrite plan, Phase 3.6 item 3) and never offers it as a choice while the two editions share a kernel.
+
+#### 4.1.4 Chart geometry (`jsthermalcomfort/charts`, existing)
+
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 24** (2026-09-25): the solver is `pmv_psychrometric_zone` in `src/temporary-library/`, taking one params object with `pmv_limit` required; the reproduced-defect switch the signature below names is deleted, measured to change no zone a published chart draws.
+
+`psychrometricZone({ model, tr, vr, met, clo, pmvLimit, rhStep, saturationStep, epsilon, correctKnownDefects, trFollowsDb })` returns the `polygon` vertices;
+`model` is the PMV model function itself (`pmv_ppd_iso` / `pmv_ppd_ashrae`), required and with no default: a model function already carries the formulation it applies, so the zone's geometry cannot disagree with the model whose comfort region it claims to draw. It replaces the `standard: 'ISO' | 'ASHRAE'` string that defaulted to `'ASHRAE'` (2026-09-05). `adaptiveAshraeZone()` returns the upper and lower boundaries for each acceptability level. All SI, unclipped, uncoloured. `epsilon` is the PMV residual, not a temperature tolerance. `trFollowsDb` (new in Phase 1) makes `tr = db` follow along the x axis while solving; this is the geometry of the operative-mode psychrometric chart, and it is exactly how the old tool's psychtop chart was computed. Without it, the compliance zone in operative mode is wrong.
+
+#### 4.1.5 Things the library does not have and should not have
+
+`Unit` / `step` / `toSi` / `fromSi`, `defaultValue`, `OptionSpec` / `OptionValue`, route path segments for standards, `InputSpec` / `OutputSpec` / `Band`, `ModelDefinition` and the `models` registry, `QuantityValues`, `InputCalculator` applicability, `evaluateMany`. They are either presentation-layer decisions (§4.2 / §4.3) or duplicates of types the library already has.
+
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 49** (2026-09-29): in the paragraph below, "Set pressure" is not an input calculator. Atmospheric pressure is session state and the share link carries it, as §4.5 and §7 say: no model takes it, so a calculator would have no target input to write into.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 54** (2026-09-30): in the paragraph below, "Relative air speed" is not an option (an option's key is a kwarg, decision 36) but the second entry mode of the air-speed entry group, and "Dynamic predictive clothing" is the `clo_tout` calculator, the clo predicted from the outdoor temperature at 6 a.m. The activity correction of clothing, `clo_dynamic_ashrae` / `clo_dynamic_iso`, is not a calculator: it is derived under the clothing entry group's first mode, as `vr` is.
+>
+> **Noted 2026-10-01** ([ADR-0002](0002-library-interface-model-info.md) decision 54's note of the same day; `.scratch/activity-adjusted-inputs/`): Done. The two entry groups and their controls landed as `150fae9` to `60f088f`, the correction derived by `relativeAirSpeedOf` and `dynamicClothingOf` in `core/slot.ts`, the clothing rule read from the table in `core/clothingCorrection.ts`. No option carries either. The `clo_tout` calculator is Phase 5b item 2's and is not built.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 75** (2026-10-12): the paragraph below's `Create custom ensemble / Dynamic predictive clothing / Solar gain` are v1's three input calculators and its only ones: the ensemble, the sum of the library's garment values, and `clo_tout` write `clo`; "Solar gain" writes `tr`, the mean radiant temperature raised by the library's `delta_mrt`. Each is declared on the row it writes and applied once, as the paragraph says; its own inputs are quantities whose bounds the library's `_INFO` publishes. `Globe temp` stays out of v1; `Set pressure` is decision 49's.
+>
+> **Noted 2026-10-16** ([ADR-0002](0002-library-interface-model-info.md) decision 75's note of the same day; `.scratch/input-calculators/` ticket 06): Done. The three calculators are `core/calculators.ts` (`436b834`), each declared on the row it writes; they are entered from one button at the Inputs card's foot, which opens one tabbed dialog (`501bf8c`), and Apply writes each slot "Apply to" checks while the slots are named, slot 1 otherwise (`224f095`). Their inputs are in no session, link or kept tab: module state, for as long as the app is loaded. `core/calculators.ts` imports `clo_tout` and `solar_gain`, the one exception lint allows to §3's convention outside `src/models/` and `src/temporary-library/`.
+
+Where the old tool's input-panel button group belongs: `Create custom ensemble / Dynamic predictive clothing / Solar gain / Globe temp / Set pressure` → app-side input calculators whose formulas call the library; `Relative air speed / Local control` → options in the declaration file; `Local discomfort` (ankle draft, vertical temperature difference) only produces outputs and does not change inputs → enters the library as an ordinary small model, available in Explore; `Reset / Save / Reload / Share / SI-IP / Documentation` → app actions. The semantics of an input calculator are a **one-shot Apply**: the user fills in the calculator's own small inputs, clicks Apply, and the result is written into the target input; calculators do not enter the session state or the share link.
+
+### 4.2 App-side closed sets
+
+The same style as the library's `quantities`: `as const` object collections + derived union types + plain functions. No classes.
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 57** (2026-10-01): `workspace.ts` below is `core/page.ts`, the set `page.standard`, `page.explore` and `page.timeSeries`, each a page of the app with its own address (`/standard/:standard/:model`, `/explore/:model`); `isWorkspaceAvailable` reads an optional `RegisteredModel.timeSeries?: true` for Time-series. The sketch is left as written.
+>
+> **Noted 2026-10-02** ([ADR-0002](0002-library-interface-model-info.md) decision 57's note of the same day; `.scratch/explore/` ticket 09): built as `eb9ecd4`. `isWorkspaceAvailable` above is `pagesOf(model)` (`core/page.ts:30`), the list of a model's pages, which nothing outside its test calls yet. "Each a page of the app with its own address" holds for Standard and Explore; Time-series has no route until its phase.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 63** (2026-10-06): no closed set gets an `xxxFromId()`. `workspaceFromId` below and its like are one private lookup by `id` in `core/shareLink.ts`, their only caller; the page is named by the path and is in no share link. The sketch is left as written.
+
+
+```ts
+// src/core/workspace.ts
+export interface Workspace { readonly id: string; readonly pathSegment: string; readonly title: string; }
+export const workspace = {
+  standard:   { id: 'standard',    pathSegment: 'standard',    title: 'Standard' },
+  explore:    { id: 'explore',     pathSegment: 'explore',     title: 'Explore' },
+  timeSeries: { id: 'time-series', pathSegment: 'time-series', title: 'Time-series' },
+} as const satisfies Record<string, Workspace>;
+export function isWorkspaceAvailable(target: Workspace, model: RegisteredModel): boolean {
+  if (target === workspace.explore) return true;                            // every model has Explore (at least the dynamic chart)
+  if (target === workspace.standard) return model.model.standard !== undefined;   // the library's model.standard
+  return model.timeSeries;
+}
+export function workspaceFromId(id: string): Workspace | undefined;        // used only by shareLink / navigation
+// Same style: chartType.psychrometric / .dynamic; humidityMode.rh / .humidityRatio / .dewPoint / .wetBulb / .vaporPressure;
+//          unitSystem.si / .ip. There is no entryGroup set (2026-09-08): whether a model has a humidity or a
+//          temperature entry group is read from its `inputs` — `q.rh` present, `q.tdb` and `q.tr` present
+
+// src/core/entryModes.ts — the temperature representation decides which quantities the panel shows and which one is the temperature axis; labels always come from Quantity.label
+const q = io.quantities;
+export const temperatureMode = {
+  separate:  { id: 'separate',  panel: [q.tdb, q.tr], axis: q.tdb },
+  operative: { id: 'operative', panel: [q.operative_tmp], axis: q.operative_tmp },
+} as const;
+
+// src/core/standard.ts — adds only the app-specific path segment; the standard itself is the library's reference.standards object
+export const standardPath = [
+  { standard: reference.standards.ashrae55, pathSegment: 'ashrae-55' },
+  { standard: reference.standards.iso7730,  pathSegment: 'iso-7730' },
+  { standard: reference.standards.en16798,  pathSegment: 'en-16798' },
+] as const;
+export function pathSegmentFor(standard: StandardRef): string;
+export function standardFromPath(segment: string): StandardRef | undefined;
+
+// src/core/units.ts — display units. Conversion formulas live here (the §3 exception); looked up by Quantity.kind, satisfies Record<QuantityKind, …> guarantees exhaustiveness
+export interface DisplayUnit { readonly symbol: string; readonly step: number; toSi(v: number): number; fromSi(v: number): number; }
+export function displayUnitFor(quantity: Quantity, unitSystem: UnitSystem): DisplayUnit;
+// temperature → °C 0.1 / °F 0.1; airSpeed → m/s 0.05 / fpm 10; percentage → % 1; metabolicRate → met 0.1;
+// clothingInsulation → clo 0.1; thermalSensation → unitless 0.1; pressure → kPa 0.1 / inHg 0.01
+```
+
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 45** (2026-09-28; review after Phase 4b, Proposal 24): humidity ratio, stored in kg/kg, is shown in g/kg in SI and in lb/klb in IP, the deployed tool's psychrometric chart's units; §4.2's list of display units had no row for it.
+
+### 4.3 Model declaration (app side, one object literal, one file)
+
+> **Shape superseded by [ADR-0002](0002-library-interface-model-info.md) decisions 3 and 6**: `info` replaces `model`, `standard` replaces `edition`, `run` is the positional call, `inputs` / `axisRanges` are named-field object arrays, `defineModel` is gone. The rules paragraph and the result-table rules still apply.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 36** (2026-09-23): `run` is `(values, options) => result`, reading the model's options through a second reader; an option is a declared `OptionSpec` object `{ key, label, default }`, `RegisteredModel.options` is required (empty for a model with none), and `InputSlot.options` in §4.5 holds a boolean per option, so there is no `OptionValue`.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decisions 3 and 34** (2026-09-25 and 2026-09-26): "`run` is the positional call" in the first marker above is retracted. `run` passes the model one params object, each quantity's key written by name; see §4.0's marker for decisions 3, 5 and 34.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 36 as revised 2026-10-12** (`e7e55cb`): `RegisteredModel.options` is gone, in the decision 36 marker above and in the rules below. An option is listed among `inputs`, the panel's list in panel order, as `{ option }` beside the `{ quantity, value }` elements, and read through `optionsOf(model)`, the quantities through `inputsOf(model)`; PMV (ASHRAE 55) lists its one option after `v`. `InputSlot.options` is unchanged.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 20** (2026-09-15): the rules paragraph's sentence making `presets` a declaration field no longer applies. Presets hang off the `Quantity`: `core/presets.ts` binds `met` and `clo` to the library's tables once, and `presetsFor(quantity)` answers for every model, so no declaration names a preset table.
+
+
+```ts
+// src/models/pmvIso.ts
+import { io, pmv_ppd_iso } from 'jsthermalcomfort';   // a declaration file may reference library models: to bind run and read metadata. Calls happen only in the worker
+const q = io.quantities;
+export const pmvIso = defineModel({
+  run: io.pmvPpdIso,                                   // the library's io wrapper; the worker calls it
+  model: pmv_ppd_iso,                                  // label / description / standard / tsv / limits are read from here
+  inputs: [                                            // order + default values (the starting values of the old CBE tool), one table
+    [q.tdb, 25], [q.tr, 25], [q.v, 0.1], [q.rh, 50], [q.met, 1.1], [q.clo, 0.5],
+  ],
+  // no entryGroups field: `q.rh` above gives the humidity group, `q.tdb` + `q.tr` the temperature group (2026-09-08)
+  axisRanges: [                                        // how far each quantity is drawn, SI; a viewport, never a limit
+    [q.tdb, 10, 40], [q.tr, 10, 40], [q.operative_tmp, 10, 40], [q.hr, 0, 0.03],
+    [q.v, 0, 2], [q.rh, 0, 100], [q.met, 1, 4], [q.clo, 0, 2],
+  ],
+  charts: [
+    { type: chartType.psychrometric, pmvModel: pmv_ppd_iso },        // the same function `run` calls
+    { type: chartType.dynamic, axes: { x: q.tdb, y: q.v }, output: q.pmv },   // every model has this
+  ],
+  table: [q.pmv, q.ppd],                               // required: result table columns, also the selectable outputs in Explore
+  timeSeries: true,
+});
+// src/models/index.ts
+export const registeredModels = [pmvIso, adaptiveAshrae, utci] as const;   // registration is this one line only
+```
+
+Rules: every model has the Explore capability by default; the Standard capability is decided by whether the library's `model.standard` exists, and the app no longer declares it; the Time-series capability is decided by `timeSeries`. **Adding a model = the library fills in that model's quantities / limits / standard + one declaration file + one registry line, zero other files change.** Options (such as `airspeed_control`) are declared in the model file. PMV (ASHRAE 55) has one, so `RegisteredModel.options` and `InputSlot.options` are part of v1 (decided 2026-09-04); PMV (ISO 7730) has none — the library's `PmvPpdIsoKwargs` omits `airspeed_control`, because ISO 7730 has no such switch. `presets` is likewise a declaration field: it points a quantity at a library preset table (`met_typical_tasks`, `clo_individual_garments`) so the input offers a searchable list beside free entry. Panel labels, table headers and axis labels always come from `Quantity.label`; the declaration file contains no quantity names at all.
+
+Result table (`table`):
+
+- There is only one table style (the prototype's design): uppercase small-font header; horizontal scroll when there are many columns; with Compare on, one row per slot, and Baseline decides which row the difference highlighting is relative to.
+- The columns are fixed in three sections: **Input** (slot name, coloured with the slot colour, always the first column) → **Compliance** (appears only when the model's `Measure` carries `category` or `intervals`; shows the label the value falls into: a `category` is drawn with a swatch coloured by its **position** in the model's scale, from the app's one band palette `core/bandPalette.ts`; an `intervals` entry is coloured pass / fail by `satisfied`) → **the library outputs listed in the model file's `table`**, in declaration order, values formatted per §4.6 and following the unit system.
+- `table` is required; outputs not listed are not shown and are not offered in Explore's output selection.
+
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 8** (2026-09-25): a Compliance entry is prefixed by its quantity's `Quantity.label`, `Thermal sensation: Neutral`, `ISO 7730 category: B`, each with its swatch, for every model; the label is never written in the table component.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 8 as noted 2026-09-28** (review after Phase 4b, Proposal 29; `P029`): the clause "an `intervals` entry is coloured pass / fail by `satisfied`" is retired. No result carries `intervals`; a yes-or-no output (Adaptive's `acceptability_80` and `acceptability_90`, PMV (ASHRAE 55)'s `compliance`) is a column of the model's `table`, headed by its `Quantity.label` and reading Yes or No, uncoloured.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 50** (2026-09-29): "Baseline decides which row the difference highlighting is relative to" in the first rule above is retired. Compare has no baseline and highlights no difference; the table has one row per compared slot.
+>
+> **Noted 2026-09-30 ([ADR-0002](0002-library-interface-model-info.md) decisions 50 and 52, as noted the same day; `.scratch/compare/` ticket 09).** "Coloured with the slot colour" in the second rule above holds while Compare is on: a row's first cell is then the slot's name beside a swatch of its hue. While Compare is off the one row reads "Input 1" with no swatch. Whether a row was calculated is said in the table's caption, one line per slot that was not (`ui/outputs/ResultTable.svelte`).
+>
+> **Noted 2026-10-12 ([ADR-0002](0002-library-interface-model-info.md) decision 50, as noted the same day).** "While Compare is off the one row reads "Input 1" with no swatch" above is withdrawn: the one-row table has no Input column, and "always the first column" in the second rule holds while Compare is on.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 60** (2026-10-01): "from the app's one band palette" in the second rule is one palette per classifier, chosen from a table in `core/bandPalette.ts` keyed by the classifier object, diverging or sequential, read at the band count; ISO 7730's "none" has no swatch. "Explore's output selection" in the third rule: there is none (decision 31).
+>
+> **Noted 2026-10-02** ([ADR-0002](0002-library-interface-model-info.md) decision 60's note of the same day; `.scratch/explore/` ticket 09): built as `e39791a`. "Diverging or sequential" holds for the table's families but one: the thermal-sensation bins keep the CBE fills (`palettes.cbeSensation`, `core/bandPalette.ts:56`), decision 60 rule 3's exception, and no registered classifier is painted diverging yet.
+
+### 4.4 Chart types (closed set, v1)
+
+> **Axis rules superseded by [ADR-0002](0002-library-interface-model-info.md) decision 5** (declared, else applicability, else error); the zone geometry it calls is in the app per decision 9. Hover and legend rules unchanged.
+>
+> **The dynamic chart's surface is amended by ADR-0002 decisions 27, 28 and 31** (2026-09-21): a 51×51 grid of the numeric output; Standard draws the comfort zone, Explore the bands.
+>
+> **The psychrometric chart's compliance zone is amended by [ADR-0002](0002-library-interface-model-info.md) decision 31** (2026-09-25): it draws the declaration's `zones`, nested Comfort zones largest first in one hue (categories A, B and C for ISO 7730), each at a limit read off a library object. **Amended 2026-10-19 (ADR-0002 decision 80):** ISO 7730:2025's are categories I to IV, read off the library's bins for that edition.
+>
+> **The dynamic chart is amended by [ADR-0002](0002-library-interface-model-info.md) decision 37** (2026-09-27): it is declared in one of two shapes, scanned (`axes`, `output`, `bands`) or polygons (`axes`, `zones`), rather than as a scan with an optional `zones` source. A polygons chart's axes are locked: never offered to the picker and never mapped to the entry mode, so an operative axis marks a slot in separate entry at the plain mean of `tdb` and `tr`.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 37 as amended 2026-09-28** (Phase 4b ticket 12): "the plain mean of `tdb` and `tr`" in the marker above is retracted. Under separate entry the slot is marked at the library's operative temperature, `t_o(tdb, tr, v, model.standard)`, weighed by the model's own standard, through the same function the switch into operative entry converts with (decision 39), so the marker and the switch cannot differ.
+>
+> **Amended 2026-09-28** (review after Phase 4b, Proposal 19; `S102`): in the legend rules below, `Swatch` is a string union, `"fill" | "line" | "marker"` in `core/charts/chartSpec.ts`, not an object collection read as `Swatch.fill`. Its members double as CSS classes: `ChartLegend.svelte` writes an entry's swatch into the swatch element's `class` and styles each member by that name.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decisions 50 and 51** (2026-09-29): "marker points for the three slots" in the table below is, on both charts, the declaration's Comfort zones and one marker for every compared slot, each solved at that slot's own values and drawn in the slot's hue. Compare is the Standard page's: Explore draws the bands of slot 1. The axes are resolved from the session's entry mode, which every slot is entered in.
+>
+> **Noted 2026-09-30 ([ADR-0002](0002-library-interface-model-info.md) decisions 50 and 52, as noted the same day; `.scratch/compare/` ticket 09).** "Every compared slot" is every compared slot that has a last valid run. "At that slot's own values" is at the chart's one atmospheric pressure, the first drawn slot's run's (decision 52's note). On the scanned dynamic chart one drawn slot still draws the bands, as before Compare; two or more draw each slot's Comfort zones as contours of its own scan, and no bands. Explore is not built.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 58** (2026-10-01): the page decides what every chart paints. On Standard the dynamic chart paints Comfort zones for one drawn slot as for two or more, and no bands. On Explore both charts paint the model's Band list: the dynamic chart as before, and the psychrometric chart as a scan of the model's `output` over its temperature axis and the humidity ratio, the cells above saturation unpainted. The hover rules below hold; on Explore the readout names the band of the edited list.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 61** (2026-10-02): the "compliance-zone polygon (`psychrometricZone` …)" in the psychrometric row is a contour of a scan of the model's `scan.output` over the temperature axis and the humidity ratio, one per drawn slot, the field above the saturation line covered; the chart reads the pointer through a hover grid (temperature, humidity ratio, each slot's number), which is Phase 5 item 8. The dynamic row's `output` and `bands` are the model's `scan`, declared once. "The probe layer stays deferred for the psychrometric chart" below is closed.
+>
+> **Noted 2026-10-02** ([ADR-0002](0002-library-interface-model-info.md) decisions 58 and 61, as noted the same day; `.scratch/explore/` ticket 09): built as `2a397c4`, `47498cb`, `92d5408`, `d13fe36` and `76589c0`. In the decision-58 marker above, "the cells above saturation unpainted" is the decision-61 marker's cover over a scan run at every cell, and "on Explore both charts paint the model's Band list" holds for a chart the model scans: Adaptive's polygons chart draws its Comfort zones on Explore too. In the decision-61 marker, the scan's fields are `output`, `classifier` (decision 27's `bands`) and `comfortZones`, and the polygons chart's `zones` in the table and in the decision-37 marker above is `comfortZones`.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 62** (2026-10-02): the closed set gains `chartType.adaptive`, the chart the `chartType.dynamic` row below folds into its last sentence: locked axes `t_running_mean × operative_tmp`; each Comfort zone the two limit lines the declaration returns (`limits`), both stroked, the region between them filled, and the closing sides at the ends of the x range never stroked; marker points; no scan. It is named for the chart the deployed tool and the prototype draw under that name, not for a model; an EN 16798 adaptive model declares the same type. `chartType.dynamic` is scanned only. Every chart is drawn in one order — fills, chrome, outlines, hover grid, the psychrometric chart's cover and saturation line, markers — so the RH isolines are cut only by an outline.
+>
+> **Noted 2026-10-06** ([ADR-0002](0002-library-interface-model-info.md) decisions 37, 38 and 62, as noted the same day; `.scratch/three-chart-types/` ticket 06): built as `fd36196`, `ede7891`, `04d48f6`, `6f61623`, `4f97433`, `c1186a9` and `17f3380`. "**Every model gets it by default**" in the dynamic row below no longer holds: no chart is a default. A model declares its charts, the first shown first, each type at most once (`core/modelDeclaration.test.ts:86`); a model with a scan may declare any, one without only adaptive charts (`core/modelDeclaration.ts:290-299`). Registered today: PMV (ISO 7730) and PMV (ASHRAE 55) declare the psychrometric and the dynamic chart, Heat Index the dynamic chart, Adaptive (ASHRAE 55) the adaptive chart alone. The row's last sentence is the adaptive chart, whose "locked axes" in the marker above are the axes it declares, with no lock in the state, and whose chart picker shows one button, "Adaptive", and no axis picker.
+
+
+| Type | Definition |
+|---|---|
+| `chartType.psychrometric` | x = `temperatureMode.axis` (`tdb` under separate, `operative_tmp` under operative), axis label from `Quantity.label`; y = humidity ratio; RH isolines; compliance-zone polygon (`psychrometricZone`, with `trFollowsDb: true` under operative); marker points for the three slots |
+| `chartType.dynamic` | x / y are selectable quantities (under operative, `operative_tmp` is offered and `tdb` / `tr` are not); banded contour surface (100×100 grid); optional zone polygons from a declared `zones` source; marker points; **every model gets it by default**. Adaptive renders with it: locked axes `t_running_mean × operative_tmp`, and its bands are the **exact polygons** of `charts.adaptiveAshraeZone`, not the grid classification (decided 2026-09-04) |
+
+Parametric curve charts (SET outputs, heat loss) and time-series line charts are added to the chart library first and then referenced by models, when needed. `PlotlyChart.svelte` receives only a `ChartSpec` (a restricted subset of traces / layout / annotations) and imports no model.
+
+Axis rules (2026-09-04):
+
+- **Axis ranges are declared, not derived from the applicability limits.** `model.limits` goes back to doing one job:
+  validating what the user typed. The two were conflated in Phase 3, which clipped the ISO chart to the 10–30 °C
+  applicability range and left `rh` — which no standard limits — unable to carry an axis at all.
+- **One `axisRanges` table per model, not per chart** (revised 2026-09-05). `RegisteredModel.axisRanges` is a list of
+  `[quantity, min, max]` in SI, and both chart types read it through `axisRangeFor(model, quantity)`; the defaults are
+  temperatures 10–40 °C, humidity ratio 0–0.03, v 0–2, rh 0–100, met 1–4 and clo 0–2, and the psychrometric chart
+  samples its isolines at 121 points across the temperature range. *(Corrected 2026-10-17, chart audit F5 and F6:
+  this read "the extents the deployed CBE tool draws". The temperatures and `v` are ASHRAE 55's applicability; the
+  deployed tool draws 10–36 °C on its psychrometric and temperature–humidity charts and 20–34 °C × 0–1.2 m/s on its
+  air-speed chart, and samples its isolines every 0.5 °C (ADR-0002 decision 5's note).)* *(Noted 2026-10-22: the
+  declarations' ranges are now ADR-0002 decision 5's note of that date.)* Per-chart ranges were tried
+  first, as this section originally specified, and bought nothing: the only thing the extra level produced was
+  `10, 40` written four times in one declaration. Model level also makes the psychrometric x range follow the temperature entry mode for free, since it is
+  the range of whichever quantity the mode puts on the axis. Should two charts of one model ever need different extents,
+  an optional per-chart override is a purely additive change.
+- The dynamic chart offers **every entered quantity** on both axes, and each axis excludes the quantity the other one holds:
+  `x === y` is not a chart.
+
+Hover rules (2026-09-04):
+
+- **A field chart never snaps.** Hover reports whatever is under the cursor — the axis values, the output there, the band
+  it falls in. Curves that are not the subject of the reading, the psychrometric chart's RH isolines included, do not
+  capture the pointer, and neither do the slot markers.
+- Snapping is reserved for the line charts added later, where the drawn point *is* the datum.
+- Each trace carries its own `hover` mode in the `ChartSpec`: `"off"` for chrome, `"field"` for the surface or filled
+  band that *is* the reading. The banded surface is a **contour**, so it answers per grid cell without snapping, and a
+  zone polygon answers anywhere inside its fill.
+- **The transparent probe layer is deferred to Phase 5** (2026-09-05). Phase 3.5 delivered "nothing snaps"; the
+  psychrometric chart consequently has no cursor readout at all until the layer exists, which is acceptable because the
+  deployed tool's t/rh/hr readout box is itself a Phase 5c interface concern.
+
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 37 as noted 2026-09-28** (review after Phase 4b, `P008`): a zone polygon no longer answers inside its fill; a polygons chart answers through its spec's hover grid. The probe layer stays deferred for the psychrometric chart.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 62** (2026-10-02): "the banded surface is a contour" is one `contourFill` per Band and one `contourLine` at each Edge, and a Comfort zone the same pair; the Plotly adapter draws fills and lines and knows no band. Band outlines are chrome, `hover: "off"`, like the isolines.
+>
+> **Noted 2026-10-06** ([ADR-0002](0002-library-interface-model-info.md) decisions 37, 61 and 62; `.scratch/three-chart-types/` ticket 06): the third hover rule above no longer holds. No drawn surface reads the pointer: a Comfort zone's and a Band's `contourFill` and `contourLine` are `hover: "off"` (`core/charts/specParts.ts:313, 320`), as the adaptive chart's paths are, and each chart's one hover grid, the only trace with `hover: "field"` (`:220`), reads the cell under the pointer for them.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 78** (2026-10-18): a Comfort zone's and a Band's fill and line are paths the app traces, not `contourFill` and `contourLine`; both stay `hover: "off"`, and the hover grid still reads the pointer.
+
+
+Legend rules:
+
+- **There is exactly one legend per chart, always placed below the chart.** Plotly's built-in legend is off (`layout.showlegend = false`); the prototype's two sets of legends, "one inside the chart, one below it", are not allowed.
+- Legend entries are part of the `ChartSpec`: `ChartSpec.legend: readonly LegendEntry[]`, `LegendEntry { label, swatch: Swatch.fill | Swatch.line | Swatch.marker, color }`. They are produced by the chart type's spec-generating function; `ChartLegend.svelte` only renders them and knows nothing about models.
+- When exporting an image, the same `legend` entries generate Plotly's horizontal bottom legend (enabled only in the export layout), so that the screen and the export match.
+
+> **Noted 2026-10-07** ([ADR-0002](0002-library-interface-model-info.md) decision 64): the export layout of the third legend rule above is a figure built for the file from the page's `ChartSpec`, never the plot on screen. Its traces go through the adapter the screen's go through, without the hover grid, and its legend is Plotly's own, made from `ChartSpec.legend`; under it come the Input summary and the footer.
+>
+> **Noted 2026-10-07** (ADR-0002 decision 64, as noted the same day; `.scratch/image-export/` ticket 07): built as `6e4f350`, `3e1623e`, `e6cfb63`, `b2143f9` and `84d3ca3`. The conversion of a `ChartSpec` into Plotly is `ui/charts/plotlyFigure.ts`, which `PlotlyChart.svelte` and the image's `ui/charts/plotlyImage.ts` both call; the latter receives an `ImageDescription` (`core/image.ts`), which holds the `ChartSpec`, and, like the component, imports no model. Each legend entry is a trace that draws nothing and shows in Plotly's legend, and the title, when there is one, stands above the plot. "So that the screen and the export match" holds of the entries, their colours and their order; a fill's swatch is Plotly's thin bar in the file, where `ChartLegend` draws a square. §2's Charts row, "chart components receive only a 'chart spec'", holds of `PlotlyChart.svelte`; `plotlyImage.ts` receives an `ImageDescription` (`ui/charts/plotlyImage.ts:68`).
+
+### 4.5 Session state
+
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decisions 29 and 31** (2026-09-21): `ChartState.output` and `bandsByOutput` go (one `output` per dynamic chart, bands saved per model and chart); the "Explore thresholds" rule below is replaced (a Band list is the library's `ClassifierBins` plus colours: contiguous edges, the classifier's own inclusivity, no gaps); `Outputs` carries no `stamp`, and `toLibraryInputs` feeds a synchronous call, not a Worker.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decisions 32–34** (2026-09-22): "hard range" in the "Switching models" rule below is the model's Applicability as the pre-call gate reads it, and the switch is rehearsed on a copy of the slot (convert entry mode, seed missing quantities from the new model's defaults, then ask the gate), so "No, stay here" leaves the slot untouched; a model reached by URL gets no dialog; slot 0 only until Compare (decision 32). While an entry is out of range the gate keeps the last valid inputs of the current model and derives everything else, so unit system, chart type and axes still take effect and a model change drops what was kept (decision 33). `toLibraryInputs` no longer builds a keyed record: `run` reads values by `Quantity` (decision 34).
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 36** (2026-09-23): `InputSlot.options` below is `SvelteMap<OptionSpec, boolean>` (there is no `OptionValue`) and PMV (ASHRAE 55) is the first model to declare one; across a model switch it is a superset bag like `values`, seeded at the new model's defaults, and the dialog never lists an option.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 39** (2026-09-28): in the first rule below, separate → operative weighs by the model's own standard: `withTemperatureMode` converts with the library's `t_o(tdb, tr, v, model.standard)`, not `operative_tmp(tdb, tr, v)`, and a model that declares no standard passes none, so the library's default decides.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 6**: `Session.standard?: StandardRef` below is dropped. The session holds no standard of its own: a model's standard is its declaration's `standard`, read through `session.model`, so there is one copy.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 47** (2026-09-28): the `InputSlot` sketched below declares `implements Slot`, the shape core reads, held in `core/slot.ts` with the reads of what the person entered and the changes a person makes to a slot. Its `humidity` is optional: absent until a declaration's default or the person writes it, so a slot opened on a model without humidity holds none. `values` and `options` are read-only outside the class: every write is a core function from a slot to a slot (entering a value, setting an option, changing either entry mode), which the class lands through `replaceWith`, so the humidity entry mode converts in core as the temperature one does. A slot starts as the empty slot put through the switch's seeding (`startingSlot(model)`), not at a humidity of its own.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 48** (2026-09-28): in the second rule below, whether `v_relative(v, met)` is applied is not specified by the declaration file: `relativeAirSpeed` is gone. It is read from the model info, by `takesRelativeAirSpeed(model)` in `core/modelDeclaration.ts`, which answers whether the info's inputs name `vr`. PMV's info still names `vr`, so the rule's 2026-09-03 decision holds in effect.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 49** (2026-09-29): `environment: { atmosphericPressure }` below is `atmosphericPressure: number`, held by the session directly, in Pa. In the first rule, and in §5's tree, `toLibraryInputs`'s third parameter is that pressure, `p_atm`, in place of `environment`. It derives `rh` from a humidity ratio with it and hands it to no model: no registered model takes the pressure.
+>
+> **Noted 2026-09-29 ([ADR-0002](0002-library-interface-model-info.md) decision 49, as noted the same day; `.scratch/atmospheric-pressure/` ticket 05).** The third parameter is named `atmosphericPressure`, not `p_atm`: `toLibraryInputs(slot, model, atmosphericPressure)` (`core/libraryInputs.ts:54`). `p_atm` is the library's name for the value.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decisions 50 to 52** (2026-09-29): `compare: { enabled, activeSlot, baselineSlot }` below is whether Compare is on and whether slots 2 and 3 are each enabled; there is no active slot and no baseline (decision 50). `InputSlot` keeps its `humidity` and `temperature` entries, and the session keeps the three slots in one entry mode per entry group (decision 51). `Outputs` keeps a last valid run per slot, and in the "Switching models" rule "all three slots are handled the same way" reads: one dialog lists the compared slots' rows and asks once, and a slot that is not compared is converted and seeded without being listed or adjusted (decision 52).
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 53** (2026-09-29): while the atmospheric pressure is out of range, a humidity-ratio entry has no bound, so the dialog of the "Switching models" rule neither lists it nor moves it.
+>
+> **Noted 2026-09-30 ([ADR-0002](0002-library-interface-model-info.md) decisions 50 to 52, as noted the same day; `.scratch/compare/` ticket 09).** As built (`state/session.svelte.ts`, `state/compute.svelte.ts`): `Session.compare` is a boolean, with `setCompare`, `isSlotEnabled`, `setSlotEnabled` and the derived `comparedPositions` beside it. `slots` below is `[InputSlot, InputSlot | null, InputSlot | null]`, slots 2 and 3 `null` until first enabled. The session holds no entry mode of its own: `temperatureMode` and `humidityMode` read slot 1's, and `setTemperatureMode` and `setHumidityMode` convert every slot that holds values. The last valid run is kept by a `SlotOutputs`, one per slot, and `Outputs.slots` lists those of the compared slots. "All three slots" in the "Switching models" rule is every slot that holds values.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 54** (2026-09-30): the `v → vr` rule below holds under the air-speed entry group's first entry mode; under the second the person enters `vr`. Clothing is the second such group: the model's standard's rule derives the dynamic clo from the entered one under the first mode, and the second enters the dynamic clo. The share link writes the entry modes once, beside the model (decision 51 as amended the same day).
+>
+> **Noted 2026-10-01** ([ADR-0002](0002-library-interface-model-info.md) decisions 51 and 54, as noted the same day; `.scratch/activity-adjusted-inputs/`, `150fae9` to `60f088f`): Done. `InputSlot` holds `airSpeed` and `clothing` entries beside `temperature`, each `{ mode }`; the session reads the three modes held among the values off slot 1 (`Session.entryModes`, `state/session.svelte.ts:294-296`), the humidity mode beside them (`:327-329`), and converts every slot that holds values through `setAirSpeedMode` and `setClothingMode`. `toLibraryInputs` gives the model `vr`, derived or entered, and, for a model with the clothing group, the dynamic clothing insulation under the library's `clo` (`core/libraryInputs.ts:40-48`). The switch back inverts in both groups (`core/slot.ts:508, 545`). In the "Switching models" rule, a slot bound for a model without a group returns to the group's default mode, converted under the model it leaves (`core/modelSwitch.ts:112-117`); the activity-adjusted entries are held to the new model's bound converted into them (`core/applicability.ts:232-235`), so the dialog lists them. The share link is Phase 5 item 4's and is not built.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decisions 57 and 59** (2026-10-01): `Session.workspace` below is the page, one of `core/page.ts`'s set, and the session is created once in `App.svelte` for every page; `ChartState` holds the model's Band list in place of `bandsByOutput`. The "Explore thresholds" rule below is replaced by decision 59: a Band list is the classifier's copy with a colour per band, contiguous Edges, the classifier's own inclusivity and no gaps, edited inline in a panel named Bands, one per model, kept across a model switch and carried by the link.
+>
+> **Noted 2026-10-02** ([ADR-0002](0002-library-interface-model-info.md) decisions 57 and 59, as noted the same day; `.scratch/explore/` ticket 09): built as `eb9ecd4`, `47498cb` and `9f95582`. The session lives as long as the document: it survives a page change made in the app, by a link, the select or the back and forward buttons, and a typed address or a new tab starts a new one. "Carried by the link" waits for the link, Phase 5 item 4. The panel sits under the chart's legend.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 63** (2026-10-06): a session lasts as long as its tab. The tab keeps it in `sessionStorage`, so it survives a reload and an address typed into the tab, where the note above has both start a new one; and it is replaced only on the person's yes, by a share link opened in the tab or by Reset, which puts a new session on the defaults in its place. `Session` is built from a decoded text or from a model's defaults. "Carried by the link" in the marker of 2026-10-01 is a link copied on the Explore page.
+
+```ts
+class Session {                                        // shared by Standard + Explore; Time-series has its own separate session
+  workspace: Workspace; standard?: StandardRef; model: RegisteredModel;   // StandardRef is a member of the library's reference.standards
+  unitSystem: UnitSystem;                              // display layer only
+  compare: { enabled: boolean; activeSlot: Slot; baselineSlot: Slot };
+  slots: readonly [InputSlot, InputSlot, InputSlot];
+  chartByModel: Map<RegisteredModel, ChartState>;      // each model remembers its own chart settings
+  environment: { atmosphericPressure: number };        // "Set pressure"; affects humidity conversion
+}
+class InputSlot {
+  values: SvelteMap<Quantity, number>;                 // canonical SI; cross-model superset bag (restored automatically on switching back); excludes rh; stores operative_tmp under operative, tdb / tr under separate
+  humidity: { mode: HumidityMode; value: number };     // the quantity the user entered is the truth
+  temperature: { mode: TemperatureMode };
+  options: SvelteMap<OptionSpec, OptionValue>;         // OptionSpec is an app type, supplied by the declaration file; the two v1 models have no options
+}
+class ChartState {
+  type: ChartType; axes: { x: Quantity; y: Quantity }; output: Quantity;
+  bandsByOutput: Map<Quantity, Band[]>;                // Explore thresholds; defaults derived from the library's IntervalScale (e.g. pmv's tsv); outputs without a scale get default Bands from the declaration file
+}                                                      // no "show zones" toggle: compliance zones and bands are always drawn
+class Outputs { perSlot: readonly (ModelResult | null)[]; grid: GridResult | null; stamp: number; }   // derived, never persisted
+```
+
+Rules:
+
+- **The quantity the user entered is the truth.** Humidity is stored as the original value in `humidity`; `rh` is derived by the pure function `toLibraryInputs(slot, model, environment)` from the current `tdb` and atmospheric pressure before sending to the Worker (changing `tdb` keeps the dew point and changes RH, consistent with the old tool); when switching representation, the current value is converted into the new representation. Under `temperatureMode.operative` the slot stores `operative_tmp`, and `toLibraryInputs` expands it to `tdb = tr = operative_tmp`; on a mode switch the value is converted: separate → operative uses the library's `psychrometrics.operative_tmp(tdb, tr, v)`, operative → separate sets `tdb = tr = operative_tmp`.
+- `toLibraryInputs` also handles `v → vr`: the PMV panel shows `v`, the library needs `vr`. Whether `v_relative(v, met)` is applied is model behaviour, specified by the declaration file (`relativeAirSpeed`). Decided 2026-09-03: PMV declares `relativeAirSpeed: true`, matching the deployed CBE tool; the `refactor-draft` prototype passed the entered value through unchanged, so when comparing against it enter `v_relative(v, met)` there.
+- Outputs are derived entirely from Inputs + Chart, observed and written by `state/compute.svelte.ts`; transient UI state does not enter the Session.
+- Switching models: parameters for the same quantity are kept; parameters outside the new model's hard range open a dialog (title "Boundary Range Warning", a table Input / Current / Allowed range, buttons "Yes, switch and adjust" / "No, stay here"); no dialog when nothing is out of range; all three slots are handled the same way.
+- Explore thresholds: an ordered list of `Band`s, lower bound inclusive, upper bound exclusive, gaps uncoloured; the editor has Add band / Reset / delete; saved per (model, output) and included in the link; colours are assigned by the app from a fixed palette by interval position, and are editable.
+
+### 4.6 Units and number display
+
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 56** (2026-10-01; decision 55, taken earlier the same day, had withdrawn the second bullet's "the stored value keeps full precision" and was itself withdrawn before its code landed, so the bullet holds): the gate compares an entered value and its bound's ends at the formatter's precision in the quantity's SI display unit, and the range beside a row is the bound's ends formatted as any number is, so a difference no row shows never closes the gate and the range a person reads is the range it accepts. **Noted 2026-10-01** (`.scratch/one-precision/`, `c59b51b` to `2e78fa0`): as built, an end whose nearest number, typed back, the gate would stop steps one shown digit inward (`≤ 0.79` inHg for 2700 Pa, decision 56 rule 3 as revised), and the comparison is `isShownBeyond` in `core/numberFormat.ts`, beside the formatter and its one constant.
+
+- **Canonical stored state is always SI**, and the library is always called in SI (even though the library supports IP, that path is not taken, guaranteeing a single path).
+- Switching to IP: the input box shows `displayUnitFor(quantity, unitSystem.ip).fromSi(si)`; when the user edits in IP: parse → `toSi` → store. The stored value keeps full precision and only the display text is formatted; therefore switching SI ↔ IP back and forth does not drift.
+- Ranges, default values and chart axis labels are likewise converted at the display boundary.
+- The step comes from the `DisplayUnit.step` of the **currently displayed unit**.
+- Conversion formulas live in `core/units.ts`, the exception explicitly stated in §3; the library's `units_converter` is not used.
+- One formatting function for the whole project: at most two decimals, trailing zeros stripped (`26.0 → 26`, `0.51 → 0.51`, `78.80 → 78.8`).
+
+### 4.7 Computation pipeline
+
+> **Superseded in part by [ADR-0002](0002-library-interface-model-info.md) decisions 28 and 29** (2026-09-21): no Worker, no Comlink, no stamp and no "computing" indicator in v1; the pipeline below runs synchronously, and the grid is 51×51. The zone-boundary parameters and the 300 ms line (now the condition for reopening decision 29) stand.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 29 as amended 2026-09-28** (review after Phase 4b, Proposal 16): the Grid bullet's cache key is dropped. v1 caches no grid: every valid edit rescans it, whichever quantity changed.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 61** (2026-10-02): `charts.psychrometricZone` leaves the pipeline and the "Zone boundary" bullet with it; the psychrometric chart is the grid scan, contoured at the zones' limits.
+>
+> **Noted 2026-10-02** ([ADR-0002](0002-library-interface-model-info.md) decision 61's note of the same day; `.scratch/explore/` ticket 09): built as `76589c0` and `3e397c8`. "The zone-boundary parameters … stand" in the first marker above no longer holds: no zone boundary is solved, and every Comfort zone the app draws but Adaptive's polygons is a contour of the 51×51 scan. The 300 ms line stands as one scan.
+
+`Session change → toLibraryInputs → compute.worker (Comlink) → model.run / charts.psychrometricZone / grid scan → Outputs (with stamp, stale ones discarded) → ChartSpec → PlotlyChart`
+
+- Zone boundary: one line per 5% RH (21 lines), PMV residual `epsilon` 0.001, secant method falling back to bisection on failure, saturation line every 0.5 °C.
+- Grid: 100×100; cache key = model + output + non-axis parameters (dragging an axis parameter does not recompute); keep the old chart while computing, show "computing" after >300 ms.
+- Library benchmarks (prototype fork, V8): PMV in still air 1.7 µs per call; PMV with cooling effect 43 µs; UTCI 0.5 µs; PHS (480 min) 244 µs → 100×100 about 20 ms / 0.43 s / 5 ms / 2.4 s respectively.
+
+### 4.8 Share link schema v1
+
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decisions 30 and 31** (2026-09-21): `"model"` is the model name, the library's function name, as the example already shows; `chart.output` goes; `chart.bands` is edges + labels + colours, not `{ min, max }` intervals. The example is left as written; `core/shareLink.ts` fixes the final schema in Phase 5.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 49** (2026-09-29): the example's `"environment": { "p_atm": 101.325 }` is the atmospheric pressure in Pa, `101325`, with no `environment` around it. A link that carries none means 101 325 Pa. The example is left as written.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 50** (2026-09-29): the example's `"compare": { "enabled": true, "active": 0, "baseline": 0 }` carries whether Compare is on and which slots are enabled, with no `active` and no `baseline`. A slot never enabled is `null`, as the example's second and third are. The example is left as written.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decisions 51 and 54** (2026-09-30): the example's per-slot `"humidity": { "mode": … }` and `"temperature": { "mode": … }` are written once, beside `"model"`, one mode per entry group, air speed and clothing included; a slot carries its values and options alone. The example is left as written.
+>
+> **Noted 2026-10-01** ([ADR-0002](0002-library-interface-model-info.md) decision 51's note of the same day; `.scratch/activity-adjusted-inputs/`): the link is not built (Phase 5 item 4). What it will write is: the session holds no entry mode of its own and reads the four off slot 1 (`Session.entryModes` for temperature, air speed and clothing, `Session.humidityMode` for humidity), and the ids it would carry are the modes' `id`s in `core/entryModes.ts` (`air-speed`, `relative-air-speed`, `clothing-insulation`, `dynamic-clothing-insulation` for the two new groups). A slot's values hold `vr` under relative air speed entry and `clo_dynamic` under dynamic clothing entry, in place of `v` and `clo`.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decisions 57 and 59** (2026-10-01): the example's `"workspace"` key is `"page"`, and `chart.bands` is the Band list: the classifier's `edges`, `labels` and `right` with a colour per band, one list per model. The example is left as written.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 63** (2026-10-06): the final schema is decision 63's rule 1, and the example below is history. Against the markers above: the text names its `"model"` and no page or standard, which the path names; a slot's humidity is among its `values`; `options` and `charts` are grouped by model name; `bands` has no `right`. The first bullet's "carries only the current model's chart settings and the quantities declared by the current model" is the link's, narrowed further to what its page is computed from, while the tab keeps the same text un-narrowed; its `xxxFromId()` is one private lookup in `core/shareLink.ts`. The third bullet's failure restores the session the tab kept before it falls back to the defaults.
+>
+> **Noted 2026-10-06** ([ADR-0002](0002-library-interface-model-info.md) decision 63, as noted the same day; `.scratch/share-link/` ticket 07): built as `d68d4e8`, `cd3e560`, `12857d1`, `a9daa48` and `788d03c`. The 2026-10-01 note's "the link is not built" no longer holds, and the decision-49 marker's "a link that carries none means 101 325 Pa" is withdrawn (decision 49's amendment of 2026-10-06): a text without `p_atm` is refused. A chart entry's `bands` may be absent, as a link copied on the Standard page writes it, and the session then starts on the classifier's list. The first bullet's "the only file in the app that turns objects into strings and back" holds of the text, but two of its strings are elsewhere: the parameter's name in `routes/navigation.ts` and the tab's storage entry in `state/keptText.ts`. §2's State row, "the share payload is generated only on Export Link", no longer holds: the tab's text is written at every change of the session (`App.svelte:35-39`), and only the narrowed link waits for Copy link.
+
+`?share=v1.<Base64URL(JSON)>`
+
+```json
+{ "workspace": "explore", "standard": null, "model": "pmv_ppd_iso",
+  "unitSystem": "SI",
+  "compare": { "enabled": true, "active": 0, "baseline": 0 },
+  "environment": { "p_atm": 101.325 },
+  "slots": [
+    { "values": { "tdb": 26, "tr": 25, "v": 0.1, "met": 1.0, "clo": 0.51 },
+      "humidity": { "mode": "rh", "value": 50 }, "temperature": { "mode": "separate" },
+      "options": { "airspeed_control": "with_local_control" } },
+    null, null ],
+  "chart": { "type": "dynamic", "axes": { "x": "tdb", "y": "v" }, "output": "pmv",
+             "bands": [ { "label": "Cold", "min": null, "max": -2.5, "color": "#1f5fa8" } ] } }
+```
+
+- Carries only the current model's chart settings and the quantities declared by the current model; all ids come from each collection object's `.id` / `Quantity.key`, and decoding goes through each collection's `xxxFromId()` function; this is the only file in the app that turns objects into strings and back.
+- The Time-series route uses `?share=v1z.<Base64URL(deflate(JSON))>` and includes `rows`; the ES5 summary page decodes only `v1.`, and shows "time-series data omitted" for `v1z.`. **Noted 2026-10-07** (`.scratch/proxy-notice/` ticket 01, `224ba0b`): there is no ES5 summary page; §2's static notice, in `index.html`, decodes no link of either prefix.
+- On parse failure fall back to defaults and notify, never a blank page; when the schema changes, write `migrate(v_old → v_new)`.
+
+### 4.9 Time-series (not phase one)
+
+> **Amended 2026-10-01 ([ADR-0002](0002-library-interface-model-info.md) decision 57)**: Time-series is in v1, with PHS, and has no phase yet; "not phase one" in the heading is history. `core/page.ts` already holds `page.timeSeries`, and the declaration field is optional, `timeSeries?: true`, written by no registered model.
+
+The input is a table editor of "segment N + duration in minutes" (rows added one at a time), isolated from the Compare slot concept; stateless models are evaluated row by row, stateful models (PHS) call the library's `sequentialSimulation`; upper limit 200 rows; an explicit "Calculate" button; a separate session.
+
+---
+
+## 5. Directory layout and boundaries
+
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decisions 6, 9, 11, 12**: `core/quantities.ts` and `core/applicability.ts` are added, `core/compute/` returns for the zone geometry (superseded by ADR-0002 decision 24: it is `src/temporary-library/`), `standard.ts` generates name and segment from the `Standard` key, `modelDeclaration.ts` has no `defineModel`, and the model-function lint boundary is by `importNames`.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 32** (2026-09-22): the tree gains `core/modelSwitch.ts` — `rehearseSwitch(slot, model)` and `adjustToBounds(inputs, rows)`, the only place in the app that moves a value the person entered. `ui/dialogs/` stays reserved for a dialog that is not part of a panel: the app's first dialog, `ModelSwitchDialog.svelte`, is at `ui/inputs/`, placed with what it is about and where it renders.
+>
+> **Amended 2026-09-28** (review after Phase 4b, Proposal 4; `.scratch/review-after-4b/decisions.md`, round 12): the tree gains `core/modelRun.ts` — running a model on a slot, `runOn(slot, model)`, a new function, and reading its result through three readers: `resultValue` and `resultWarnings`, which moved there from `core/libraryInputs.ts`, and `resultNumber`, new, which reads `resultValue` as a number. The rest of `libraryInputs.ts` stays, `enteredQuantities` and `withTemperatureMode` included. The module landed with `9ec0d79`.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decisions 7, 28 and 29**: there is no `workers/` directory and no `compute.worker.ts`; v1 computes synchronously, and library model functions are imported only in `models/` and `temporary-library/` (decisions 24 and 29; see §3's marker for decisions 12, 24 and 29). `dynamicChart.ts` scans a 51×51 grid, `GRID = 51`, not 100×100 (decision 28). `bandPalette.ts` colours by position in a library `ClassifierBins`, not an `IntervalScale` (decision 7).
+>
+> **Amended 2026-09-28** (review after Phase 4b, Proposal 18; `ST06`, `PT05`): the tree lists concepts, not every file. Left out by rule: the entry files `main.ts` and `App.svelte`; a file shared by tests (`core/declarationTestSlots.ts`, `state/sessionTestReaders.ts`); a type declaration (`ui/charts/plotly.d.ts`, §2.1's marker); and a component in a directory the tree already describes (`routes/StandardPage.svelte`, the controls in `ui/inputs/`). The modules added since, beyond the markers above: `core/presets.ts` (ADR-0002 decision 20), `core/comfortZones.ts` (decision 31 as revised 2026-09-25), `core/resultCell.ts` (what a result-table cell shows), `core/charts/polygon.ts` (point-in-polygon, for the hover grid), `core/charts/specParts.ts` (the pieces both chart spec builders assemble: the slot marker, a Comfort zone, an axis, a range's samples), `routes/routeModels.ts` (a standard's models, apart from `navigation.ts` so that it loads under vitest without the router) and `ui/layout/spacing.ts` (the next marker). Planned, and waiting for their first consumer: `core/workspace.ts` and `core/shareLink.ts` (rewrite plan, Phase 5) and `state/timeSeriesSession.svelte.ts` (Time-series, after v1); `ui/dialogs/` stays reserved (decision 32's marker above).
+>
+> **Amended 2026-09-28** (review after Phase 4b, Proposal 20; `S104`): the `app.css` line below is narrowed, as the rewrite plan's Phase 3.6 item 7 landed it. The stylesheet declares no spacing or font scale; Tailwind 4 ships both. It imports Tailwind, its animation plugin, shadcn-svelte's stylesheet and the Geist font; holds the project's tokens in `:root` (`--brand`, which `--primary` follows until Phase 5c picks the colour, `--font-size-caption`, and shadcn-svelte's colour and radius variables); and, in an `@theme inline` block, maps them to Tailwind's colour and radius tokens and sets the sans font to Geist; a `@layer base` block applies the border, background, text and font to every page. The spacing scale the layout components accept is `ui/layout/spacing.ts`'s `gapClass`, four steps of Tailwind's own, written as full class names so Tailwind can see them.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 47** (2026-09-28): the tree gains `core/slot.ts` — the slot's shape `Slot`, the slot a model starts on and the seeding a switch uses, the changes a person makes to a slot (entering values, setting an option, either entry mode) and the reads of what the person entered (`enteredValue`, `enteredQuantities`, `panelQuantities`, `resolvedTdb`, `relativeHumidityOf`, `operativeTemperatureOf`, with the get-or-throws `requireValue` and `requireHumidity`). `enteredQuantities` and `withTemperatureMode`, which the Proposal 4 marker above keeps in `core/libraryInputs.ts`, moved there too; `libraryInputs.ts` keeps what turns a slot into the library's params. The adjuster decision 32's marker above names is `adjustToBounds(slot, rows)`; it stays in `core/modelSwitch.ts` and writes through `withEnteredValues`.
+
+> **Noted 2026-10-01** ([ADR-0002](0002-library-interface-model-info.md) decision 54; `.scratch/activity-adjusted-inputs/`): the tree gains `core/clothingCorrection.ts`, the clothing rule per standard, and, in `src/temporary-library/`, `v_relative_inverse.ts` and `clo_dynamic_inverse.ts`, the inverses of the two activity corrections (decision 54 as revised 2026-09-30).
+>
+> **Noted 2026-10-02** ([ADR-0002](0002-library-interface-model-info.md) decision 61): `psychrometricChart.ts` calls no solver; `src/temporary-library/` loses `pmv_psychrometric_zone.ts` and `root_finding.ts` and keeps `chart-online.json`.
+>
+> **Noted 2026-10-02** ([ADR-0002](0002-library-interface-model-info.md) decisions 57 to 61; `.scratch/explore/` and `.scratch/one-scan/`, closed out by `.scratch/explore/` ticket 09): the tree gains `core/page.ts` (the page set, `Address`, `pagesOf`), `core/bands.ts` (the Band list and its operations), `state/openSession.ts` (the one session, offered to every page through a Svelte context) and `routes/inAppSwitch.ts` (the in-app switch the navigation, the select and the dialog share); `routes/ExplorePage.svelte`, `routes/PageNavigation.svelte` and the new controls in `ui/inputs/` (`BandsPanel`, `NumberInput`, `ModelSelect`, `SessionControls`, `UnitSystemControls`) are left out by the 2026-09-28 marker's rule. That marker's planned `core/workspace.ts` landed as `core/page.ts`. Its glosses no longer cover two modules: `core/charts/specParts.ts` also holds the scan (`GRID`, `Sweep`, `ScanFrame`, `scannedField`) and the painting both builders share (`fieldPaintFor`, `hoverGridFor`, `contouredZonesOf`, `bandsFor`), so the decisions-7, 28 and 29 marker's "`dynamicChart.ts` scans a 51×51 grid" is both builders scanning through it; and `routes/routeModels.ts` also holds the navigation's table and links (`navigationStandards`, `standardLinks`, `isCurrentLink`), the select's choices (`modelChoicesOn`) and the Explore route's segments. The tree's `bandPalette.ts` line is the palette table keyed by the classifier object (decision 60).
+>
+> **Noted 2026-10-06** ([ADR-0002](0002-library-interface-model-info.md) decision 62; `.scratch/three-chart-types/` ticket 06): the tree gains `core/charts/adaptiveChart.ts`, the adaptive chart's builder (`fd36196`), so the `charts/` line's two builders are three. The 2026-09-28 marker's `core/charts/polygon.ts` is the adaptive builder's alone, and counts a point on a polygon's outline as inside (`04d48f6`). Its `specParts.ts` gloss, "a Comfort zone", is now the painted region's constructor, `paintedRegionFor`, which makes a Comfort zone's or a Band's fill and line, and the 2026-10-02 marker's list of the painting adds `contiguousTopOf`. `axisFor` and `markerFor` serve all three builders; `hoverGridFor` and `labelFor` serve the adaptive builder directly and the two scanned ones through `fieldPaintFor`.
+>
+> **Noted 2026-10-06** ([ADR-0002](0002-library-interface-model-info.md) decision 63, as noted the same day; `.scratch/share-link/` ticket 07): the 2026-09-28 marker's planned `core/shareLink.ts` landed (`d68d4e8`): the codec, `toText`, `toDecodedSession` and `narrowedToPage`, with no `migrate`. The tree gains `core/writtenSession.ts` (the session as a plain value, what it is built from and reads itself out as, with `startingSession`, `startingChartSettings` and `comparedPositionsOf`; `bdcc451`, `comparedPositionsOf` moved there by `788d03c`), `state/keptText.ts` (the tab's one `sessionStorage` entry; `a9daa48`), `state/firstLoad.ts` (`firstLoadAt`, which text a document load opens, touching no browser; `a9daa48`) and `state/tab.svelte.ts` (`Tab`: the open session, the notice, a waiting link and the one replacement Reset and a link's yes call; `fcb2ca8`). `state/openSession.ts` also offers the pages the tab's controls (`TabControls`) and holds the `Notice` type. `ui/inputs/CopyLinkButton.svelte`, `ui/inputs/QuestionDialog.svelte` and `ui/outputs/NoticeLine.svelte` are left out by the 2026-09-28 marker's rule.
+>
+> **Noted 2026-10-07** ([ADR-0002](0002-library-interface-model-info.md) decision 64, as noted the same day; `.scratch/image-export/` ticket 07): the tree gains `core/image.ts` (the Image's sizes and formats, its description, footer, default title and file name; `3e1623e`, `e6cfb63`, `b2143f9`, `84d3ca3`), `core/inputSummary.ts` (the Input summary; `b2143f9`), `ui/charts/plotlyFigure.ts` (the conversion of a `ChartSpec` into Plotly, out of `PlotlyChart.svelte`; `6e4f350`) and `ui/charts/plotlyImage.ts` (the image's figure and its download; `3e1623e`). `src/buildConstants.d.ts`, which declares the two versions the build defines, and `ui/inputs/ExportImageDialog.svelte` are left out by the 2026-09-28 marker's rule.
+>
+> **Noted 2026-10-07** (`.scratch/proxy-notice/` ticket 01, `224ba0b`): the `index.html` line below holds an ES5 feature check and §2's static notice, not a summary page. The tree gains `tests/browser/`, beside `src/`: the Playwright tests, matched as `*.visual.ts` or `*.behaviour.ts`, the first being `proxyNotice.behaviour.ts` (renamed `browserNotice.behaviour.ts` 2026-10-07, ticket 02).
+
+>
+> **Noted 2026-10-08** ([ADR-0002](0002-library-interface-model-info.md) decisions 65 to 67; Phase 5c's grilling): the tree gains `core/palette.ts` (the design's named colours, which `slotBadge.ts` and `bandPalette.ts` read) and `ui/layout/PageFrame.svelte` (the header, the three columns and the footer); `app.css` also holds a `@layer components` block of semantic classes and one unlayered block of size adjustments to the generated primitives by `data-slot`. A business component carries no `<style>`, a lint rule once Phase 5c closes.
+>
+> **Noted 2026-10-09** ([ADR-0002](0002-library-interface-model-info.md) decisions 65 to 72, as noted the same day; `.scratch/interface-design/` ticket 13): the lint rule is `styleBlockSyntax` (`b373ccc`). The tree also gains `ui/layout/SlotColumns.svelte`, the one column template of Compare's slot buttons, boxes, options and hints (`b0db574`); `core/palette.ts` also exports `lettering`, the family and caption size the hover readout is lettered in (`fe1a3f2`); `ui/primitives/` gains `toggle`, `toggle-group` and `dropdown-menu`, generated. `ui/inputs/EntryModeControls.svelte` is gone (`edb0282`); `EntryGroupMenuButton.svelte` and `PresetMenuButton.svelte` (once `PresetInput.svelte`) are left out by the 2026-09-28 marker's rule. The 2026-09-28 marker's `app.css` line now reads: the colour tokens are `core/palette.ts`'s hex values, `--primary` and `--ring` follow `--brand` (`#2a4583`), and the size tokens are `--font-size-title`, `--font-size-heading`, `--font-size-body`, `--font-size-caption` and `--chart-height`; the unlayered block sets sizes and layout, never a colour.
+>
+> **Noted 2026-10-09** ([ADR-0002](0002-library-interface-model-info.md) decision 73, the shell's grilling; ahead of the
+> code): the UI row's "CLI-generated, never hand-edited" is the primitives'; a block from the registry (`sidebar-16`) is
+> generated too, then edited, and its files live in `ui/layout/`, where utilities are allowed, each file's head listing
+> what was kept and what changed. A page part with a counterpart in the registry is built from it; the hand-made parts
+> are named in decision 73, rule 1. The look is `docs/design.md`. The `app.css` line now reads: `--brand` is `#003262`;
+> a `--ground` token, `#f8fafc`, carries the page's ground and a field's tint; the sidebar primitive's eight tokens
+> derive from the existing ones; `--chart-cap` replaces `--chart-height`; the unlayered block sets sizes, layout and
+> which token a slot reads, never a literal colour.
+>
+> **Noted 2026-10-12** ([ADR-0002](0002-library-interface-model-info.md) decision 73's note of the same date;
+> `.scratch/shell/` ticket 11): the note above holds of the code at `b365056`. `ui/layout/` gains the block's
+> `AppSidebar.svelte`, `SiteHeader.svelte` and `NavGroup.svelte`, and `marks.ts`, the two marks' files and sizes;
+> `routes/inAppSwitch.ts` gains `inAppLinkTo` (`1906b86`), the one link both the navigation and the header's mark
+> are built with. `ui/primitives/` gains `card`, `sidebar`, `sheet`, `tooltip`, `skeleton`, `alert` and `field`, generated,
+> with the mobile hook at `ui/primitives/hooks/is-mobile.svelte.ts`, and `separator` is regenerated. The `app.css`
+> line also has `--space-page`, `--space-field` and `--header-height`, the page's two spacing values and the header's
+> height; the frame's `--frame-width` is set on the sidebar provider beside `--sidebar-width`, not in `app.css`. The
+> 2026-09-28 marker's `gapClass` has three steps, not four of Tailwind's own: `"1"` reads `--space-field`, `"2"` and
+> `"4"` both `--space-page` (`a324626`). The 2026-10-08 note's `PageFrame.svelte`, "the header, the three columns and
+> the footer", is now the sidebar provider holding `SiteHeader`, a row of the sidebar and the inset's three cards,
+> and the footer.
+>
+> **Noted 2026-10-12** ([ADR-0002](0002-library-interface-model-info.md) decision 74, as noted the same day;
+> `.scratch/display-order/` ticket 05): the 2026-10-02 note's gloss of `routes/routeModels.ts` no longer names
+> `navigationStandards`, deleted in `25cd739`; `standardLinks` and `modelChoicesOn` read one grouping of the
+> registry by standard, `modelGroupsOf` (`1f139d1`), whose group type, `ModelGroup`, is declared in
+> `ui/inputs/ModelSelect.svelte`'s module script. `core/standard.ts` gains `isSameStandard` (`42e6d0b`), the one
+> reader of whether two editions are of one standard.
+>
+> **Noted 2026-10-16** ([ADR-0002](0002-library-interface-model-info.md) decisions 75 and 76, as noted the same day;
+> `.scratch/input-calculators/` ticket 06): the tree gains `core/calculators.ts`, the input calculators and the rule
+> that writes a result into a slot (`436b834`); `ui/primitives/` gains `tabs` and `switch`, generated (`501bf8c`,
+> `4d6f6df`); `tests/browser/` gains `calculators.behaviour.ts`. The 2026-10-09 note's `PresetMenuButton.svelte` is
+> `RowMenuButton.svelte` (`3f325bb`), left out with the calculators' components by the 2026-09-28 marker's rule.
+>
+> **Noted 2026-10-19** ([ADR-0002](0002-library-interface-model-info.md) decision 78, as noted the same day;
+> `.scratch/chart-verification/` ticket 06): `core/charts/` gains `scan.ts`, the scan (`GRID`, `ScanFrame`,
+> `scannedField`), and `fieldPaint.ts`, the painting of Comfort zones and Bands and the hover grid (`fieldPaintFor`,
+> `hoverGridFor`), both drawn out of `specParts.ts` (`456434b`); and `regionTracer.ts`, the region tracer
+> (`traceRegion`, `64a1f8b`). `scan.ts` gains the bisection and `comfortZonesOf`, `fieldPaint.ts`'s
+> `contouredZonesOf` renamed and moved (`8c7da08`). `specParts.ts` keeps the small parts every builder shares, among
+> them `labelFor`, `zoneInkFor`, `markerFor` and `axisFor`. The 2026-10-02 and 2026-10-06 notes' glosses of
+> `specParts.ts` (`scannedField`, `contouredZonesOf`, `bandsFor`, `paintedRegionFor`) are read through this one;
+> `bandsFor` and `paintedRegionFor` are gone with the contour (`f93a1c1`).
+>
+> **Noted 2026-10-22** ([ADR-0002](0002-library-interface-model-info.md) decision 83, as noted the same day;
+> `.scratch/applicability-display/` ticket 07): the tree gains `core/applicabilitySummary.ts`, the applicability
+> summary's two parts from a slot's out-of-range rows and violation rows (`c170f00`, `c1f8445`, `6e7e469`).
+> `core/resultCell.ts` also says whether a cell's "—" stands for a violation (`31a5f5a`), and `core/charts/chartSpec.ts`
+> gains `ChartNote`, a line under the plot (`4f6595f`). The 2026-10-09 note's `ui/layout/SlotColumns.svelte` no longer
+> lays out hints: `ui/inputs/InputPanel.svelte` draws no applicability alert (`c1f8445`).
+
+```
+src/
+  core/                 plain TS; ESLint forbids importing svelte / state / ui
+    workspace.ts  chartType.ts  unitSystem.ts  entryModes.ts   closed sets (as const objects + plain functions)
+    standard.ts           library reference.standards object → path segment
+    modelDeclaration.ts   defineModel + RegisteredModel
+    libraryInputs.ts      toLibraryInputs(slot, model, environment): entry groups → library inputs (Map → init, v → vr, operative_tmp → tdb = tr)
+    numberFormat.ts       two decimals, trailing zeros stripped
+    units.ts              display units: symbol, step, SI↔IP conversion (§3 exception)
+    bandPalette.ts        the one band palette: colour by position in a library IntervalScale
+    shareLink.ts          encode / decode (migrate arrives with v2)
+    charts/   chartSpec.ts (includes LegendEntry)  psychrometricChart.ts (calls charts.psychrometricZone)  dynamicChart.ts (100×100 grid)
+  models/               one declaration file per model + index.ts; the only directory on the main thread that may reference library model functions
+  state/                session.svelte.ts  compute.svelte.ts  timeSeriesSession.svelte.ts
+  workers/              compute.worker.ts (the only place that calls library model functions)
+  ui/
+    primitives/         shadcn-svelte generated; Tailwind allowed; never hand-edited
+    layout/             Stack.svelte  Grid.svelte  Inline.svelte; Tailwind allowed
+    inputs/  outputs/ (ResultTable.svelte)  charts/ (PlotlyChart.svelte  ChartLegend.svelte)  dialogs/   business components; utility classes forbidden
+  routes/               page composition; navigation.ts (the only place sv-router is used)
+  text/                 UI copy dictionary (English only in v1)
+  app.css               Tailwind @theme tokens (a limited spacing / font scale)
+index.html              embedded ES5 feature check + read-only summary page
+```
+
+---
+
+## 6. Coding conventions
+
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decisions 2 and 6**: quantities come from the app's table, standards from the library's `Standard`; "imported from the library" below reads accordingly. `Quantity.label` remains the only source of a quantity's name.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 41 as amended 2026-09-28** (review after Phase 4b, Proposals 17 and 36): "functions start with a verb" below reads: a function that acts or answers a question starts with a verb; a function that only returns a value is named for what it returns, a noun phrase (`enteredQuantities`, `violationRows`), with a preposition where the name must say what the value is read from or made of: `…For`, `…Of`, `with…` or any other (`displayUnitFor`, `dynamicChartOf`, `withTemperatureMode`, `modelBySegment`, `labelWithUnit`, `pathTo`); a conversion is named `to…`, and a callback is named `on…` after its event.
+>
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 44** (2026-09-28; review after Phase 4b, Proposal 25): "the app never writes one" below has one exception, the `|PMV|` in the psychrometric chart's zone legend, which the library publishes no symbol for.
+>
+> **Noted 2026-10-02** ([ADR-0002](0002-library-interface-model-info.md) decisions 57, 60 and 61; `.scratch/explore/` ticket 09): in the naming rule below, `ZONE_RH_STEP` went with the zone solver (`76589c0`) and `sensationPalette` with the palette table (`e39791a`); `ISOLINE_STEP` and `palettes` (`core/bandPalette.ts`) are examples of the two rules now. The vocabulary's `workspace` is `page` (decision 57).
+
+
+- **Naming**: components `PascalCase.svelte`; modules `camelCase.ts`; functions start with a verb;
+  **module constants follow two rules** (2026-09-04): a scalar literal is `CONSTANT_CASE` (`GRID`, `ZONE_RH_STEP`,
+  `METRES_PER_FOOT`), a closed-set table or palette is `camelCase` (`chartType`, `temperatureMode`,
+  `sensationPalette`) — the second deliberately matches the library's own `io.quantities` so app and library
+  collections read alike. Names must be clear to a new reader and are not abbreviated by deleting letters,
+  per the Google TypeScript Style Guide; consistent vocabulary `dynamic chart`, `chart type`, `model`, `session`, `slot`, `workspace`; `engine / manager / helper / utils` are forbidden as file names; quantity keys use the library's naming verbatim, no other abbreviations. **The display name of a quantity always comes from `Quantity.label`**; the app never writes one. The old tool's "Air temperature" is the wrong term and is not carried over; the correct one is the library's "Dry-bulb air temperature", and changing the spelling means changing the library in one place only.
+- **Types first**: closed sets are `as const` object collections; quantities, models and standards are all imported from the library and referenced with dot access; types are derived from data (`as const`, `satisfies`); no magic strings and no loose dictionaries; renaming something changes one place only.
+- **Granularity**: one concept per file, 100–400 lines is normal; plain functions + data objects over class hierarchies; no abstractions reserved for "maybe later"; do not split logic into a large number of tiny methods.
+- **Svelte guardrails**: runes only; ESLint forbids `export let`, `$:`, `on:`, `<slot>`, `<svelte:component>`; third-party library integration uses `{@attach}`; cross-component shared state is a class with `$state` fields; **`$effect` is for external synchronisation only, and never assigns to state** — Svelte's own
+  [Best practices](https://svelte.dev/docs/svelte/best-practices) says "to compute something from state, use `$derived`
+  rather than `$effect`" and "avoid updating state inside effects". A reach for `untrack` is the symptom of having
+  broken this rule, not a fix for it; lint enforces both. Objects compared by identity (models, quantities,
+  closed-set members, `Measure`s, `ApplicabilityLimit`s) are held in `$state.raw` and replaced rather than mutated — a deep `$state` proxy
+  breaks `===` against the library's objects. `ApplicabilityLimit` identity holds on the main thread only (2026-09-08):
+  the Phase 3.7 worker boundary must re-hydrate the rows or dispatch on `role`, because a structured clone is a new object.
+  (Moot since 2026-09-21: v1 has no worker boundary, ADR-0002 decision 29.)
+- **TypeScript guardrails**: `strict`, `erasableSyntaxOnly`, `verbatimModuleSyntax`; no `enum`, `namespace`, or constructor parameter properties.
+- **AI workflow**: enable the Svelte MCP in every session; generated `.svelte` files must pass `svelte-autofixer`; PRs must pass typecheck + lint + build.
+- **Where these conventions come from** (verified 2026-09-04): [Svelte Best practices](https://svelte.dev/docs/svelte/best-practices),
+  [TypeScript Do's and Don'ts](https://www.typescriptlang.org/docs/handbook/declaration-files/do-s-and-don-ts.html),
+  [Google TypeScript Style Guide](https://google.github.io/styleguide/tsguide.html), and DRY as Hunt & Thomas define it —
+  "every piece of knowledge must have a single, unambiguous, authoritative representation within a system", which §4.0 turns
+  into a lint rule. *Clean Code* and *Clean Architecture* are deliberately **not** acceptance criteria: parts of both are
+  actively disputed, and their layering argument is already discharged by §5's import direction, which lint enforces.
+  The running checklist lives in [docs/code-quality-checklist.md](../code-quality-checklist.md).
+
+---
+
+## 7. Phase-one scope and acceptance criteria
+
+> **Scope and acceptance criterion 1 superseded by [ADR-0002](0002-library-interface-model-info.md) decision 13**: v1 is the models whose `_INFO` the main repository ships; the second-model acceptance runs on `heat_index_rothfusz`, and PMV (ASHRAE 55) / Adaptive wait for their `_INFO` as Phase 4b.
+>
+> **Amended 2026-09-28** (review after Phase 4b, Proposal 35; `P031`): acceptance criterion 3's bound is per model, ≤ 0.01 °C for PMV (ISO 7730) and ≤ 0.02 °C for PMV (ASHRAE 55). The ASHRAE 55 bound is needed against the deployed tool's published vertices (`src/temporary-library/chart-online.json`), whose `cooling_effect` is unrounded; the library's rounds to two decimals, as pythermalcomfort's does, and so does the old tool's vendored copy. Measured 2026-09-28 over the fixture's four ASHRAE 55 zones: the worst vertex is 0.0143 °C off, and the worst is 0.0093 °C with only that rounding removed. The app follows the library, so the bound is widened rather than the rounding worked around.
+>
+> **Amended 2026-10-02** ([ADR-0002](0002-library-interface-model-info.md) decision 61): once the zone is a contour of a scan, criterion 3 is two criteria. **3a, rendering, against the library**: on every grid row, the library's PMV at the contour's crossing of a zone's limit differs from the limit by at most a bound in PMV, per model — a candidate 0.005 for PMV (ISO 7730), whose kernel is smooth, and 0.01 for PMV (ASHRAE 55), one two-decimal `cooling_effect` step plus interpolation — measured in `.scratch/one-scan/` before it is fixed. **3b, oracle, against the deployed tool**: the crossing on each fixture vertex's row differs from the vertex by at most 0.02 °C for ISO 7730 and 0.03 °C for ASHRAE 55; a loose bound that holds the kernel difference and the rendering together, there to catch a wrong binding, not to state a precision. The deployed tool is neither kernel's reference: ISO 7730's Annex D initial guess is the library's, the unrounded cooling effect the deployed tool's. **Noted 2026-10-02** (`.scratch/one-scan/` ticket 04, `3e397c8`; written here by `.scratch/explore/` ticket 09): the bounds are set from the measurement. Both criteria are tests in `src/core/charts/psychrometricChartAccuracy.test.ts`, and the 2026-09-28 bounds above (0.01 °C and 0.02 °C against the solver) are retired with the solver. **3a** keeps the candidates as its bounds, 0.005 for PMV (ISO 7730) and 0.01 for PMV (ASHRAE 55), over the record's four input sets and every grid row, at the crossings at or below saturation only (`hr_to_rh` ≤ 100 at the crossing): above it the library's PMV (ASHRAE 55) is not smooth, its two-decimal cooling effect making the step in PMV per 0.01 °C depart from its neighbours' by 0.034 at 105 % and 0.105 at 150 %, against at most 0.0005 at 90 to 100 %. Measured worst |PMV at the crossing − limit|: 0.00002 for PMV (ISO 7730), and 0.00805 for PMV (ASHRAE 55) (`tr` 28 °C, `v` 0.2 m/s, met 1, clo 0.3, at −0.5, rh 43 %); over every crossing, saturated ones included, they would be 0.00004 and 0.0486 (rh 150 %). **3b** keeps 0.02 °C and 0.03 °C, compared on each side's eleven vertices from 0 to 100 %, the corner on the saturation line included and the saturation-line run between the corners not. Measured worst distance per zone of the record, (met, clo): ISO 7730 (1.1, 0.5) 0.0093, (1.4, 1) 0.0077, (1.2, 0.6) 0.0024, (1.0, 0.3) 0.0015 °C; ASHRAE 55 (1.1, 0.5) 0.0085, (1.4, 0.886) 0.0149, (1.2, 0.6) 0.0123, (1.0, 0.3) 0.0228 °C. These are the baseline of the next widening.
+>
+> **Amended 2026-10-06** ([ADR-0002](0002-library-interface-model-info.md) decision 63): acceptance criterion 2's "the state is fully identical" is of what the page shows: a link carries the compared slots, the units, the atmospheric pressure, the chart type and axes and, copied on Explore, the Band list. Beside it stand two more: a reload keeps the whole session, every model's chart settings and Band list included, and Reset returns the tab to the defaults of the page and model it is on. Criterion 9's "and migration" has nothing to test until a v2.
+>
+> **Amended 2026-10-07** ([ADR-0002](0002-library-interface-model-info.md) decision 64): the scope's "simple export (editable title + input summary + tool name/version/date footer, PNG + SVG)" gains two things. The image comes in two printed sizes, a single column of 90 mm and a double column of 190 mm, with 8 pt lettering at both; and one choice leaves out the input summary and the footer, so a file can be the chart and its legend alone, as a figure in a paper is. The input summary lists what the chart is computed from, each drawn slot's last valid run, never a result.
+>
+> **Noted 2026-10-07** (ADR-0002 decision 64, as noted the same day; `.scratch/image-export/` ticket 07): built as `3e1623e`, `e6cfb63`, `b2143f9` and `84d3ca3`. The 8 pt lettering is every text but the title, which is 10 pt; the footer is two lines, the tool's name and version over the library's version and the date.
+>
+> **Noted 2026-10-09** (ADR-0002 decisions 65 to 72; `.scratch/interface-design/` ticket 13): the scope's designed interface landed as Phase 5c, `04eb13d` to `b373ccc`: the header and footer, the three columns and their breakpoints, and one palette in `core/palette.ts` that the stylesheet's tokens and the charts both read. Criterion 8's lint also fails a `<style>` block in a business component (`styleBlockSyntax`). The footer's licence, Code link and citation are placeholders until the user decides them (the rewrite plan's Phase 5c).
+>
+> **Amended 2026-10-18** ([ADR-0002](0002-library-interface-model-info.md) decision 78): criterion 3 reads the traced zone's vertices. 3a holds every vertex on a limit to its bound in PMV, 3b compares the deployed tool's vertices as before, and a criterion 3c holds every vertex on a bound to the library: a run one bisection step inside it returns no `warnings` row, one step outside returns one.
+
+
+Scope: the three models **PMV (ISO 7730)**, **PMV (ASHRAE 55)** and **Adaptive (ASHRAE 55)**; Standard + Explore;
+Compare with three slots; SI/IP; five humidity entry modes; model-switch dialog; Explore threshold editor; input
+calculators (custom clothing ensemble, dynamic predictive clothing, solar gain); Export Link; simple export (editable
+title + input summary + tool name/version/date footer, PNG + SVG); and a designed interface — header, footer, the three
+columns as drawn rather than as stacked, and one palette shared by the UI and the charts.
+
+PMV (ASHRAE 55) was added on 2026-09-04: it is the deployed CBE tool's main screen, the library already ships it complete
+(`compliance`, `COMPLIANCE_LIMIT`, `limits`, `standard`), and neither the ADR nor the plan had a place for it — an omission,
+not a decision. It also brings `airspeed_control`, which is why v1 has options at all (§4.3), and its cooling effect makes
+a 100×100 grid cost about 340 ms against ISO's 21 ms (measured 2026-09-04), which is what finally requires the Worker of §4.7.
+
+Deferred with the direction recorded, not the phase: **local discomfort** (ankle draft, vertical air temperature
+difference) enters as standalone models in the model selector under the ASHRAE tab, beside PMV and Adaptive, rather than as
+the legacy tool's panel of buttons attached to PMV.
+
+Acceptance:
+
+1. Add **UTCI** as the third model: only one new declaration file + one registry line, zero changes to other files, and it appears only in the Explore navigation (no `standard` attached in the library).
+2. Export Link from any state → open in a new tab → the state is fully identical (three slots, units, chart type, thresholds, atmospheric pressure).
+3. The vertices of the PMV psychrometric-chart compliance zone differ from the old tool's vertices for the same inputs by ≤ 0.01 °C.
+4. Switching to a model with incompatible ranges shows a dialog carrying the fields §4.5 specifies — title "Boundary Range Warning", a table of Input / Current / Allowed range, and the two buttons; no dialog when nothing is out of range. (Reworded 2026-09-04: this used to say "matches the design mock-up", referring to a mock-up no phase ever produced. The mock-up is now a Phase 5c deliverable, and this criterion names the content instead, so it can be judged before the design exists.) **Noted 2026-10-08** (ADR-0002 decision 67, rule 9): the dialog's design is the Phase 5c spec's wireframe, one width of `40rem` for every dialog. **Noted 2026-10-09** (`.scratch/interface-design/` ticket 13): built as `8711739`; the switch dialog with the slot column is 640 px wide at 1440 px and its table does not scroll, and below 672 px a dialog keeps the primitive's 1rem margin each side.
+5. Opening a share link in an environment with `Proxy` disabled shows a static notice naming the required browser versions — never a blank page. (Downgraded 2026-09-04 from "the summary page lists all input values"; see §2.) **Widened 2026-10-07** (`.scratch/proxy-notice/` ticket 02, `c08739f`): the same holds where `Array.prototype.toSorted` is missing, and the notice names Chrome 111 / Firefox 115 / Safari 16.4. The reason: sv-router calls `Array.prototype.toSorted` on every route match, the first load included (Chrome 110 / Firefox 115 / Safari 16); Vite 8's default build target is Chrome 111 / Firefox 114 / Safari 16.4; and the build carries class fields and private methods (Firefox 90, Safari 15), so Chrome 87–109, Firefox 83–114 and Safari 14–15, which have `Proxy`, got a blank page.
+6. After switching SI → IP → SI, the stored values are unchanged; every displayed number has at most two decimals and no trailing zeros.
+7. The result table columns are determined entirely by the model's declared `table` (`table` is required, and UTCI declares it too); any chart has exactly one legend, below the chart, and Plotly's built-in legend never appears.
+8. Lint passes: no utility classes out of bounds, no legacy syntax, no out-of-bounds imports in `core/`, no `enum`.
+9. Unit test coverage: `shareLink` encode/decode and migration, `toLibraryInputs` (5 humidity representations, operative mode), `numberFormat` and unit conversion, model-switch inheritance and clamping rules.
+10. **Code quality** (added 2026-09-04). Two passes over [docs/code-quality-checklist.md](../code-quality-checklist.md): a full
+    one once the contracts are frozen and before the Phase 4 acceptance, and a narrow one over the two new files after it.
+    The split is the point — the first pass is the last moment a contract can change freely, the second must not change one
+    at all. Anything mechanically checkable is a lint rule rather than a checklist line, and every new rule ships with a
+    probe proving it actually errors.
+
+---
+
+## 8. Known risks and mitigations
+
+> **Interface-drift row amended by [ADR-0002](0002-library-interface-model-info.md) decision 14**: the interface is `@internal Experimental`; the app links a local checkout, then pins `jsthermalcomfort@next`, and confines every `_INFO` read to three modules.
+>
+> **Amended 2026-09-28** (review after Phase 4b, Proposal 15; `S097`): "every `_INFO` read" in the marker above is every read of `_INFO`'s shape, as ADR-0002's Consequences now say; a model info's `label` and `name` are read anywhere.
+
+
+| Risk | Mitigation |
+|---|---|
+| Library and app developed in parallel, interface drift | Section 4.1 is the contract; the library ships rolling `0.x` releases and the app pins the version; interface changes go into this document first |
+| sv-router 0.x API changes | All usage wrapped in `routes/navigation.ts` |
+| Tailwind 4 styling imperfect in 2020–2023 browsers | Accepted; functionality is complete; older browsers get the summary page. **Noted 2026-10-07** (`.scratch/proxy-notice/` ticket 01, `224ba0b`): there is no summary page; a browser without `Proxy` gets §2's static notice naming the required versions. **Noted 2026-10-07** (ticket 02, `c08739f`): no longer holds. The floor is Chrome 111 / Firefox 115 / Safari 16.4, since sv-router calls `Array.prototype.toSorted` on every route match, the first load included (Chrome 110 / Firefox 115 / Safari 16); Vite 8's default build target is Chrome 111 / Firefox 114 / Safari 16.4; and the build carries class fields and private methods (Firefox 90, Safari 15). Browsers without `toSorted` get the notice; the risk now covers only Chrome and Edge 110 and Safari 16.0–16.3, which have `toSorted` but sit below the floor, and Firefox 115–127, below Tailwind 4's floor of Firefox 128 |
+| plotly 4.0 just released | Only the cartesian subset is used; colours are uniformly hex + `rgba()`; cloud button turned off |
+| PHS grid about 2.4 s | Keep the old chart + "computing" indicator |
+| LLM output for Svelte 5 regresses to Svelte 4 syntax | Lint forbids it + autofixer enforces it |
+| Single developer | Architecture first; phase one uses two models + the UTCI acceptance test to prove "adding a model changes one place" |
+
+---
+
+## 9. References
+
+- Svelte 5 browser support floor: https://svelte.dev/docs/svelte/browser-support
+- Tailwind 4 compatibility: https://tailwindcss.com/docs/compatibility
+- shadcn-svelte with Tailwind 4 / Svelte 5: https://shadcn-svelte.com/docs/migration/tailwind-v4
+- SvelteKit 3 RC (the basis for not choosing Kit): https://svelte.dev/blog/sveltekit-3-release-candidate
+- plotly.js 4.0 migration guide: https://plotly.com/javascript/guides/migrating-to-v4/
+- TypeScript `erasableSyntaxOnly`: https://www.totaltypescript.com/erasable-syntax-only
+- Existing calculation library (benchmark subject): https://www.npmjs.com/package/jsthermalcomfort
+- Old tool source (origin of the boundary root-finding precision, `static/js/psychchart.js`): https://github.com/CenterForTheBuiltEnvironment/comfort_tool
+- Bits UI: https://www.npmjs.com/package/bits-ui · sv-router: https://www.npmjs.com/package/sv-router · Comlink: https://www.npmjs.com/package/comlink · plotly cartesian bundle: https://www.npmjs.com/package/plotly.js-cartesian-dist-min

@@ -1,50 +1,92 @@
 # CBE Thermal Comfort Tool
 
-This repository is maintained as a frontend-first Svelte 5 application for thermal-comfort exploration.
+Svelte 5 frontend for thermal-comfort calculations and visualizations. Runs
+entirely in the browser and computes locally through
+[`jsthermalcomfort`](https://github.com/CenterForTheBuiltEnvironment/comfort.js);
+no backend runtime is required.
 
-## Current Status
+- **Live tool:** [comfort.cbe.berkeley.edu](https://comfort.cbe.berkeley.edu/)
+- **User documentation:** [Thermal Comfort Tool (GitBook)](https://center-for-the-built-environment.gitbook.io/thermal-comfort-tool)
+- **Source:** [github.com/FedericoTartarini/comfort-tool](https://github.com/FedericoTartarini/comfort-tool)
 
-- Active app: repository root
-- No active backend runtime in this repository
-- Current calculation engine: local `jsthermalcomfort` wrappers in `src/services/comfort/`
-- Shared controller: `src/state/comfortTool/`
+> ## 🚧 Rewrite in progress
+>
+> This branch (`rewrite/v1`) is a ground-up rewrite. The previous application
+> was removed and `src/` is being rebuilt against a new architecture in which
+> all thermal-comfort logic lives in the `jsthermalcomfort` library and the app
+> only declares and renders models.
+>
+> - [Architecture decision record](docs/adr-0001-architecture.md)
+> - [Phased rewrite plan](docs/rewrite-plan.md)
+>
+> The previous implementation is preserved on the `refactor-draft` branch.
 
-## Frontend Commands
+## Planned surfaces
 
-Install dependencies:
+| Workspace       | Route                            | Purpose                                                                        |
+| --------------- | -------------------------------- | ------------------------------------------------------------------------------ |
+| **Standard**    | `/standard/{standard}/{model}/`  | Compliance-oriented charts with fixed zones and pass/fail feedback              |
+| **Explore**     | `/explore/{model}/`              | Interactive charts with selectable axes, editable bands, multiple outputs       |
+| **Time-series** | `/time-series/{model}/`          | Segment-based exposure simulation (PHS) — after v1                              |
+
+Across Standard and Explore: up to three input slots with compare mode, SI/IP
+switching over canonical SI state, and shareable URL snapshots
+(`?share=v1.<Base64URL(JSON)>`).
+
+## v1 scope
+
+PMV/PPD (ISO 7730) and Adaptive comfort (ASHRAE 55), with UTCI added as an
+architecture acceptance test. Heat Index, Humidex, Wind Chill, PMV (ASHRAE 55),
+Adaptive (EN 16798-1) and PHS follow incrementally — each is one declaration
+file plus one registry line once its model is ported to the library.
+
+## Prerequisites
+
+- **Node.js** ≥ 24 (`engines` in `package.json`, `.nvmrc`)
+- **npm** (ships with Node)
+
+`jsthermalcomfort` resolves to `../jsthermalcomfort`, a local checkout of the main
+repository (on the branch carrying the humidity-inverses PR until it merges). The app
+consumes its build output `lib/esm/`, so run `npm run build` there after changing it.
+
+## Development
 
 ```bash
 npm install
-```
-
-Start the dev server:
-
-```bash
 npm run dev
 ```
 
+Validation suite:
 
+```bash
+npm test && npm run check && npm run lint && npm run build
+```
 
-## Architecture Summary
+Browser tests (Playwright, `tests/browser/`), when a change touches `index.html`, `tests/browser/` or
+`playwright.config.ts`, and at the end of every Phase. They start the dev server themselves; a machine runs
+`npx playwright install chromium` once first.
 
-The frontend is organized around a single comfort-tool controller:
+```bash
+npm run test:browser
+```
 
-- `src/models/`: domain constants, field metadata, DTOs
-- `src/models/inputSlots.ts`: stable `Input 1/2/3` identifiers, defaults, and UI/chart styling
-- `src/services/comfort/`: PMV, UTCI, comfort-zone, psychrometric, and chart builders
-- `src/services/units/`: canonical SI <-> active unit-system conversion helpers
-- `src/state/comfortTool/`: controller composition, model config registry, derived state, and share snapshot logic
-- `src/components/input-panel/`: input workflow UI
-- `src/components/chart/`: chart rendering and export UI
-- `src/views/ComfortDashboard.svelte`: page composition only
+## Tech stack
 
-Important runtime rules:
+- **Svelte 5** (runes) + **TypeScript 6** + **Vite 8**
+- **Tailwind CSS 4** + **shadcn-svelte** for UI
+- **Plotly.js 4** (cartesian bundle) for charts
+- **`jsthermalcomfort`** for all thermal-comfort calculations
+- **`sv-router`** for client-side routing
+- **Vitest** for unit tests
 
-- canonical state is SI
-- calculations live in `services/comfort/`
-- components should not implement formulas
-- Flowbite + Tailwind are preferred for UI composition
+## Static hosting
 
-## Documentation
+Public paths use clean trailing-slash URLs. Production hosting must return
+`index.html` for non-asset application paths so direct visits and refreshes
+reach the client router.
 
-- Collaboration rules: `AGENTS.md`
+## Citation
+
+If you use this tool in published work, please cite:
+
+> Tartarini, F., Schiavon, S., Cheung, T., Hoyt, T., 2020. CBE Thermal Comfort Tool: online tool for thermal comfort calculations and visualizations. SoftwareX 12, 100563. https://doi.org/10.1016/j.softx.2020.100563

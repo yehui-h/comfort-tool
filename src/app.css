@@ -1,154 +1,523 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn-svelte/tailwind.css";
+@import "@fontsource-variable/geist";
+
+/* Project tokens. No dark mode in v1 (ADR §1), so there is one palette:
+   `core/palette.ts`'s colours, written here as the same hex values
+   (ADR-0002 decision 66), and `src/core/palette.test.ts` holds the two
+   files to one another. `--primary` and `--ring` follow `--brand`, so the
+   primary button and the focus ring are the brand's blue; the sidebar primitive's tokens are other tokens' values, so
+   it brings no colour of its own (ADR-0002 decision 73, rule 3). */
+:root {
+	--brand: #003262;
+	--ground: #f8fafc;
+
+	/* The page's two spacing values and the header's height (ADR-0002 decision 73, rule 2): one between modules and
+	   rows, at the page's edge and inside a card; one within a field, between its label, box and caption. */
+	--space-page: 0.75rem;
+	--space-field: 0.25rem;
+	--header-height: 3.5rem;
+
+	/* The type sizes (decision 73, rule 2), and the plot's height cap, which its 4:3 shape, the exported image's
+	   plot area, is derived from (rule 8). */
+	--font-size-title: 1.125rem;
+	--font-size-heading: 0.875rem;
+	--font-size-body: 0.875rem;
+	--font-size-caption: 0.75rem;
+	--chart-cap: 24rem;
+
+	--background: #ffffff;
+	--foreground: #0f172a;
+	--card: #ffffff;
+	--card-foreground: #0f172a;
+	--popover: #ffffff;
+	--popover-foreground: #0f172a;
+	--primary: var(--brand);
+	--primary-foreground: #ffffff;
+	--secondary: #e2e8f0;
+	--secondary-foreground: #0f172a;
+	--muted: #e2e8f0;
+	--muted-foreground: #64748b;
+	--accent: #e2e8f0;
+	--accent-foreground: #0f172a;
+	--destructive: #dc2626;
+	--border: #e2e8f0;
+	--input: #e2e8f0;
+	--ring: var(--brand);
+	/* The one radius (decision 73, rule 2); `@theme` derives Nova's smaller and larger steps from it. */
+	--radius: 0.375rem;
+
+	--sidebar: var(--ground);
+	--sidebar-foreground: var(--foreground);
+	--sidebar-primary: var(--brand);
+	--sidebar-primary-foreground: var(--primary-foreground);
+	--sidebar-accent: var(--accent);
+	--sidebar-accent-foreground: var(--accent-foreground);
+	--sidebar-border: var(--border);
+	--sidebar-ring: var(--ring);
+}
+
+@theme inline {
+	--font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+	--radius-sm: calc(var(--radius) - 4px);
+	--radius-md: calc(var(--radius) - 2px);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) + 4px);
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-destructive: var(--destructive);
+	--color-border: var(--border);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+	--color-sidebar: var(--sidebar);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-sidebar-primary: var(--sidebar-primary);
+	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+	--color-sidebar-accent: var(--sidebar-accent);
+	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+	--color-sidebar-border: var(--sidebar-border);
+	--color-sidebar-ring: var(--sidebar-ring);
+}
 
 @layer base {
-  :root {
-    color-scheme: light;
-  }
-
-  html,
-  body,
-  #app {
-    min-height: 100%;
-  }
-
-  body {
-    margin: 0;
-    font-family: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
-    font-size: 0.875rem;
-    line-height: 1.25rem;
-    color: #0f172a;
-  }
+	* {
+		@apply border-border outline-ring/50;
+	}
+	/* The page stands on the ground; the modules, the cards, are the paper (decision 73, rule 4). */
+	body {
+		@apply text-foreground;
+		background-color: var(--ground);
+		font-size: var(--font-size-body);
+		line-height: 1.5;
+	}
+	html {
+		@apply font-sans;
+	}
+	/* The title, the header's `h1`, and a heading, a card's `h2`, set over the card title's own size (the Phase 5c
+	   spec's type roles; decision 73, rule 2). */
+	h1 {
+		font-size: var(--font-size-title);
+		font-weight: 600;
+	}
+	h2 {
+		font-size: var(--font-size-heading);
+		font-weight: 600;
+	}
+	/* A link is the brand's (the design plan's principle 1). */
+	a {
+		color: var(--brand);
+	}
+	a:hover {
+		text-decoration: underline;
+	}
 }
 
-.plotly-panel :global(.js-plotly-plot),
-.plotly-panel :global(.plot-container),
-.plotly-panel :global(.svg-container) {
-  width: 100% !important;
-  height: 100% !important;
-  max-width: 100% !important;
-  overflow: hidden !important;
+/* Semantic classes, named for what a thing is (ADR-0002 decision 65, rule 1). */
+@layer components {
+	/* A Swatch (GLOSSARY.md) in its colour, `--swatch-color`, drawn in the shape the chart draws its thing. */
+	.swatch {
+		display: inline-block;
+		flex-shrink: 0;
+		width: 0.75em;
+		height: 0.75em;
+	}
+	/* A fill: bordered, so a near-white colour shows on the paper. */
+	.swatch-fill {
+		border: 1px solid var(--border);
+		background-color: var(--swatch-color);
+	}
+	.swatch-line {
+		height: 0;
+		border-top: 2px solid var(--swatch-color);
+	}
+	.swatch-marker {
+		border-radius: 50%;
+		background-color: var(--swatch-color);
+	}
+	/* A Swatch beside its label: the two never part. A long label wraps beside the swatch where its container lets
+	   text wrap (the not-calculated line), not in a table cell, which keeps its text on one line. */
+	.swatch-label {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4em;
+	}
+
+	/* The chart card's plot and its legend (decision 73, rules 8 and 10). Every Layout's Sidebar: a row that wraps,
+	   the plot first at its full width, the legend in the room left beside it, or under it where that room is narrower
+	   than the legend's basis. The plot's width is its own, so a longer legend never moves it. */
+	.chart-area {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--space-page);
+	}
+	/* The node Plotly draws the chart on: the exported image's 4:3 plot area, the cap tall, on the card's leading
+	   edge; it shrinks at 4:3 only where its column is narrower than it. */
+	.chart-plot {
+		flex: none;
+		inline-size: calc(var(--chart-cap) * 4 / 3);
+		max-inline-size: 100%;
+		aspect-ratio: 4 / 3;
+	}
+	/* The chart's one legend, a column beside the plot: `10rem` by preference, growing into a room of at most `18rem`,
+	   that room centred in what is left, and the entries as one column centred in it, each wrapping to lines rather
+	   than widening it. */
+	.chart-legend {
+		flex: 1 1 10rem;
+		max-inline-size: 18rem;
+		margin-inline: auto;
+		display: grid;
+		grid-template-columns: fit-content(100%);
+		justify-content: center;
+		gap: 0.25rem;
+		font-size: var(--font-size-caption);
+		color: var(--muted-foreground);
+	}
+
+	.caption {
+		font-size: var(--font-size-caption);
+		color: var(--muted-foreground);
+	}
+	/* A model's option tucked under the row it qualifies, the field's gap from it where the rows' gap stood (ADR-0002
+	   decision 36 as revised 2026-10-15). */
+	.option-row {
+		margin-top: calc(var(--space-field) - var(--space-page));
+	}
+	/* A row's caption line under its box (decision 67, rule 3), the field's description: one line while empty too, so
+	   a preset's name appearing as a value is typed moves no row below. 1.5em for `1lh`, which Firefox 115 lacks. */
+	.caption-line {
+		min-height: 1.5em;
+	}
+	/* A value at the end of a list's item, a preset's in the box's unit, its digits one column. */
+	.item-value {
+		margin-left: auto;
+		font-variant-numeric: tabular-nums;
+		color: var(--muted-foreground);
+	}
+
+	/* A table's scroll region (decision 70): the table scrolls here, not the page, and the clipped right edge is
+	   shaded while there is more. The shade stays at the region's edge (`scroll`); a cover in the paper's colour sits
+	   at the content's end (`local`) and hides it once scrolled there, or when nothing overflows. */
+	.table-scroll {
+		overflow-x: auto;
+		background:
+			linear-gradient(to left, var(--background) 50%, transparent) right / 3rem 100% no-repeat local,
+			linear-gradient(to left, color-mix(in oklab, var(--foreground) 20%, transparent), transparent) right / 1.5rem
+				100% no-repeat scroll;
+	}
+	/* A caveat in the Compliance column wraps, so a long warning does not widen the table (decision 70, rule 1). */
+	.result-table .caveat {
+		white-space: normal;
+	}
+	/* The first column, the slot's name, stays in view while the region scrolls (decision 70, rule 3), opaque so the
+	   columns under it do not show through: on the paper, or on the colour the row primitive's `hover:bg-muted/50`
+	   gives a hovered row, changing with the row's own `transition-colors` so the cell does not lead the row. */
+	.result-table tr > :first-child {
+		position: sticky;
+		left: 0;
+		background-color: var(--background);
+		transition: background-color var(--default-transition-duration) var(--default-transition-timing-function);
+	}
+	.result-table tr:hover > :first-child {
+		background-color: color-mix(in oklab, var(--muted) 50%, var(--background));
+	}
+	/* A row kept from an earlier run (`data-kept`) reads as not current by its numbers' muted ink, without a second
+	   hue; its first cell and the Compliance column keep theirs (decision 73, rule 9). */
+	.result-table tr[data-kept] .value {
+		color: var(--muted-foreground);
+	}
+	/* An input calculator's settings in its tab, the one region of the dialog that scrolls (decision 75, rule 6 (b)),
+	   padded so focus rings are not clipped. */
+	.calculator-settings {
+		flex: 1;
+		min-height: 0;
+		overflow-y: auto;
+		margin-inline: -4px;
+		padding: 4px;
+	}
+	/* The result dock: a band across the dialog's width, tinted as the footer under it and ruled off from the settings
+	   above, so where the choosing ends and what Apply will write begins is drawn, not left to a gap. */
+	.result-dock {
+		margin: var(--space-page) -1rem 0;
+		padding: var(--space-page) 1rem;
+		border-top: 1px solid var(--border);
+		background: color-mix(in oklab, var(--muted) 50%, transparent);
+	}
+	/* A row's value after Apply outside the row's bound, with the bound: the colour an out-of-range box's edge takes. */
+	.result-dock .out-of-range {
+		color: var(--destructive);
+	}
+	/* The footer's "Apply to" stands at its start, Apply at its end; its heading is set as the labels beside it. Where
+	   the generated footer stacks its children in reverse, below `sm`, it is ordered after Apply so it still stands
+	   above it, where the Tab order reaches it first. */
+	.apply-to {
+		margin-inline-end: auto;
+		@variant max-sm {
+			order: 1;
+		}
+	}
+	.apply-to-heading {
+		font-size: var(--font-size-body);
+		font-weight: 500;
+	}
+	/* The input calculators' entry: its title over the calculators' names, a caption at the text's regular weight. */
+	.calculator-entry-text {
+		display: grid;
+		gap: 0.125rem;
+	}
+	.calculator-entry-names {
+		font-weight: 400;
+	}
+	/* A garment row's name labels it as the panel's labels do, the label's weight, level with the row's list button. */
+	.garment-row-name {
+		line-height: 1.75rem;
+		font-weight: 500;
+	}
 }
 
-.plotly-panel :global(.main-svg),
-.plotly-panel :global(svg) {
-  max-width: 100% !important;
+/* Adjustments to the generated primitives, selected by `data-slot` (ADR-0002 decision 65, rule 2, as decision 73
+   revised it). Sizes, layout, and which token a slot reads, such as a chosen toggle's `var(--primary)` or a field's
+   `var(--ground)`; never a literal colour. Unlayered, so it wins over the primitives' utilities. */
+/* A module, the generated card, has the one radius, where Nova rounds a card at the radius and 4 px, and the page's
+   spacing as its padding and its gap between header and content (decision 73, rules 2 and 4). */
+[data-slot="card"] {
+	--card-spacing: var(--space-page);
+	border-radius: var(--radius);
 }
-
-.plotly-panel {
-  width: 100%;
-  max-width: 100%;
-  overflow: hidden;
+/* Every card's heading row is one height, a small button's, its content centred: a card without an action keeps the
+   row's height, so the Inputs and Results titles stand level and a model with no action moves nothing (decision 73,
+   rule 8 as revised 2026-10-15). */
+[data-slot="card-header"] {
+	min-height: 1.75rem;
+	align-content: center;
 }
-
-.header-logo-container {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
+/* Every control has the one radius whatever its size (decision 73, rule 2), where Nova rounds a small button (`sm`,
+   `xs`, `icon-sm`, `icon-xs`), an `sm` toggle, toggle-group and select trigger a step smaller, and the input group's
+   button smaller again. A button that opens or closes a dialog, a sheet, a popover or a menu carries that part's slot, the sidebar's
+   trigger its own. A toggle-group's items keep the primitive's corners, the group's at the outer ends and none
+   between; an item inside a popup or the sidebar's menu keeps Nova's smaller step. */
+[data-slot="button"],
+[data-slot="dialog-trigger"],
+[data-slot="dialog-close"],
+[data-slot="sheet-close"],
+[data-slot="popover-trigger"],
+[data-slot="dropdown-menu-trigger"],
+[data-slot="sidebar-trigger"],
+[data-slot="toggle"],
+[data-slot="toggle-group"],
+[data-slot="select-trigger"] {
+	border-radius: var(--radius);
 }
-
-.header-logo {
-  height: 48px;
-  width: auto;
-  object-fit: contain;
+/* A quantity's row is the generated field (the shell's spec, "The rows"): its label, box and caption the field's spacing
+   apart, where Nova's are 8 px, and its description, the caption line, at the caption's size. */
+[data-slot="field"] {
+	gap: var(--space-field);
 }
-
-@media (min-width: 640px) {
-  .header-logo {
-    height: 64px;
-  }
+[data-slot="field-description"] {
+	font-size: var(--font-size-caption);
 }
-
-@layer utilities {
-  .text-eyebrow {
-    font-size: 0.75rem;
-    line-height: 1rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.16em;
-    color: #78716c; /* stone-500 */
-  }
-
-  .text-footer-label {
-    margin-bottom: 1rem;
-    font-size: 0.75rem;
-    line-height: 1rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: rgba(255, 255, 255, 0.4); /* white/40 */
-  }
-
-  .text-result-summary {
-    margin-top: 0.25rem;
-    font-size: 1.125rem;
-    line-height: 1.5rem;
-    font-weight: 600;
-    letter-spacing: -0.015em;
-    color: #1c1917; /* stone-900 */
-  }
-
-  .text-description-muted {
-    font-size: 0.875rem;
-    line-height: 1.25rem;
-    font-weight: 400;
-    color: #78716c; /* stone-500 */
-  }
-
-  .panel-shell {
-    border: 1px solid #e7e5e4; /* stone-200 */
-    border-radius: 28px;
-    background: #ffffff;
-    padding: 1rem;
-    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  }
-
-  .panel-muted {
-    border: 1px solid #e7e5e4; /* stone-200 */
-    border-radius: 24px;
-    background: #fafaf9; /* stone-50 */
-  }
-
-  .panel-empty-state {
-    border: 1px dashed #d6d3d1; /* stone-300 */
-    border-radius: 1rem;
-    background: #fafaf9; /* stone-50 */
-    padding: 2rem 1rem;
-    text-align: center;
-  }
-
-  .tool-button-subtle {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    border: 1px solid #e7e5e4; /* stone-200 */
-    border-radius: 9999px;
-    background: #ffffff;
-    padding: 0.125rem 0.5rem;
-    font-size: 0.75rem;
-    line-height: 1rem;
-    font-weight: 500;
-    color: #57534e; /* stone-600 */
-    transition:
-      border-color 150ms ease,
-      background-color 150ms ease,
-      color 150ms ease;
-  }
-
-  .tool-button-subtle:hover {
-    border-color: #d6d3d1; /* stone-300 */
-    background: #fafaf9; /* stone-50 */
-    color: #1c1917; /* stone-900 */
-  }
-
-  .modal-shell-soft {
-    max-height: calc(100svh - 2rem);
-    overflow: hidden;
-    border: 1px solid #e7e5e4; /* stone-200 */
-    border-radius: 28px;
-    background: #ffffff;
-    box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25);
-  }
+/* The applicability summary's "Calculated, but outside these limits:" part, the default alert, is lettered in ink, its
+   lines too, where Nova mutes an alert's description: a violation is marked by an icon and words, never a hue
+   (decision 83, rule 2). */
+[data-slot="alert"].outside-limits [data-slot="alert-description"] {
+	color: var(--foreground);
+}
+/* What one types into is tinted the ground, a box or the group a box stands in; what one chooses from, a select's
+   trigger or a colour input, is not (decision 73, rule 3). A box inside a group is transparent, so the group's tint
+   shows. */
+[data-slot="input"]:not([type="color"]),
+[data-slot="input-group"] {
+	background-color: var(--ground);
+}
+/* A box takes the other colour of the surface it stands on (decision 73, rule 6): in the sidebar, which is the ground,
+   the session's pressure box is the paper. The sidebar's content is the slot both the column and the sheet carry. */
+[data-slot="sidebar-content"] :is([data-slot="input"]:not([type="color"]), [data-slot="input-group"]) {
+	background-color: var(--background);
+}
+/* One pressed state (decision 73, rule 3): a chosen toggle-group item and a pressed toggle, a slot button or a band's
+   No colour, take the primary fill, where the generated toggle's pressed state is the hover's `bg-muted`. */
+[data-slot="toggle-group-item"][data-state="on"],
+[data-slot="toggle"][data-state="on"] {
+	border-color: var(--primary);
+	background-color: var(--primary);
+	color: var(--primary-foreground);
+}
+/* An unchecked checkbox's border and an off switch's track edge in the muted text colour, 4.76:1 on the paper, where
+   the generated `border-input` is 1.23:1, under WCAG 2.1 SC 1.4.11's 3:1 for what identifies a control and its state
+   (ADR-0002 decision 76, rule 3). Checked, focused or invalid, the primitives' own edge stands. */
+:is([data-slot="checkbox"], [data-slot="switch"])[data-state="unchecked"]:not(:focus-visible, [aria-invalid="true"]) {
+	border-color: var(--muted-foreground);
+}
+[data-slot="dialog-content"] {
+	/* Every dialog is one width (decision 67, rule 9); a narrower window keeps the primitive's margin. */
+	max-width: min(40rem, calc(100% - 2rem));
+	/* A dialog taller than the window scrolls inside the same margin. */
+	max-height: calc(100dvh - 2rem);
+	overflow-y: auto;
+}
+/* The Input calculators dialog (decision 75, rule 6 (b)): centred like every dialog and of one height, so switching a
+   tab moves no control. The title and the tab list stand at the top; under them a tab's settings, the one region that
+   scrolls (`.calculator-settings`); then the result dock and the footer, held at the bottom. Every tab is mounted, the
+   inactive ones hidden by the primitive. */
+[data-slot="dialog-content"].dialog-fixed {
+	display: flex;
+	flex-direction: column;
+	height: min(46rem, calc(100dvh - 2rem));
+	overflow: hidden;
+}
+.dialog-fixed > [data-slot="tabs"] {
+	flex: 1;
+	min-height: 0;
+}
+.dialog-fixed [data-slot="tabs-content"][data-state="active"] {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+/* The footer under the result dock meets it, where the primitive's grid gap stood. */
+.result-dock + [data-slot="dialog-footer"] {
+	margin-top: 0;
+}
+/* A tab's action on its settings, Restore defaults or Clear, stands at the title's right, before the close button, which
+   the primitive puts at the corner (`top-2 right-2`, `icon-sm`); it is drawn after the footer, so the keyboard reaches
+   it after Apply. */
+.dialog-fixed .dialog-title-action {
+	position: absolute;
+	top: 0.5rem;
+	right: calc(0.5rem + 1.75rem + 0.25rem);
+}
+/* A form calculator's cells stretch to their row, and each cell's label takes the room a longer neighbour's second
+   line makes, standing at its foot: the boxes of a row stand level. */
+.calculator-form > * > [data-slot="field"] > :first-child {
+	flex: 1;
+	display: flex;
+	align-items: flex-end;
+}
+/* The input calculators' entry at the Inputs card's foot: one full-width button on two lines, its title over the
+   calculators' names, the chevron muted at its end (decision 75, rule 6 (a)). */
+.calculator-entry {
+	width: 100%;
+	height: auto;
+	justify-content: space-between;
+	padding-block: 0.5rem;
+	white-space: normal;
+	text-align: start;
+}
+.calculator-entry svg {
+	color: var(--muted-foreground);
+}
+/* A sidebar menu item is a link drawn as a button: hovered, the primitive fills it, so the base rule's underline does
+   not reach it; a link in text keeps its underline (the shell's spec, "The frame"). */
+[data-slot="sidebar-menu-button"]:hover {
+	text-decoration: none;
+}
+/* A popover that holds a list of values (`ValueList`), a row's Presets or a garment row's list: the list reaches the
+   popover's edges. */
+[data-slot="popover-content"].list-popover {
+	padding: 0;
+}
+/* An item that ends in a value, in such a list: the generated item's check mark goes, since no entry is ever checked.
+   Hidden, it still took its width and an auto margin, so the values ended short of the right edge, each at an x of its
+   own, and stood further from it than the names from the left. */
+.list-popover [data-slot="command-item"]:has(> .item-value) > svg {
+	display: none;
+}
+/* Custom ensemble's search: its results float over the garment rows below it, so typing a query moves no row, and its
+   box's edges stand in line with the rows'. */
+.garment-search[data-slot="command"] {
+	position: relative;
+	overflow: visible;
+	height: auto;
+	padding: 0;
+}
+.garment-search [data-slot="command-input-wrapper"] {
+	padding: 0;
+}
+.garment-search [data-slot="command-list"] {
+	position: absolute;
+	inset-inline: 0;
+	top: calc(100% + 0.25rem);
+	z-index: 10;
+	max-height: 16rem;
+	padding: 0.25rem;
+	/* The generated popover's radius, ring at 10 % ink and theme shadow, as a row's list has them. */
+	border-radius: var(--radius-lg);
+	background: var(--popover);
+	box-shadow:
+		0 0 0 1px color-mix(in oklab, var(--foreground) 10%, transparent),
+		var(--shadow-md);
+}
+/* A result's check mark, shown on a garment worn, keeps its width whether shown or not, at the item's end after the
+   value, so the values stand in one column. */
+.garment-search [data-slot="command-item"] > svg {
+	margin-left: 0;
+}
+/* A garment row's list button reads as the panel's select does, at one width in every row so it stands in one column:
+   the text's regular weight, the chevron muted at its end. */
+.garment-list-trigger {
+	width: 6.5rem;
+	justify-content: space-between;
+	font-weight: 400;
+}
+.garment-list-trigger svg {
+	color: var(--muted-foreground);
+}
+/* A menu is as wide as its items, not its button: an entry group's lists its modes' names and descriptions
+   (decision 72, rule 2), which wrap at 24rem. */
+[data-slot="dropdown-menu-content"] {
+	width: max-content;
+	max-width: min(24rem, calc(100vw - 2rem));
+}
+/* A table's scroll region is the wrapper that carries its attributes (decision 70, rule 2), so the primitive's
+   container lets the table overflow into it. */
+.table-scroll > [data-slot="table-container"] {
+	overflow-x: visible;
+}
+/* The result table's headings wrap, standing at the foot of their cell over the column they name; a result's
+   value, a number, Yes or No, or a dash, is right-aligned in tabular figures under its heading, so decimals line
+   up (decision 70, rule 1). Unlayered, as the heading's `text-left` and `whitespace-nowrap` are the primitive's. */
+.result-table [data-slot="table-head"] {
+	white-space: normal;
+	vertical-align: bottom;
+}
+.result-table .value {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+/* The icon on a dash standing for a violation (decision 83, rule 3): on the text's line, at its size, in the cell's
+   ink, before the dash. */
+.result-table .value svg {
+	display: inline-block;
+	width: 1em;
+	height: 1em;
+	margin-inline-end: 0.25em;
+	vertical-align: -0.125em;
+}
+/* The Bands panel is a compact table (decision 67, rule 4), now in the Bands dialog (decision 73, rule 8): a row as
+   tall as its small buttons, and a colour box narrow enough that No colour stands beside it. */
+.bands-table [data-slot="table-head"] {
+	height: 2rem;
+}
+.bands-table [data-slot="table-cell"] {
+	padding-block: 0.125rem;
+}
+.bands-table [data-slot="input"] {
+	height: 1.75rem;
+}
+.bands-table [data-slot="input"][type="color"] {
+	width: 2.5rem;
+	padding: 0.125rem;
 }

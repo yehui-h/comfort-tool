@@ -1,0 +1,258 @@
+/**
+ * ADR-0001 acceptance criterion 3 as ADR-0002 decisions 61 and 78 split it,
+ * one test per kind of error. 3a, rendering: every vertex of a psychrometric
+ * chart's Comfort zone on its limit sits where the library's own number
+ * crosses the limit. 3b, oracle: the traced boundary, of the model of the
+ * deployed tool's standard at the deployed tool's inputs, sits on the
+ * deployed tool's own vertices (`chart-online.json`, the deployed tool's
+ * record).
+ *
+ * Both compare the boundary where a zone is the number's alone: where the run
+ * breaks no bound. A zone leaves out wherever a run breaks one (ADR-0002
+ * decision 77, rule 1), and the deployed tool draws no such cut, so 3a skips a
+ * vertex on a grid line beside a grid point whose run breaks one, and 3b a
+ * vertex whose run breaks one; `zoneBounds.test.ts` holds the cut itself,
+ * criterion 3c among it.
+ */
+import { describe, expect, it } from "vitest";
+import { hr_to_rh } from "jsthermalcomfort";
+import { enteredSlotFor } from "$lib/core/declarationTestSlots";
+import { optionsOf, psychrometricChartOf, requireScan, type RegisteredModel } from "$lib/core/modelDeclaration";
+import { resultNumber, resultWarnings, runOn } from "$lib/core/modelRun";
+import { DEFAULT_ATMOSPHERIC_PRESSURE, quantities } from "$lib/core/quantities";
+import { withEnteredValues, withOption, type Slot } from "$lib/core/slot";
+import { displayUnitFor } from "$lib/core/units";
+import { unitSystem } from "$lib/core/unitSystem";
+import { registeredModels } from "$lib/models";
+import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
+import { pmvPpdIso } from "$lib/models/pmvPpdIso";
+import record from "$lib/temporary-library/chart-online.json" with { type: "json" };
+import type { PathPiece } from "./chartSpec";
+import { zoneFillsOf } from "./chartTestPaths";
+import { chartRequestFor } from "./chartTestRequests";
+import { psychrometricSpec } from "./psychrometricChart";
+import { comfortZonesOf } from "./scan";
+
+const q = quantities;
+const p = DEFAULT_ATMOSPHERIC_PRESSURE;
+/** Humidity ratio as the SI chart draws it, in g/kg. */
+const hrUnit = displayUnitFor(q.hr, unitSystem.si);
+
+/**
+ * 3a's bound per model, in the model's scanned output: how far the model's
+ * own number at a drawn crossing may sit from the limit. Fixed 2026-10-02
+ * from the worst residual over the record's conditions, measured at or below
+ * saturation.
+ *
+ * PMV (ISO 7730): measured 0.00002. The kernel is smooth, so what is left is
+ * the linear interpolation between two cells.
+ *
+ * PMV (ASHRAE 55): measured 0.00805. The library's `cooling_effect` rounds to
+ * two decimals, as pythermalcomfort's does, so PMV is a staircase in the
+ * temperature, a step of up to 0.0048 PMV, that no grid locates.
+ */
+const renderingBounds: readonly { readonly model: RegisteredModel; readonly bound: number }[] = [
+  { model: pmvPpdIso, bound: 0.005 },
+  { model: pmvPpdAshrae, bound: 0.01 },
+];
+
+/**
+ * 3b's bound per standard of the record, in °C, and the registered model of
+ * that standard. Loose on purpose: it holds the kernel difference and the
+ * rendering together and catches a wrong binding, not a precision. Worst
+ * measured 2026-10-02 over the record's zones: 0.0093 °C for ISO, 0.0228 °C
+ * for ASHRAE.
+ *
+ * ASHRAE: the library's `cooling_effect` rounds to two decimals, the deployed
+ * tool's does not, and its staircase moves the boundary by up to about
+ * 0.016 °C.
+ *
+ * ISO: the library's PMV kernel starts its clothing-temperature iteration
+ * from ISO 7730 Annex D's initial guess, as pythermalcomfort 4.6.0 does, and
+ * the record was made with the deployed tool's kernel, which does not.
+ * Regenerating the record from the library would make this test circular,
+ * and matching the deployed kernel is ruled out by the library's ADR 0001.
+ */
+const oracleBounds = {
+  ISO: { model: pmvPpdIso, bound: 0.02 },
+  ASHRAE: { model: pmvPpdAshrae, bound: 0.03 },
+} as const;
+
+/**
+ * The deployed tool traces each side of a zone at 0 to 100 % relative
+ * humidity in steps of 10: the record lists the cool side's eleven vertices
+ * from dry up, then the saturation line, then the warm side's eleven from
+ * saturated down.
+ */
+const SIDE_VERTICES = 11;
+
+const [airSpeedControl] = optionsOf(pmvPpdAshrae);
+
+/** The record's distinct conditions as a person enters them; it draws each under both standards. */
+const conditions = [...new Map(record.zones.map((zone) => [JSON.stringify(zone.conditions), zone.conditions])).values()];
+
+/**
+ * A drawn Comfort zone in SI: the temperatures of the scan's columns, the
+ * humidity ratios of its rows, and the zone's rings, their humidity ratios in
+ * SI too.
+ */
+interface DrawnZone {
+  readonly temperatures: readonly number[];
+  readonly humidityRatios: readonly number[];
+  readonly rings: readonly PathPiece[];
+}
+
+/** Each Comfort zone `model`'s chart of `slot` draws, as the Standard page asks for it, with its limit. */
+function zonesOf(model: RegisteredModel, slot: Slot): { readonly limit: number; readonly drawn: DrawnZone }[] {
+  const spec = psychrometricSpec(chartRequestFor(model, slot));
+  const grid = spec.traces.find((entry) => entry.kind === "hoverGrid");
+  if (!grid) {
+    throw new Error(`${model.info.label}'s chart has no hover grid`);
+  }
+  const limits = comfortZonesOf(model).map((zone) => zone.limit);
+  return zoneFillsOf(spec).map((fill, position) => ({
+    limit: limits[position],
+    drawn: {
+      temperatures: grid.x,
+      humidityRatios: grid.y.map((hr) => hrUnit.toSi(hr)),
+      rings: fill.pieces.map((ring) => ({ x: ring.x, y: ring.y.map((hr) => hrUnit.toSi(hr)) })),
+    },
+  }));
+}
+
+/** `model`'s zone of `limit` on its chart of `slot`. */
+function zoneOf(model: RegisteredModel, slot: Slot, limit: number): DrawnZone {
+  const zone = zonesOf(model, slot).find((entry) => entry.limit === limit);
+  if (!zone) {
+    throw new Error(`${model.info.label} draws no zone of limit ${limit}`);
+  }
+  return zone.drawn;
+}
+
+/** A zone's two sides at one humidity ratio: the cool one, its lowest temperature, and the warm one, its highest. */
+type Side = "cool" | "warm";
+
+/** The temperature at which `zone`'s boundary crosses the humidity ratio `hr` on its `side`, along the drawn rings. */
+function crossingAt(zone: DrawnZone, hr: number, side: Side): number {
+  const crossings = zone.rings.flatMap((ring) =>
+    ring.x.flatMap((x1, index) => {
+      const next = (index + 1) % ring.x.length;
+      const [y1, x2, y2] = [ring.y[index], ring.x[next], ring.y[next]];
+      return (y1 <= hr && hr < y2) || (y2 <= hr && hr < y1) ? [x1 + ((hr - y1) / (y2 - y1)) * (x2 - x1)] : [];
+    }),
+  );
+  if (crossings.length < 2) {
+    throw new Error(`the zone crosses ${hr} ${crossings.length} times`);
+  }
+  return side === "cool" ? Math.min(...crossings) : Math.max(...crossings);
+}
+
+/**
+ * Each vertex of `zone` on a grid line, with the two grid points of the
+ * stretch of the line it lies on; a corner of the frame lies on no stretch.
+ */
+function verticesOnGridLines(zone: DrawnZone) {
+  const { temperatures, humidityRatios } = zone;
+  const stretchOf = (samples: readonly number[], value: number) => {
+    const index = samples.findIndex((sample, sampleIndex) => sample <= value && value <= samples[sampleIndex + 1]);
+    return [samples[index], samples[index + 1]];
+  };
+  return zone.rings.flatMap((ring) =>
+    ring.x.flatMap((temperature, index) => {
+      const hr = ring.y[index];
+      const onColumn = temperatures.includes(temperature);
+      if (onColumn === humidityRatios.includes(hr)) {
+        return [];
+      }
+      const ends = onColumn
+        ? stretchOf(humidityRatios, hr).map((end) => ({ temperature, hr: end }))
+        : stretchOf(temperatures, temperature).map((end) => ({ temperature: end, hr }));
+      return [{ temperature, hr, ends }];
+    }),
+  );
+}
+
+/** `model` run on `slot` at `temperature` and the humidity ratio `hr`, in SI. */
+function runAt(model: RegisteredModel, slot: Slot, temperature: number, hr: number) {
+  const cell = withEnteredValues(slot, new Map([
+    [slot.temperature.mode.axis, temperature],
+    [q.rh, hr_to_rh(hr, temperature, p)],
+  ]));
+  return runOn(cell, model, p);
+}
+
+/** `model`'s own scanned number for `slot` at `temperature` and the humidity ratio `hr`, in SI. */
+function numberAt(model: RegisteredModel, slot: Slot, temperature: number, hr: number): number {
+  return resultNumber(runAt(model, slot, temperature, hr), requireScan(model).output);
+}
+
+/** Whether `model`'s run on `slot` at `temperature` and the humidity ratio `hr` breaks a bound: its `warnings` has a row. */
+function isOutsideApplicabilityAt(model: RegisteredModel, slot: Slot, temperature: number, hr: number): boolean {
+  return resultWarnings(model, runAt(model, slot, temperature, hr)).length > 0;
+}
+
+describe("criterion 3a: the psychrometric chart's zones against the library", () => {
+  it("draws each Comfort zone's vertices on its limit within the model's bound of it, for every registered model with a psychrometric chart", () => {
+    const psychrometricModels = registeredModels.filter((model) => psychrometricChartOf(model));
+    expect(psychrometricModels.length).toBeGreaterThan(0);
+    for (const model of psychrometricModels) {
+      const bound = renderingBounds.find((entry) => entry.model === model)?.bound;
+      if (bound === undefined) {
+        throw new Error(`${model.info.label} has no rendering bound: measure its worst residual and fix one`);
+      }
+      let worst = { residual: 0, at: "" };
+      let compared = 0;
+      for (const entered of conditions) {
+        const slot = enteredSlotFor(model, { tr: entered.tr, v: entered.vel, met: entered.met, clo: entered.clo });
+        for (const { limit, drawn } of zonesOf(model, slot)) {
+          for (const { temperature, hr, ends } of verticesOnGridLines(drawn)) {
+            // Above saturation the zone runs on under the cover, unseen, and
+            // PMV (ASHRAE 55)'s cooling effect jumps there by up to 0.1 PMV
+            // per 0.01 °C (measured 2026-10-02, from 105 %).
+            if (hr_to_rh(hr, temperature, p) > 100 || ends.some((end) => isOutsideApplicabilityAt(model, slot, end.temperature, end.hr))) {
+              continue;
+            }
+            compared += 1;
+            const residual = Math.abs(Math.abs(numberAt(model, slot, temperature, hr)) - limit);
+            if (residual > worst.residual) {
+              worst = { residual, at: `${JSON.stringify(entered)}, limit ${limit}, at ${temperature} °C and ${hr}` };
+            }
+          }
+        }
+      }
+      expect(compared, model.info.label).toBeGreaterThan(0);
+      expect(worst.residual, `${model.info.label}, worst at ${worst.at}`).toBeLessThanOrEqual(bound);
+    }
+  });
+});
+
+describe("criterion 3b: the psychrometric chart's zones against the deployed tool", () => {
+  it.each(record.zones)("draws the record's vertices: $standard ±$pmvLimit met=$met clo=$clo", (zone) => {
+    const { model, bound } = oracleBounds[zone.standard as keyof typeof oracleBounds];
+    // The record's inputs are those the deployed tool's tracer was called on,
+    // the air speed and the clothing already corrected, so they are entered
+    // as such. The deployed psychrometric chart ignores local control of the
+    // air speed (audit A8), so PMV (ASHRAE 55) is drawn with it on, where the
+    // air-speed rule cuts nothing.
+    const entered = enteredSlotFor(model, { tr: zone.tr, vr: zone.vr, met: zone.met, clo_dynamic: zone.clo });
+    const slot = model === pmvPpdAshrae ? withOption(entered, airSpeedControl, true) : entered;
+    const drawn = zoneOf(model, slot, zone.pmvLimit);
+    const sides = [
+      { vertices: zone.boundary.slice(0, SIDE_VERTICES), side: "cool" as const },
+      { vertices: zone.boundary.slice(-SIDE_VERTICES).reverse(), side: "warm" as const },
+    ];
+    for (const { vertices, side } of sides) {
+      // Each side is the deployed tool's 0, 10, …, 100 % rows, so no
+      // saturation-line vertex is compared: the cover's edge is the library's
+      // saturation line.
+      expect(vertices.map((vertex) => Math.round(hr_to_rh(vertex.hr, vertex.db, p) / 10))).toEqual(Array.from({ length: SIDE_VERTICES }, (_, step) => step));
+      const compared = vertices.filter((vertex) => !isOutsideApplicabilityAt(model, slot, vertex.db, vertex.hr));
+      expect(compared.length).toBeGreaterThan(0);
+      const off = compared.flatMap((expected) => {
+        const crossing = crossingAt(drawn, expected.hr, side);
+        return Math.abs(crossing - expected.db) <= bound ? [] : [{ expected, crossing }];
+      });
+      expect(off).toEqual([]);
+    }
+  });
+});
