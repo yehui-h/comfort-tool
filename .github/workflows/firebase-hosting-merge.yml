@@ -10,9 +10,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      # The version must be above the last deployed one, this branch's head
+      # before the push (comfort-tool docs/rewrite-plan.md, "Version bump and deploy").
+      - name: Version above the last deployed one
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: node scripts/versionBump.ts "$BEFORE"
       - run: npm ci && npm run build
       - uses: google-github-actions/auth@v2
         with:
