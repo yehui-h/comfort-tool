@@ -1,12 +1,21 @@
 import { SvelteMap } from "svelte/reactivity";
 import type { ClassifierBins } from "jsthermalcomfort";
-import { addEdge, bandListOf, moveEdge, removeEdge, setColor, setLabel, type BandList } from "$lib/core/bands";
+import { bandListOf, type BandList } from "$lib/core/bands";
+import { shownRow, type Calculator, type CalculatorResult } from "$lib/core/calculators";
 import type { ChartType } from "$lib/core/chartType";
 import type { AirSpeedMode, ClothingMode, HumidityMode, TemperatureMode } from "$lib/core/entryModes";
 import type { ChartAxes, OptionSpec, RegisteredModel } from "$lib/core/modelDeclaration";
 import { page, type Address, type Page } from "$lib/core/page";
-import type { OutOfRangeRow } from "$lib/core/applicability";
-import { adjustToBounds, rehearseSwitch } from "$lib/core/modelSwitch";
+import {
+  atmosphericPressureRow,
+  atmosphericPressureVerdict,
+  entryVerdict,
+  nearestEnd,
+  type OutOfRangeRow,
+  type SlotOutOfRangeRow,
+  type Verdict,
+} from "$lib/core/applicability";
+import { adjustToBounds, rehearseSwitch, settledOutOfRangeRows } from "$lib/core/modelSwitch";
 import type { Quantity } from "$lib/core/quantities";
 import {
   defaultEntryModes,
@@ -30,6 +39,7 @@ import {
   type SlotPosition,
   type WrittenSession,
 } from "$lib/core/writtenSession";
+import { BandListDraft } from "./bandListDraft.svelte";
 
 export { slotPositions, type SlotPosition };
 
@@ -154,7 +164,7 @@ export class ChartState {
   type: ChartType;
   /** The dynamic chart's picked axes, its declared ones to begin with; `null` for a model that declares no dynamic chart. */
   axes: ChartAxes | null;
-  /** The classifier the Band list began as, which Add and Reset read; none for a model that scans nothing. */
+  /** The classifier the Band list began as, which a draft's Add and Reset read; none for a model that scans nothing. */
   readonly #classifier: ClassifierBins | null;
   // Replaced whole, never mutated, so `$state.raw`.
   #bands: BandList | null;
@@ -175,11 +185,10 @@ export class ChartState {
 
   /**
    * The model's Band list, which Explore paints on its charts and its Bands
-   * panel edits (ADR-0002 decision 59): its scan's classifier to begin with
-   * (decision 61). A model that scans nothing has none, and every edit below
-   * does nothing.
-   * Changed only by the Band list module's operations, through the methods
-   * below.
+   * dialog edits (ADR-0002 decision 59): its scan's classifier to begin with
+   * (decision 61). A model that scans nothing has none, and no draft.
+   * Changed only by an applied draft ({@link draftBands}), whose edits are the
+   * Band list module's operations.
    */
   get bands(): BandList | null {
     return this.#bands;
@@ -194,52 +203,17 @@ export class ChartState {
   }
 
   /**
-   * Band `index`'s Edge moved to `edge`, in the output's SI unit, unless it
-   * falls at or beyond a neighbour: then the list is left as it was. Whether
-   * the move was taken, so the panel can mark a refused one.
+   * A draft of the Band list for the Bands dialog to edit, which its Apply
+   * writes here (ADR-0002 decision 84, rule 6); none for a model that scans
+   * nothing.
    */
-  moveBandEdge(index: number, edge: number): boolean {
-    const list = this.#bands;
-    if (!list) {
-      return false;
+  draftBands(): BandListDraft | null {
+    if (!this.#bands || !this.#classifier) {
+      return null;
     }
-    const moved = moveEdge(list, index, edge);
-    if (moved === list) {
-      return false;
-    }
-    this.#bands = moved;
-    return true;
-  }
-
-  /** Band `index` split at its midpoint, the lower half unlabelled and uncoloured. */
-  addBand(index: number): void {
-    this.#edit((list, classifier) => addEdge(list, index, classifier));
-  }
-
-  /** Band `index` merged into the band above, the last into the one below; the only band stays. */
-  removeBand(index: number): void {
-    this.#edit((list) => removeEdge(list, index));
-  }
-
-  setBandLabel(index: number, label: string): void {
-    this.#edit((list) => setLabel(list, index, label));
-  }
-
-  /** Band `index` recoloured, or painted nowhere for `undefined`. */
-  setBandColor(index: number, color: string | undefined): void {
-    this.#edit((list) => setColor(list, index, color));
-  }
-
-  /** The classifier's bands and colours again: the panel's Reset. */
-  resetBands(): void {
-    this.#bands = this.#classifier && bandListOf(this.#classifier);
-  }
-
-  /** The list replaced by `operation`'s answer; nothing for a model that scans nothing, which has neither list nor classifier. */
-  #edit(operation: (list: BandList, classifier: ClassifierBins) => BandList): void {
-    if (this.#bands && this.#classifier) {
-      this.#bands = operation(this.#bands, this.#classifier);
-    }
+    return new BandListDraft(this.#bands, this.#classifier, (list) => {
+      this.#bands = list;
+    });
   }
 }
 
@@ -249,9 +223,9 @@ export interface RehearsedSlot {
   /** What the slot would hold under the new model: `rehearseSwitch`'s slot. */
   readonly slot: Slot;
   /**
-   * What the question lists of it: the entered values the new model does not
-   * accept, as `rehearseSwitch` reports them, for a compared slot; none for a
-   * slot not compared, which is neither listed nor adjusted.
+   * What the question lists of it and a yes cuts: the entered values the new
+   * model does not accept, as `rehearseSwitch` reports them, compared or not
+   * (ADR-0002 decision 84, rule 4).
    */
   readonly listedRows: readonly OutOfRangeRow[];
 }
@@ -364,9 +338,12 @@ export class Session {
   }
 
   /**
-   * Whether each compared slot is named by its position: on the Standard page
-   * while Compare is on, and nowhere else (ADR-0002 decision 50). Asked here
-   * alone; each slot's badge is given from it (`state/compute.svelte.ts`).
+   * Whether each compared slot's badge carries its position name: on the
+   * Standard page while Compare is on, and nowhere else (ADR-0002 decision
+   * 50). Asked here alone; each slot's badge is given from it
+   * (`state/compute.svelte.ts`). A slot not shown has no badge, so the
+   * switch's dialog and the pressure's toast name a slot by position on their
+   * own rule (decision 84, rule 4).
    */
   get slotsNamed(): boolean {
     return this.page === page.standard && this.#compare;
@@ -466,54 +443,111 @@ export class Session {
   /**
    * Change the temperature entry mode: every slot that holds values,
    * compared or not, is converted by `withTemperatureMode` at its own values,
-   * weighed by the session's model. A slot never enabled holds nothing and
-   * takes the mode when it copies slot 1.
+   * weighed by the session's model, and cut to its bounds
+   * ({@link #replaceCut}). A slot never enabled holds nothing and takes the mode
+   * when it copies slot 1.
    */
   setTemperatureMode(mode: TemperatureMode): void {
     for (const slot of this.#heldSlots()) {
-      slot.replaceWith(withTemperatureMode(slot, mode, this.model));
+      this.#replaceCut(slot, withTemperatureMode(slot, mode, this.model));
     }
   }
 
   /**
    * Change the air-speed entry mode: every slot that holds values is
    * converted by `withAirSpeedMode` at its own air speed and metabolic rate,
-   * as {@link setTemperatureMode} converts.
+   * as {@link setTemperatureMode} converts and cuts.
    */
   setAirSpeedMode(mode: AirSpeedMode): void {
     for (const slot of this.#heldSlots()) {
-      slot.replaceWith(withAirSpeedMode(slot, mode));
+      this.#replaceCut(slot, withAirSpeedMode(slot, mode));
     }
   }
 
   /**
    * Change the clothing entry mode: every slot that holds values is converted
    * by `withClothingMode` at its own values, by the rule of the session's
-   * model's standard, as {@link setTemperatureMode} converts.
+   * model's standard, as {@link setTemperatureMode} converts and cuts.
    */
   setClothingMode(mode: ClothingMode): void {
     for (const slot of this.#heldSlots()) {
-      slot.replaceWith(withClothingMode(slot, mode, this.model));
+      this.#replaceCut(slot, withClothingMode(slot, mode, this.model));
     }
   }
 
   /**
    * Change the humidity entry mode: every slot that holds values is converted
    * by `withHumidityMode` at its own dry-bulb temperature and the session's
-   * atmospheric pressure, as {@link setTemperatureMode} converts.
+   * atmospheric pressure, as {@link setTemperatureMode} converts and cuts.
    */
   setHumidityMode(mode: HumidityMode): void {
     for (const slot of this.#heldSlots()) {
-      slot.replaceWith(withHumidityMode(slot, mode, this.atmosphericPressure));
+      this.#replaceCut(slot, withHumidityMode(slot, mode, this.atmosphericPressure));
     }
   }
 
   /**
-   * The address's path — a typed URL, the back button, a share link — which
-   * has no previous page to stay on and so never asks and never adjusts a
-   * value (ADR-0002 decision 32). Every slot that holds values is converted
-   * and seeded, and lands with the model in one step, so no derivation sees a
-   * slot and the model disagree.
+   * The verdict on entering `value` for `quantity` in the slot at `position`,
+   * which must hold values, under the session's model and pressure (ADR-0002
+   * decision 84, rule 2), writing nothing: what the box asks of a draft.
+   */
+  judgeEntry(position: SlotPosition, quantity: Quantity, value: number): Verdict {
+    return entryVerdict(this.#heldSlotAt(position), this.model, this.atmosphericPressure, quantity, value);
+  }
+
+  /**
+   * Commit `value` for `quantity` in the slot at `position`: written as it
+   * is, cut to its bound's end, or not written, as {@link judgeEntry} says,
+   * which is returned for the page to tell the person. The session raises no
+   * notice itself.
+   */
+  commitEntry(position: SlotPosition, quantity: Quantity, value: number): Verdict {
+    const verdict = this.judgeEntry(position, quantity, value);
+    if (verdict.kind !== "refused") {
+      this.#heldSlotAt(position).setEntered(quantity, verdict.kind === "cut" ? verdict.value : value);
+    }
+    return verdict;
+  }
+
+  /**
+   * An input calculator's Apply of `result` to the slot at `position`: the
+   * row the dock shows for it, the result met with the row and cut to the
+   * row's bound (`shownRow`), committed as a typed value is (ADR-0002
+   * decision 84, rule 5). What the commit says is returned; the dialog
+   * raises no notice, as its dock showed the cut before the person chose.
+   */
+  applyCalculator(position: SlotPosition, calculator: Calculator, result: CalculatorResult): Verdict {
+    const row = shownRow(this.#heldSlotAt(position), calculator, result, this.model, this.atmosphericPressure);
+    return this.commitEntry(position, row.quantity, row.after);
+  }
+
+  /**
+   * The verdict on the atmospheric pressure `value`, against its kind's bound
+   * and the humidity entry of every slot that holds values, compared or not
+   * (ADR-0002 decision 84, rule 2), writing nothing.
+   */
+  judgeAtmosphericPressure(value: number): Verdict<SlotOutOfRangeRow> {
+    const held = slotPositions.flatMap((position) => {
+      const slot = this.#slots[position];
+      return slot ? [{ position, slot }] : [];
+    });
+    return atmosphericPressureVerdict(held, this.model, value);
+  }
+
+  /** Commit the atmospheric pressure `value`, as {@link commitEntry} commits a slot's entry. */
+  commitAtmosphericPressure(value: number): Verdict<SlotOutOfRangeRow> {
+    const verdict = this.judgeAtmosphericPressure(value);
+    if (verdict.kind !== "refused") {
+      this.atmosphericPressure = verdict.kind === "cut" ? verdict.value : value;
+    }
+    return verdict;
+  }
+
+  /**
+   * Set `model` without a question and without a cut (ADR-0002 decision 32):
+   * every slot that holds values is converted and seeded, and lands with the
+   * model in one step, so no derivation sees a slot and the model disagree.
+   * The address's path, {@link setAddress}, sets the model so and then cuts.
    */
   setModel(model: RegisteredModel): void {
     if (model === this.model) {
@@ -523,27 +557,44 @@ export class Session {
   }
 
   /**
-   * Where the address points now: its page and its model, the model set as
-   * {@link setModel} sets it, so a change of page never asks either. Every
-   * slot, Compare and the chart settings are kept: they are the session's,
-   * not a page's (ADR-0002 decision 57). An arrival answers whatever was
-   * pending with a "No", as a landing does, even on the model already
-   * current: the question was asked on a page the address has left.
+   * Where the address points now — a typed URL, back and forward, a share
+   * link, a restored tab — which has no previous page to stay on and so never
+   * asks: its page and its model, the model set as {@link setModel} sets it.
+   * Every slot, Compare and the chart settings are kept: they are the
+   * session's, not a page's (ADR-0002 decision 57). An arrival answers
+   * whatever was pending with a "No", as a landing does, even on the model
+   * already current: the question was asked on a page the address has left.
+   *
+   * It then cuts the pressure to its kind's bound, and every entry of every
+   * slot that holds values, compared or not, to its bound at the pressure as
+   * cut, as a switch's "Yes" cuts (decision 84, rule 4, as noted 2026-10-28).
+   * It lists nothing and holds nothing pending, and answers whether it cut
+   * anything, for the page to say so.
    */
-  setAddress(address: Address): void {
+  setAddress(address: Address): boolean {
     this.pendingSwitch = null;
     this.page = address.page;
     this.setModel(address.model);
+    const pressureRow = atmosphericPressureRow(this.atmosphericPressure);
+    if (pressureRow) {
+      this.atmosphericPressure = nearestEnd(pressureRow.value, pressureRow.bound);
+    }
+    let cut = pressureRow !== undefined;
+    for (const slot of this.#heldSlots()) {
+      cut = this.#replaceCut(slot, slot) || cut;
+    }
+    return cut;
   }
 
   /**
    * The app's own way of switching: the person asked for `model` from a page
    * they are already on, so the session may have a question about it
    * (ADR-0002 decisions 32 and 52). Requesting is therefore a different act
-   * from setting — with every value of the compared slots acceptable to
-   * `model` the switch simply lands, and otherwise nothing changes and one
-   * question about all of them is held until {@link acceptSwitch} or
-   * {@link declineSwitch} answers it.
+   * from setting — with every value of every slot that holds values, compared
+   * or not, acceptable to `model` the switch simply lands, and otherwise
+   * nothing changes and one question about all of them is held until
+   * {@link acceptSwitch} or {@link declineSwitch} answers it (decision 84,
+   * rule 4).
    */
   requestModel(model: RegisteredModel): void {
     // Every request supersedes the last one, so no question outlives the act
@@ -580,8 +631,10 @@ export class Session {
 
   /**
    * Every slot that holds values, as a switch to `model` would leave it, in
-   * slot order. The rehearsal is a function of one slot, asked of each; only a
-   * compared slot's rows are listed.
+   * slot order. The rehearsal is a function of one slot, asked of each, and
+   * every slot's rows are listed, a slot not compared among them: it changes
+   * with the rest, and is listed so that none changes unseen (ADR-0002
+   * decision 84, rule 4).
    */
   #rehearse(model: RegisteredModel): RehearsedSlot[] {
     return slotPositions.flatMap((position) => {
@@ -590,7 +643,7 @@ export class Session {
         return [];
       }
       const { slot, outOfRangeRows } = rehearseSwitch(held, this.model, model, this.atmosphericPressure);
-      return [{ position, slot, listedRows: this.#comparedPositions.includes(position) ? outOfRangeRows : [] }];
+      return [{ position, slot, listedRows: outOfRangeRows }];
     });
   }
 
@@ -609,6 +662,28 @@ export class Session {
     this.model = model;
     this.chart = this.#chartFor(model);
     this.pendingSwitch = null;
+  }
+
+  /**
+   * Replace what `slot` holds with `held`, every entry out of range cut to
+   * its bound at the session's model and pressure, read at the entries as
+   * cut (ADR-0002 decision 84, rules 4 and 5), and answer whether it cut
+   * anything. An arrival lands so, and an entry-mode switch, as a conversion
+   * can carry an entry past a bound the mode it left did not hold it to.
+   */
+  #replaceCut(slot: InputSlot, held: Slot): boolean {
+    const rows = settledOutOfRangeRows(held, this.model, this.atmosphericPressure);
+    slot.replaceWith(rows.length > 0 ? adjustToBounds(held, rows) : held);
+    return rows.length > 0;
+  }
+
+  /** The slot at `position`, or a throw for a slot never enabled, which holds nothing to enter a value in. */
+  #heldSlotAt(position: SlotPosition): InputSlot {
+    const slot = this.#slots[position];
+    if (!slot) {
+      throw new Error(`The slot at position ${position} is entered in before it was ever enabled, and holds nothing`);
+    }
+    return slot;
   }
 
   /** Every slot that holds values, in slot order. */

@@ -14,13 +14,11 @@
   and the footer run the page's width and scroll with it; wider than the
   content needs, the row and the bands' contents stand in one frame,
   `--frame-width`, centred in the window (rule 10 as revised again
-  2026-10-12). The header's row is that fixed height, so a notice appearing
-  or closing in it moves nothing (decision 67, rule 10). The provider's
-  Cmd/Ctrl+B is stopped at the window, so it writes no cookie (rule 6).
+  2026-10-12). The provider's Cmd/Ctrl+B is stopped at the window, so it
+  writes no cookie (rule 6).
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import type { Notice } from "$lib/state/openSession";
   import { copy } from "$lib/text/copy";
   import * as Card from "$lib/ui/primitives/card";
   import * as Sidebar from "$lib/ui/primitives/sidebar";
@@ -31,8 +29,6 @@
   import SiteHeader from "./SiteHeader.svelte";
 
   interface Props {
-    notice: Notice | null;
-    onclosenotice: () => void;
     /** The header's mark's link, which the page writes and follows as its navigation's (decision 73, rule 5). */
     mark: InAppLink;
     navigation: Snippet;
@@ -48,8 +44,7 @@
     chart: Snippet;
   }
 
-  let { notice, onclosenotice, mark, navigation, sessionControls, inputs, inputsActions, results, chartActions, chart }: Props =
-    $props();
+  let { mark, navigation, sessionControls, inputs, inputsActions, results, chartActions, chart }: Props = $props();
 
   const id = $props.id();
 
@@ -75,16 +70,21 @@
   revised again 2026-10-12).
 -->
 <Sidebar.Provider class="flex-col" style="--sidebar-width: 14rem; --frame-width: calc(var(--sidebar-width) + 76rem);">
-  <SiteHeader {notice} {onclosenotice} {mark} />
+  <SiteHeader {mark} />
 
   <div class="mx-auto flex w-full max-inline-(--frame-width) flex-1">
     <AppSidebar {navigation} {sessionControls} />
     <!--
       The inset is the block's content area, the page's `main`, on the ground,
-      and a container: two columns, the inputs at `24rem` and the results and
-      the chart beside them, while it is at least `70rem` wide, the input
-      column, the chart card's plot and the legend's basis with their gaps
-      (decision 73, rule 10); one column below, the input card above. The page
+      and a container: two columns, the input card and the results and the
+      chart beside them, while it is at least `74.5rem` wide, the input card,
+      the chart card's plot and the legend's basis with their gaps (decision
+      73, rule 10, the sum recomputed by decision 84, rule 12); one column
+      below, the input card above the others at the left. The input card is
+      `28.75rem` at every width, the narrowest at which three slots show
+      Presets beside a four-character value
+      (`.scratch/input-gate/issues/04-…md` Comments); its column is `auto`,
+      so the card's width is written once. The page
       gutter is the spacing token on three sides; on the fourth the sidebar's
       own insets make it, so its fills stand that far from the cards and its
       first group label's top is level with theirs. Below `md` the sidebar is
@@ -93,9 +93,9 @@
     -->
     <Sidebar.Inset class="@container min-w-0 bg-transparent first:pl-(--space-page)">
       <div
-        class="grid grid-cols-[minmax(0,1fr)] items-start gap-(--space-page) p-(--space-page) pl-0 @min-[70rem]:grid-cols-[24rem_minmax(0,1fr)]"
+        class="grid grid-cols-[minmax(0,1fr)] items-start gap-(--space-page) p-(--space-page) pl-0 @min-[74.5rem]:grid-cols-[auto_minmax(0,1fr)]"
       >
-        <Card.Root>
+        <Card.Root class="w-[28.75rem]">
           <Card.Header class="items-center">
             <Card.Title><h2>{copy.inputs}</h2></Card.Title>
             {#if inputsActions}

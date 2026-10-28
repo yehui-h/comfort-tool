@@ -7,31 +7,30 @@ import type { Notice, OpenSession } from "./openSession";
 
 /**
  * What the root holds about the tab beside its open session, and not in it
- * (ADR-0002 decision 63): the open session, what the notice line says, and a
- * share link waiting on the person's answer. It replaces the session one way,
- * which Reset and a link's yes both call (rule 8). Reads and clears what the
- * tab kept; writing it is the app's, at every change of the session.
+ * (ADR-0002 decision 63): the open session and a share link waiting on the
+ * person's answer. It replaces the session one way, which Reset and a link's
+ * yes both call (rule 8), and hands the notice a load gives to the root's
+ * `onnotice`, which raises it (decision 84, rule 7). Reads and clears what
+ * the tab kept; writing it is the app's, at every change of the session.
  */
 export class Tab {
   readonly #models: readonly RegisteredModel[];
+  readonly #onnotice: (notice: Notice) => void;
   /** Set by the first address, and again by each replacement. Replaced whole, so `$state.raw`. */
   #opened = $state.raw<OpenSession>();
-  #notice = $state<Notice | null>(null);
   #waitingLink = $state<string | null>(null);
+  /** What a no to the waiting link raises, held while it waits (`FirstLoad.declineNotices`); not read by the page, so plain. */
+  #declineNotices: readonly Notice[] = [];
   #replacements = $state(0);
 
-  constructor(models: readonly RegisteredModel[]) {
+  constructor(models: readonly RegisteredModel[], onnotice: (notice: Notice) => void) {
     this.#models = models;
+    this.#onnotice = onnotice;
   }
 
   /** The open session and its outputs, or `undefined` until the first address opens them. */
   get opened(): OpenSession | undefined {
     return this.#opened;
-  }
-
-  /** What the notice line says, or `null` while it is closed. */
-  get notice(): Notice | null {
-    return this.#notice;
   }
 
   /**
@@ -55,12 +54,15 @@ export class Tab {
   /**
    * An address, and the share link's text it carried if any. The first opens
    * the session on its page and model, from its link or what the tab kept;
-   * every one after it — a typed URL, the back button — moves the session
-   * there. This is the address's path, and it never asks.
+   * every one after it — back and forward, the app's own navigation — moves
+   * the session there, and raises the cut's notice where that cut a value
+   * (decision 84, rule 4). This is the address's path, and it never asks.
    */
   arrive(address: Address, link: string | undefined): void {
     if (this.#opened) {
-      this.#opened.session.setAddress(address);
+      if (this.#opened.session.setAddress(address)) {
+        this.#onnotice("valuesCut");
+      }
       return;
     }
     this.#openAt(address, link);
@@ -79,30 +81,32 @@ export class Tab {
     this.#replace(this.#waitingLink);
   }
 
-  /** The person said no to the waiting link: it is dropped, and the session kept where the address moved it. */
+  /**
+   * The person said no to the waiting link: it is dropped, and the session
+   * kept where the address moved it, with the notice of the cut that move
+   * made, if it made one.
+   */
   declineLink(): void {
     this.#waitingLink = null;
-  }
-
-  /** Say `notice`, in place of whatever the line said. */
-  raiseNotice(notice: Notice): void {
-    this.#notice = notice;
-  }
-
-  closeNotice(): void {
-    this.#notice = null;
+    for (const notice of this.#declineNotices) {
+      this.#onnotice(notice);
+    }
+    this.#declineNotices = [];
   }
 
   /**
    * Run the first address's load at `address`, with `link` and what the tab
-   * kept: the session it opens, the notice it raises and the link it leaves
-   * waiting, each in place of what was there.
+   * kept: the session it opens and the link it leaves waiting, each in place
+   * of what was there, and the notices it raises.
    */
   #openAt(address: Address, link: string | undefined): void {
     const load = firstLoadAt(address, { link, kept: readKeptText() }, this.#models);
     this.#opened = { session: load.session, outputs: new Outputs(load.session) };
-    this.#notice = load.notice;
     this.#waitingLink = load.waitingLink;
+    this.#declineNotices = load.declineNotices;
+    for (const notice of load.notices) {
+      this.#onnotice(notice);
+    }
   }
 
   /**

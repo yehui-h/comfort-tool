@@ -1,6 +1,6 @@
 /**
  * A model switch while Compare is on (ADR-0002 decision 52): every slot that
- * holds values is rehearsed, the question lists the compared slots' rows,
+ * holds values is rehearsed, the question lists every held slot's rows,
  * grouped by slot in slot order, and one answer lands the model with every
  * slot or leaves them all. Asserted at the seam the other session tests use —
  * a session in, its state and its outputs out, with no component and no
@@ -16,6 +16,7 @@ import { page } from "$lib/core/page";
 import { quantities, type Quantity } from "$lib/core/quantities";
 import { adaptiveAshrae } from "$lib/models/adaptiveAshrae";
 import { heatIndexRothfusz } from "$lib/models/heatIndexRothfusz";
+import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
 import { pmvPpdIso } from "$lib/models/pmvPpdIso";
 import { Outputs } from "./compute.svelte";
 import { Session, slotPositions, type SlotPosition } from "./session.svelte";
@@ -24,19 +25,19 @@ import { heldSlot, listedRowsOf, sessionComparingThreeSlots, shapeOf, withBounds
 const q = quantities;
 
 /**
- * PMV (ISO 7730) bounded to 10–20 °C dry-bulb and 1 clo at least, and taking
+ * PMV (ISO 7730) bounded to 10–20 °C dry-bulb and 1.1 met at least, and taking
  * the external work PMV (ISO 7730) does not, so a slot the switch seeded is
  * one that holds it.
  */
 const coolerAndTakesWork = {
-  ...withBounds({ tdb: { min: 10, max: 20 }, clo: { min: 1 } }),
+  ...withBounds({ tdb: { min: 10, max: 20 }, met: { min: 1.1 } }),
   inputs: [...pmvPpdIso.inputs, { quantity: q.wme, value: 0.4 }],
 } satisfies RegisteredModel;
 
-/** A dry-bulb temperature, [°C], and a clothing insulation, [clo], {@link coolerAndTakesWork} accepts. */
+/** A dry-bulb temperature, [°C], and a metabolic rate, [met], {@link coolerAndTakesWork} accepts. */
 const accepted = new Map<Quantity, number>([
   [q.tdb, 18],
-  [q.clo, 1.2],
+  [q.met, 1.2],
 ]);
 
 /** What the slots start with, and the positions in `breaking` breaking {@link coolerAndTakesWork}. */
@@ -45,7 +46,8 @@ function entriesBreaking(breaking: readonly SlotPosition[]): ReadonlyMap<Quantit
     breaking.includes(position)
       ? new Map<Quantity, number>([
           [q.tdb, 24 + position],
-          [q.clo, 1.2 - position * 0.4],
+          // Inside PMV (ISO 7730)'s own 0.8 met at every position.
+          [q.met, 1.2 - position * 0.15],
         ])
       : accepted,
   );
@@ -84,7 +86,7 @@ describe("Session.requestModel while Compare is on", () => {
     session.requestModel(coolerAndTakesWork);
 
     expect(listedPositions(session)).toEqual([1]);
-    expect(listedRowsOf(session, 1)?.map((row) => row.quantity)).toEqual([q.tdb, q.clo]);
+    expect(listedRowsOf(session, 1)?.map((row) => row.quantity)).toEqual([q.tdb, q.met]);
     expect(session.model).toBe(pmvPpdIso);
     expect(slotPositions.map((position) => shapeOf(heldSlot(session, position)))).toEqual(before);
   });
@@ -96,7 +98,7 @@ describe("Session.requestModel while Compare is on", () => {
 
     expect(listedPositions(session)).toEqual([0, 2]);
     expect(listedRowsOf(session, 0)?.map((row) => row.quantity)).toEqual([q.tdb]);
-    expect(listedRowsOf(session, 2)?.map((row) => row.quantity)).toEqual([q.tdb, q.clo]);
+    expect(listedRowsOf(session, 2)?.map((row) => row.quantity)).toEqual([q.tdb, q.met]);
   });
 
   it("lists for each slot the rows a session holding that slot alone is asked about", () => {
@@ -142,7 +144,6 @@ describe("Session.requestModel while Compare is on", () => {
 
     expect(outputs.atmosphericPressureOutOfRange).toBe(false);
     expect(outputs.slots.map((slot) => slot.outOfRangeQuantities)).toEqual([[], [], []]);
-    expect(outputs.slots.map((slot) => slot.notCalculated)).toEqual([false, false, false]);
   });
 
   it("leaves the model and every slot as they were on a no, entry modes included", () => {
@@ -159,28 +160,23 @@ describe("Session.requestModel while Compare is on", () => {
     expect(slotPositions.map((position) => shapeOf(heldSlot(session, position)))).toEqual(before);
   });
 
-  it("does not list a slot that is not compared, converts and seeds it on a yes without adjusting it, and marks it when enabled", () => {
-    const session = comparingSlotsEntered(entriesBreaking([0, 2]));
-    const outputs = new Outputs(session);
+  it("lists a slot that is not compared, and on a yes cuts it as a session holding it alone", () => {
+    const entries = entriesBreaking([0, 2]);
+    const session = comparingSlotsEntered(entries);
     session.setSlotEnabled(2, false);
-    const heldBefore = shapeOf(heldSlot(session, 2));
 
     session.requestModel(coolerAndTakesWork);
-    expect(listedPositions(session)).toEqual([0]);
+    expect(listedPositions(session)).toEqual([0, 2]);
     session.acceptSwitch();
 
-    const alone = sessionAlone(entriesBreaking([2])[2]);
-    alone.setModel(coolerAndTakesWork);
+    const alone = sessionAlone(entries[2]);
+    alone.requestModel(coolerAndTakesWork);
+    alone.acceptSwitch();
     expect(shapeOf(heldSlot(session, 2))).toEqual(shapeOf(alone.slots[0]));
-    expect(heldSlot(session, 2).values.get(q.tdb)).toBe(heldBefore.values.get(q.tdb));
     expect(heldSlot(session, 2).values.get(q.wme)).toBe(0.4);
-
-    session.setSlotEnabled(2, true);
-
-    expect(outputs.slots[2].outOfRangeQuantities).toEqual([q.tdb, q.clo]);
   });
 
-  it("converts a slot that is not compared out of operative entry for a model without the temperature entry group", () => {
+  it("converts a slot that is not compared out of operative entry for a model without the temperature entry group, and cuts it, as a session holding it alone", () => {
     const session = comparingSlotsEntered(entriesBreaking([2]));
     session.setSlotEnabled(2, false);
     session.setTemperatureMode(temperatureMode.operative);
@@ -191,7 +187,8 @@ describe("Session.requestModel while Compare is on", () => {
     expect(session.model).toBe(heatIndexRothfusz);
     const alone = sessionAlone(entriesBreaking([2])[2]);
     alone.setTemperatureMode(temperatureMode.operative);
-    alone.setModel(heatIndexRothfusz);
+    alone.requestModel(heatIndexRothfusz);
+    alone.acceptSwitch();
     expect(heldSlot(session, 2).temperature.mode).toBe(temperatureMode.separate);
     expect(shapeOf(heldSlot(session, 2))).toEqual(shapeOf(alone.slots[0]));
   });
@@ -208,15 +205,16 @@ describe("Session.requestModel while Compare is on", () => {
     expect(shapeOf(heldSlot(session, 2))).toEqual(shapeOf(session.slots[0]));
   });
 
-  it("lands and asks nothing when no compared slot has anything to list, whatever a slot not compared holds", () => {
+  it("holds a question about a slot that is not compared when it alone breaks the model, and changes nothing", () => {
     const session = comparingSlotsEntered(entriesBreaking([1]));
     session.setSlotEnabled(1, false);
+    const before = slotPositions.map((position) => shapeOf(heldSlot(session, position)));
 
     session.requestModel(coolerAndTakesWork);
 
-    expect(session.pendingSwitch).toBeNull();
-    expect(session.model).toBe(coolerAndTakesWork);
-    expect(heldSlot(session, 1).values.get(q.wme)).toBe(0.4);
+    expect(listedPositions(session)).toEqual([1]);
+    expect(session.model).toBe(pmvPpdIso);
+    expect(slotPositions.map((position) => shapeOf(heldSlot(session, position)))).toEqual(before);
   });
 
   it("leaves every compared slot's outputs the current model's while the question is pending", () => {
@@ -231,8 +229,8 @@ describe("Session.requestModel while Compare is on", () => {
   });
 });
 
-describe("the model switch while Compare is on, by the address or there and back", () => {
-  it("lands the model on the address's path with every slot converted and seeded, asking nothing and adjusting nothing", () => {
+describe("the model switch while Compare is on, by setting the model or there and back", () => {
+  it("lands the model set with every slot converted and seeded, asking nothing and adjusting nothing", () => {
     const entries = entriesBreaking([0, 1, 2]);
     const session = comparingSlotsEntered(entries);
     const outputs = new Outputs(session);
@@ -283,16 +281,18 @@ describe("the model switch asked for on Explore, which compares slot 1 alone (AD
     return session;
   }
 
-  it("lists slot 1's rows alone when slots 1 and 2 break the model", () => {
+  it("lists the rows of every slot the session holds, as the same request on the Standard page lists them", () => {
     const session = onExploreBreakingSlots1And2();
+    const onStandard = comparingSlotsEntered(entriesBreaking([0, 1]));
 
     session.requestModel(coolerAndTakesWork);
+    onStandard.requestModel(coolerAndTakesWork);
 
-    expect(listedPositions(session)).toEqual([0]);
-    expect(listedRowsOf(session, 0)?.map((row) => row.quantity)).toEqual([q.tdb]);
+    expect(listedPositions(session)).toEqual([0, 1]);
+    expect(session.pendingSwitch?.slots).toEqual(onStandard.pendingSwitch?.slots);
   });
 
-  it("adjusts slot 1 on a yes, and converts and seeds slots 2 and 3 without adjusting them", () => {
+  it("cuts slots 1 and 2 on a yes, each as a session holding it alone", () => {
     const entries = entriesBreaking([0, 1]);
     const session = onExploreBreakingSlots1And2();
 
@@ -300,17 +300,12 @@ describe("the model switch asked for on Explore, which compares slot 1 alone (AD
     session.acceptSwitch();
 
     expect(session.model).toBe(coolerAndTakesWork);
-    const adjusted = sessionAlone(entries[0]);
-    adjusted.requestModel(coolerAndTakesWork);
-    adjusted.acceptSwitch();
-    expect(shapeOf(heldSlot(session, 0))).toEqual(shapeOf(adjusted.slots[0]));
-    for (const position of [1, 2] as const) {
-      const seeded = sessionAlone(entries[position]);
-      seeded.setModel(coolerAndTakesWork);
-      expect(shapeOf(heldSlot(session, position))).toEqual(shapeOf(seeded.slots[0]));
-      expect(heldSlot(session, position).values.get(q.wme)).toBe(0.4);
-    }
-    expect(heldSlot(session, 1).values.get(q.tdb)).toBe(entries[1].get(q.tdb));
+    slotPositions.forEach((position) => {
+      const alone = sessionAlone(entries[position]);
+      alone.requestModel(coolerAndTakesWork);
+      alone.acceptSwitch();
+      expect(shapeOf(heldSlot(session, position))).toEqual(shapeOf(alone.slots[0]));
+    });
   });
 
   it("leaves all three slots on a no", () => {
@@ -323,13 +318,54 @@ describe("the model switch asked for on Explore, which compares slot 1 alone (AD
     expect(session.model).toBe(pmvPpdIso);
     expect(slotPositions.map((position) => shapeOf(heldSlot(session, position)))).toEqual(before);
   });
+});
 
-  it("lists both slots' rows for the same request on the Standard page", () => {
-    const session = onExploreBreakingSlots1And2();
-    session.setAddress({ page: page.standard, model: session.model });
+describe("the model switch with a slot held while Compare is off (ADR-0002 decision 84, rule 4)", () => {
+  /**
+   * A session on PMV (ASHRAE 55) holding slot 2 at 35 °C dry-bulb, past PMV
+   * (ISO 7730)'s 30 °C and inside PMV (ASHRAE 55)'s, with Compare off.
+   */
+  function holdingSlot2PastIso(): Session {
+    const session = new Session(pmvPpdAshrae);
+    session.setCompare(true);
+    heldSlot(session, 1).setEntered(q.tdb, 35);
+    session.setCompare(false);
+    return session;
+  }
 
-    session.requestModel(coolerAndTakesWork);
+  it("lists slot 2's rows among the two slots the session holds, so that the dialog names it by its position", () => {
+    const session = holdingSlot2PastIso();
 
-    expect(listedPositions(session)).toEqual([0, 1]);
+    session.requestModel(pmvPpdIso);
+
+    expect(session.pendingSwitch?.slots.map((slot) => slot.position)).toEqual([0, 1]);
+    expect(listedPositions(session)).toEqual([1]);
+    expect(listedRowsOf(session, 1)?.map((row) => row.quantity)).toEqual([q.tdb]);
+  });
+
+  it("cuts slot 2 on a yes", () => {
+    const session = holdingSlot2PastIso();
+
+    session.requestModel(pmvPpdIso);
+    const [row] = listedRowsOf(session, 1) ?? [];
+    session.acceptSwitch();
+
+    expect(session.model).toBe(pmvPpdIso);
+    expect(heldSlot(session, 1).values.get(q.tdb)).toBe(row.bound.max);
+    expect(new Outputs(session).slots[0].outOfRangeQuantities).toEqual([]);
+    session.setCompare(true);
+    expect(new Outputs(session).slots[1].outOfRangeQuantities).toEqual([]);
+  });
+
+  it("leaves the model and every slot as they were on a no", () => {
+    const session = holdingSlot2PastIso();
+    const before = slotPositions.flatMap((position) => (session.slots[position] ? [shapeOf(heldSlot(session, position))] : []));
+
+    session.requestModel(pmvPpdIso);
+    session.declineSwitch();
+
+    expect(session.model).toBe(pmvPpdAshrae);
+    expect(session.pendingSwitch).toBeNull();
+    expect(slotPositions.flatMap((position) => (session.slots[position] ? [shapeOf(heldSlot(session, position))] : []))).toEqual(before);
   });
 });

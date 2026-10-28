@@ -1,6 +1,6 @@
 {
   "name": "cbe-thermal-comfort-demo-frontend",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -10,7 +10,7 @@
     "dev": "vite",
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "lint": "eslint src tests playwright.config.ts",
+    "lint": "eslint src tests scripts playwright.config.ts",
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests",
     "test:browser": "playwright test",
@@ -39,6 +39,7 @@
     "shadcn-svelte": "^1.6.0",
     "svelte": "^5.56.9",
     "svelte-check": "^4.7.6",
+    "svelte-sonner": "^1.2.2",
     "tailwind-merge": "^3.6.0",
     "tailwind-variants": "^3.3.1",
     "tailwindcss": "^4.3.3",

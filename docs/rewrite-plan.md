@@ -401,6 +401,17 @@ Calculation logic moves out into the forked `jsthermalcomfort` (`typescript` bra
 > describes (`a907f79`) landed. `npm test` passes at 1147 tests and `npm run test:browser` at 78. **Next: the
 > Time-series grilling (decision 57 rule 6).**
 
+> **2026-10-27 — position, the input gate decided**: the frontend review (Linear USYD-108) is triaged in
+> `.scratch/frontend-review/README.md`, tickets 01–03 done (`f95f402`, `ab61485`, `c3a4ed4`). Its input-gate principle
+> was grilled with items I1, I3, I4, I6, I7, I8, I10, I11 and I12 and settled on paper as ADR-0002 decision 84: a
+> committed value is always within its bounds and a draft is not an input; an illegal draft waits for Enter or blur,
+> then is cut to its own bound or, where it would break another held value's bound, refused; a limit on a combination
+> stays a violation, calculated and marked on its result row; a model switch and an arrival by address cut and list in
+> the switch's dialog; one notification, a Sonner toast; Bands are edited as a draft; the input card is fixed at the
+> width three slots need to show "Presets". Decision 33 and decision 83 rule 2 are withdrawn, ten decisions noted;
+> GLOSSARY.md follows and gains **Draft**. Ticket 05 (N6) and open-points B28 are new. **Next: the user's `/to-spec`
+> and `/to-tickets` for decision 84, then the README's workflow.**
+
 and the one rule is "**adding a model = one declaration file + one registry line, zero other files change**".
 
 The toolchain does not need to be rebuilt: the `refactor-draft` branch is already on the Vite 8 / TS 6 / Svelte 5.56 /
@@ -1697,7 +1708,8 @@ then the library; then spec and tickets.
    expected text is written as a literal.
    **Order (2026-10-07)**: the fixture needs a deployed build's text and the merge is item 6, so a preview is deployed
    before the freeze; the exact order is this phase's to settle.
-6. Merge back into `main`, remove the `git worktree`.
+6. Merge back into `main`, remove the `git worktree`, and move the version check to `main` (Version bump and deploy,
+   "At the formal release").
 7. Visual close-out (added 2026-10-07), before item 6: every page and dialog built after Phase 5c (the calculators,
    Time-series) is read against Phase 5c's Done criteria. Not a second design: the criteria are the stop.
 
@@ -1783,3 +1795,26 @@ removed (measured 2026-09-28; Proposal 35, `P031`).
 Phase 4's architecture acceptance is judged by `git diff --stat`, and so are the UTCI acceptance's two runs, at
 Phase 5's close and in Phase 6, and Phase 5d's PHS entry (2026-10-07).
 If either fails, stop and fix the architecture; do not work around it.
+
+## Version bump and deploy (added 2026-10-27)
+
+Pushes to `rewrite/v1` are not checked; the version is raised for a deploy only. The development deploy runs from the
+fork `yehui-h/comfort-tool`, whose `main` is this branch plus `firebase.json`, `.firebaserc` and
+`.github/workflows/firebase-hosting-merge.yml`: every push to the fork's `main` builds and deploys to
+https://comfort-tool-demo.web.app/ (Firebase project `yehui-comfort-tool`, site `comfort-tool-demo`). To deploy:
+
+1. Run `npm version patch|minor|major`, the author choosing the level, commit `package.json` and `package-lock.json`
+   as a Conventional Commit, and push to `rewrite/v1`. `.npmrc` sets `git-tag-version=false`, so `npm version` neither
+   commits nor tags.
+2. On GitHub, sync the fork's `rewrite/v1` with this repository's.
+3. Merge the fork's `rewrite/v1` into the fork's `main`.
+
+The footer shows `package.json`'s version (ADR-0002 decision 64, rule 4), so a deploy without a bump would show an
+old version. Before the build, the fork's workflow runs `node scripts/versionBump.ts "$BEFORE"`, `$BEFORE` being the
+fork `main`'s head before the push, the last deployed state; a version that is not a MAJOR.MINOR.PATCH above it stops
+the run, its message names `npm version patch|minor|major`, and nothing deploys. A run that fails after the check is
+re-run from the fork's Actions page, which compares against the same head.
+
+**At the formal release** (Phase 6 item 6): pull requests into `main` get the check as a required status check,
+`node scripts/versionBump.ts <base ref>`, and the owner sets the branch protection. An automated deploy, if wanted, is
+built then for the formal deploy.

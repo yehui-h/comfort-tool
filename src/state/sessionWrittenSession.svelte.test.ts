@@ -20,7 +20,7 @@ import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
 import { pmvPpdIso } from "$lib/models/pmvPpdIso";
 import { Outputs } from "./compute.svelte";
 import { Session, slotPositions, type ChartState } from "./session.svelte";
-import { expectEverySlotInSessionEntryModes, heldSlot, sessionComparingThreeSlots, shapeOf } from "./sessionTestReaders";
+import { editBands, expectEverySlotInSessionEntryModes, heldSlot, sessionComparingThreeSlots, shapeOf } from "./sessionTestReaders";
 
 const q = quantities;
 const [airSpeedControl] = optionsOf(pmvPpdAshrae);
@@ -52,14 +52,13 @@ function stateOf(session: Session) {
   };
 }
 
-/** What the page shows of the outputs: each compared slot's result, gate and rows, and the chart. */
+/** What the page shows of the outputs: each compared slot's result and rows, and the chart. */
 function shownOf(outputs: Outputs) {
   return {
     atmosphericPressureOutOfRange: outputs.atmosphericPressureOutOfRange,
     slots: outputs.slots.map((slot) => ({
       position: slot.position,
       result: slot.result,
-      notCalculated: slot.notCalculated,
       outOfRangeQuantities: slot.outOfRangeQuantities,
       violations: slot.violations,
     })),
@@ -78,20 +77,24 @@ function editedSession(): Session {
   heldSlot(session, 1).setOption(airSpeedControl, true);
   session.chart.type = chartType.dynamic;
   session.chart.setAxes({ y: q.rh });
-  session.chart.moveBandEdge(3, 0.4);
-  session.chart.setBandColor(1, undefined);
+  editBands(session, (draft) => {
+    draft.moveEdge(3, 0.4);
+    draft.setColor(1, undefined);
+  });
   session.setModel(pmvPpdIso);
   session.chart.type = chartType.dynamic;
   session.chart.setAxes({ x: q.met });
-  session.chart.addBand(2);
-  session.chart.setBandLabel(0, "Freezing");
+  editBands(session, (draft) => {
+    draft.addBand(2);
+    draft.setLabel(0, "Freezing");
+  });
   session.setTemperatureMode(temperatureMode.operative);
   session.setAirSpeedMode(airSpeedMode.corrected);
   session.setClothingMode(clothingMode.corrected);
   session.setHumidityMode(humidityMode.dewPoint);
   heldSlot(session, 1).setEntered(q.operative_tmp, 27);
   heldSlot(session, 2).setEntered(q.met, 1.4);
-  // Past PMV (ISO 7730)'s 30 °C: the gate closes on slot 3.
+  // Past PMV (ISO 7730)'s 30 °C, written past the commit's judgement.
   heldSlot(session, 2).setEntered(q.operative_tmp, 60);
   session.unitSystem = unitSystem.ip;
   session.atmosphericPressure = PRESSURE_OUT_OF_RANGE;
@@ -136,7 +139,7 @@ describe("a session read out and built again", () => {
     session.atmosphericPressure = DEFAULT_ATMOSPHERIC_PRESSURE;
     again.atmosphericPressure = DEFAULT_ATMOSPHERIC_PRESSURE;
     expect(shownOf(againOutputs)).toEqual(shownOf(outputs));
-    expect(againOutputs.slots.map((slot) => slot.notCalculated)).toEqual([false, false, true]);
+    expect(againOutputs.slots.map((slot) => slot.outOfRangeQuantities)).toEqual([[], [], [q.operative_tmp]]);
     expect(againOutputs.chart).not.toBeNull();
   });
 
@@ -215,7 +218,7 @@ describe("Session.toWrittenSession", () => {
       () => (session.atmosphericPressure = 90000),
       () => (session.chart.type = chartType.dynamic),
       () => session.chart.setAxes({ y: q.met }),
-      () => session.chart.moveBandEdge(3, 0.4),
+      () => editBands(session, (draft) => draft.moveEdge(3, 0.4)),
       () => session.setModel(pmvPpdIso),
     ];
 

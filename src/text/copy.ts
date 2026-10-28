@@ -104,7 +104,7 @@ export const copy = {
   // with that bound named as its limit, "44.98 (limit 10 – 40)" (decision 75, rule 6 (d); worded by the user,
   // 2026-10-15).
   calculatorChangeJoiner: " → ",
-  calculatorBrokenBound: (after: string, bound: string) => `${after} (limit ${bound})`,
+  calculatorCutTo: (after: string, bound: string) => `${after} (limit ${bound})`,
   // Custom ensemble's rows: the search box above them and its empty list; a row's list button, "Change" on Chairs
   // while a chair is worn; a worn garment's remove button; Clear at the title's right; and the sum.
   ensembleSearchPlaceholder: "Search garments…",
@@ -114,21 +114,15 @@ export const copy = {
   ensembleRemove: (garment: string) => `Remove ${garment}`,
   ensembleClear: "Clear",
   ensembleInsulation: "Ensemble insulation",
-  // A row's caption line under its box (decision 67, rule 3): the matching preset's name and the bound.
-  rowCaption: (preset: string, bound: string) => `${preset} · ${bound}`,
   presetSearchPlaceholder: "Search…",
   presetEmpty: "No matches.",
   inputColumn: "Input",
   complianceColumn: "Compliance",
-  // The applicability summary's first part (ADR-0002 decision 83, rule 2): its heading, worded as the second part's
-  // is, and the sentence on the result after the entries it lists. Two sentences for one state (decision 33): the gate keeps
-  // the last valid inputs of the *current* model, so a model reached with an entry out of range has nothing to show.
-  // The caller picks by whether it keeps one.
-  notCalculated: "Not calculated, outside these limits:",
-  notCalculatedKeptResult: "Showing the last valid result.",
-  notCalculatedNoResult: "This model has no earlier result to show.",
-  // The summary's second part (decision 83, rules 2 and 5): "limits", the standards' word for both kinds of bound.
-  outsideLimits: "Calculated, but outside these limits:",
+  // A result row's button for the limits its run broke, its accessible name, and the heading of the popover it opens
+  // and of a slot's broken limits in an Image's Input summary (ADR-0002 decision 84, rule 8), the heading in decision
+  // 83's words: "limits", the standards' word for both kinds of bound.
+  limitsBroken: "Limits broken",
+  limitsBrokenHeading: "Calculated, but outside these limits:",
   // One broken applicability row: `bound` already carries its unit.
   applicabilityWarning: (label: string, bound: string) => `${label} must be ${bound}`,
   // The model-switch dialog (ADR §4.5, ADR-0002 decision 32). Its own column
@@ -152,13 +146,24 @@ export const copy = {
   linkQuestion: "This tab already holds a session. Opening the link replaces it, and that cannot be undone.",
   linkAccept: "Yes, open the link",
   linkDecline: "No, keep mine",
-  // Copy link and the notice line (ADR-0002 decision 63, rules 6 and 7).
-  copyLink: "Copy link",
+  // Share, and the notices a link and Share raise (ADR-0002 decision 63, rules 6 and 7; rule 7's button as noted 2026-10-27).
+  share: "Share",
   linkCopied: "Link copied",
   linkRefusedNotice: "The shared link could not be read, so nothing was opened from it.",
   linkFilledNotice: "Some of this link could not be used as written; what it lacked starts at its defaults.",
   copyRefusedNotice: "The link could not be copied.",
-  closeNotice: "Close",
+  // An arrival that cut values to their bounds (decision 84, rule 4, as noted 2026-10-28).
+  valuesCutNotice: "Some values were out of range and were cut to the nearest allowed value.",
+  // A toast's close button (decision 84, rule 7).
+  closeToast: "Close",
+  // What a refused value's toast says (decision 84, rules 2 and 7): `subject` is the box's quantity, with its slot
+  // under Compare; `value` carries its unit; each reason is a bound sentence, of what the value would break.
+  refusedNotice: (subject: string, value: string, reasons: readonly string[]) =>
+    reasons.length === 1
+      ? `${subject} was not changed to ${value}, which would put another value out of range. ${reasons[0]}. Change it first.`
+      : `${subject} was not changed to ${value}, which would put other values out of range. ${reasons.join(". ")}. Change them first.`,
+  // A run that broke a limit it did not break before (decision 84, rule 8): each reason is a bound sentence.
+  limitsBrokenNotice: (reasons: readonly string[]) => `Calculated, but outside ${reasons.length === 1 ? "a limit" : "limits"}. ${reasons.join(". ")}.`,
   // An Image of the chart (ADR-0002 decision 64, rules 6 and 8).
   exportImage: "Export image",
   imageTitle: "Title",
@@ -177,8 +182,6 @@ export const copy = {
   footerLibrary: (version: string, day: string) => `${LIBRARY_NAME} ${version} · ${day}`,
   standardCaption: (displayName: string, year: string) => `${displayName}:${year}`,
   notAvailable: "—",
-  // The accessible name of the icon on a dash standing for a violation (decision 83, rule 3).
-  violationMark: "The result is outside a limit",
   // A yes-or-no result cell (`acceptability_80`, `compliance`).
   yes: "Yes",
   no: "No",
@@ -212,7 +215,7 @@ export const copy = {
   // The Bands panel on Explore (ADR-0002 decision 59), in a dialog the chart's heading row opens (decision 73, rule 8).
   bands: "Bands",
   bandsReset: "Reset bands",
-  bandsClose: "Close",
+  bandsApply: "Apply",
   bandLabelColumn: "Label",
   bandColorColumn: "Colour",
   // `output` is the cut quantity's label with its unit.
@@ -220,6 +223,14 @@ export const copy = {
   bandNoColor: "No colour",
   bandAdd: "Add",
   bandRemove: "Remove",
+  // Why an Edge typed out of order was not taken, in its cell until that Edge is next moved (ADR-0002 decision 84,
+  // rule 6): `edge` and its neighbours carry the unit; the first band has no Edge below, the last none above.
+  bandEdgeRefused: (edge: string, below: string | undefined, above: string | undefined) =>
+    below === undefined
+      ? `Not taken: ${edge} is not below ${above}, the next edge.`
+      : above === undefined
+        ? `Not taken: ${edge} is not above ${below}, the edge before it.`
+        : `Not taken: ${edge} is not between ${below} and ${above}, the edges beside it.`,
   // A band's legend entry and hover line while its label is empty, as Add leaves it (ADR-0002 decision 59's note of
   // 2026-10-17); the Band list keeps the empty label.
   unlabelledBand: "Unlabelled band",

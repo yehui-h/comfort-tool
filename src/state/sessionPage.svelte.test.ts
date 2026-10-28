@@ -24,7 +24,7 @@ import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
 import { pmvPpdIso } from "$lib/models/pmvPpdIso";
 import { Outputs } from "./compute.svelte";
 import { Session, slotPositions, type SlotPosition } from "./session.svelte";
-import { heldSlot, resultValueOf, sessionComparingThreeSlots, shapeOf } from "./sessionTestReaders";
+import { editBands, heldSlot, resultValueOf, sessionComparingThreeSlots, shapeOf } from "./sessionTestReaders";
 
 const q = quantities;
 /** Humidity ratio as the SI chart draws it, in g/kg. */
@@ -103,7 +103,7 @@ describe("The page in the session", () => {
 
   it("takes the page and the model the address names", () => {
     const session = new Session(pmvPpdIso);
-    // Inside Heat Index's bound, which the address's path does not move a value to.
+    // Inside Heat Index's bound, so the address's path has nothing to cut.
     session.slots[0].setEntered(q.tdb, 30);
     openAt(session, page.explore, heatIndexRothfusz);
 
@@ -231,7 +231,7 @@ describe("The page in the session", () => {
       openAt(session, page.explore);
       const scan = outputs.slots[0].scan;
 
-      expect(session.chart.moveBandEdge(2, -0.1)).toBe(true);
+      editBands(session, (draft) => draft.moveEdge(2, -0.1));
       const list = session.chart.bands;
       expect(list?.edges[2]).toBe(-0.1);
       if (list) {
@@ -324,6 +324,10 @@ describe("The page in the session", () => {
 
   it("holds Compare's slots through a trip to a model with no standard and back", () => {
     const session = sessionComparingThreeSlots(pmvPpdIso);
+    // Inside both models' dry-bulb bounds, so neither arrival cuts, and slot 2 holds its own.
+    for (const position of slotPositions) {
+      heldSlot(session, position).setEntered(q.tdb, 27.5);
+    }
     heldSlot(session, 1).setEntered(q.tdb, 28);
     const before = slotPositions.map((position) => shapeOf(heldSlot(session, position)));
 

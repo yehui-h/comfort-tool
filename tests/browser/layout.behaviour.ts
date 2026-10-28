@@ -89,6 +89,11 @@ function isLegendBesidePlot({ plot, legend }: Boxes) {
   return legend.x >= plot.x + plot.width && legend.y < plot.y + plot.height && legend.y + legend.height > plot.y;
 }
 
+/** The page's width: the root's box, the window less the scrollbar's gutter. */
+function pageWidth(page: Page) {
+  return page.evaluate(() => document.documentElement.getBoundingClientRect().width);
+}
+
 async function openStandard(page: Page, width: number, address = PMV_ADDRESS) {
   await page.setViewportSize({ width, height: 900 });
   await page.goto(address);
@@ -111,7 +116,15 @@ async function holdBoxes(page: Page) {
   };
 }
 
-for (const width of [1440, 1366]) {
+/**
+ * The scrollbar's gutter the root always keeps (decision 84, rule 12), in
+ * Playwright's Chromium: the page is the window less it.
+ */
+const SCROLLBAR_GUTTER = 15;
+/** The narrowest window in two columns: the main area's `74.5rem`, the `14rem` sidebar and the gutter. */
+const TWO_COLUMNS_FROM = (74.5 + 14) * 16 + SCROLLBAR_GUTTER;
+
+for (const width of [1440, TWO_COLUMNS_FROM]) {
   test(`at ${width} px, on PMV in two columns, no click moves a region, only Compare moves the plot down, and the legend stays beside it`, async ({ page }) => {
     await openStandard(page, width);
     const inputs = await boxOf(card(page, "Inputs"));
@@ -148,18 +161,18 @@ for (const width of [1440, 1366]) {
       await expect(exportDialog).toBeHidden();
     });
 
-    // A clipboard that refuses raises the notice line's copyRefused.
+    // A clipboard that refuses raises copyRefused's toast.
     await page.evaluate(() => {
       navigator.clipboard.writeText = () => Promise.reject(new Error("Refused for the test"));
     });
-    const notice = page.getByRole("banner").getByRole("status");
+    const toast = page.getByRole("region", { name: /^Notifications/ }).getByRole("listitem");
     await expectInPlace(async () => {
-      await page.getByRole("button", { name: "Copy link" }).click();
-      await expect(notice).not.toBeEmpty();
+      await page.getByRole("button", { name: "Share" }).click();
+      await expect(toast).toHaveCount(1);
     });
     await expectInPlace(async () => {
-      await notice.getByRole("button", { name: "Close" }).click();
-      await expect(notice).toBeEmpty();
+      await toast.getByRole("button", { name: "Close" }).click();
+      await expect(toast).toHaveCount(0);
     });
 
     const chartType = (name: string) => page.getByRole("group", { name: "Chart type" }).getByRole("radio", { name });
@@ -174,9 +187,13 @@ for (const width of [1440, 1366]) {
   });
 
   test(`at ${width} px, the switch question opens and closes moving no region or the plot`, async ({ page }) => {
-    await openStandard(page, width, ADAPTIVE_ADDRESS);
-    // 2 m/s is Adaptive's top; PMV's bound at the default metabolic rate is lower, so the switch asks.
-    await page.getByRole("spinbutton", { name: /^Air speed/ }).fill("2");
+    await openStandard(page, width);
+    // PMV holds an air speed to its kind's bound alone; 3 m/s is past Adaptive's 2, so the switch asks.
+    // Committed before the boxes are held: the run it gives breaks a limit, which its result row shows.
+    const airSpeed = page.getByRole("spinbutton", { name: /^Air speed/ });
+    await airSpeed.fill("3");
+    await airSpeed.press("Enter");
+    await expect(card(page, "Results").getByRole("button", { name: "Limits broken" })).toBeVisible();
     const expectInPlace = await holdBoxes(page);
     const question = page.getByRole("dialog");
 
@@ -185,7 +202,7 @@ for (const width of [1440, 1366]) {
       await expect(page.getByRole("option", { name: /^PMV/ })).toBeVisible();
     });
     await expectInPlace(async () => {
-      await page.getByRole("option", { name: /^PMV/ }).click();
+      await page.getByRole("option", { name: /^Adaptive/ }).click();
       await expect(question).toBeVisible();
     });
     await expectInPlace(async () => {
@@ -195,7 +212,7 @@ for (const width of [1440, 1366]) {
   });
 }
 
-for (const width of [1280, 1024]) {
+for (const width of [1366, 1280, 1024]) {
   test(`at ${width} px, the input card is above the result card and the legend beside the plot`, async ({ page }) => {
     await openStandard(page, width);
     const inputs = await boxOf(card(page, "Inputs"));
@@ -207,13 +224,96 @@ for (const width of [1280, 1024]) {
 }
 
 /**
- * Wider than the content needs, the page stops growing: the sidebar and the
- * main grid are one frame, as wide as at 1440 px and centred in the window,
- * and the header's and footer's contents stand in it, while their bands run
- * the window's width (decision 73, rule 10 as revised again 2026-10-12). The
- * frame's width is read at 1440 px rather than restated.
+ * The input card has one width at every Compare state and window width, and
+ * Compare moves nothing sideways (ADR-0002 decision 84, rule 12).
  */
-async function frame(page: Page, width: number) {
+test.describe("the input card's width", () => {
+  // Playwright's headless Chromium hides its scrollbars, which then take no room (the gutter is still reserved), so
+  // without the gutter Compare would move nothing there either; this test launches one that shows them.
+  test("at 1600 × 1000, where Compare makes the page scroll, the input card's left edge and width are the same with Compare off and on", async ({ playwright, baseURL }) => {
+    const browser = await playwright.chromium.launch({ ignoreDefaultArgs: ["--hide-scrollbars"] });
+    try {
+      const page = await browser.newPage({ baseURL, viewport: { width: 1600, height: 1000 } });
+      await page.goto(PMV_ADDRESS);
+      await expect(page.locator(".chart-plot svg").first()).toBeVisible();
+      const scrolls = () => page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight);
+      const inputsBox = async () => {
+        const { x, width } = await boxOf(card(page, "Inputs"));
+        return { x, width };
+      };
+      expect(await scrolls()).toBe(false);
+      const off = await inputsBox();
+
+      await page.getByRole("switch", { name: "Compare", exact: true }).click();
+      await expect(page.getByRole("row", { name: /^Input 2/ })).toBeVisible();
+
+      expect(await scrolls()).toBe(true);
+      expect(await inputsBox()).toEqual(off);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test("just below the two-column threshold, the result card is under the input card, and the input card is as wide as above it, at the left", async ({ page }) => {
+    await openStandard(page, TWO_COLUMNS_FROM);
+    const above = await boxOf(card(page, "Inputs"));
+    expect(above.x + above.width).toBeLessThanOrEqual((await boxOf(card(page, "Results"))).x);
+
+    await openStandard(page, TWO_COLUMNS_FROM - 1);
+    const inputs = await boxOf(card(page, "Inputs"));
+    const results = await boxOf(card(page, "Results"));
+
+    expect(inputs.y + inputs.height).toBeLessThanOrEqual(results.y);
+    expect(inputs.width).toBe(above.width);
+    expect(inputs.x).toBe(results.x);
+    expect(results.width).toBeGreaterThan(inputs.width);
+  });
+
+  test("with Compare on and three slots, every Presets reads Presets and no four-character value beside it is cut off", async ({ page }) => {
+    await openStandard(page, 1440);
+    await page.getByRole("switch", { name: "Compare", exact: true }).click();
+    for (const slot of ["Input 2", "Input 3"]) {
+      const toggle = page.getByRole("button", { name: slot, exact: true });
+      if ((await toggle.getAttribute("aria-pressed")) !== "true") {
+        await toggle.click();
+      }
+    }
+
+    // The rows that have presets, each with a four-character value its bound admits; clothing's `0.00` is the widest
+    // such text in the box's font (the ticket's Comments). The whole number commits, and the decimals that follow
+    // parse to it, so the box keeps them as typed.
+    const rows = [
+      { label: "Metabolic rate (met)", whole: "3" },
+      { label: "Clothing insulation (clo)", whole: "0" },
+    ];
+    const isCut = (element: HTMLElement) => element.scrollWidth > element.clientWidth;
+    for (const slot of ["Input 1", "Input 2", "Input 3"]) {
+      for (const { label, whole } of rows) {
+        const box = page.getByRole("spinbutton", { name: `${label}, ${slot}` });
+        const presets = page
+          .locator('[data-slot="input-group"]')
+          .filter({ has: box })
+          .getByRole("button", { name: `Presets, ${slot}` });
+        await expect(presets).toHaveText("Presets");
+        expect(await presets.evaluate(isCut)).toBe(false);
+
+        await box.fill(whole);
+        await box.pressSequentially(".00");
+        await expect(box).toHaveValue(`${whole}.00`);
+        expect(await box.evaluate(isCut)).toBe(false);
+      }
+    }
+  });
+});
+
+/**
+ * Wider than the content needs, the page stops growing: the sidebar and the
+ * main grid are one frame, as wide as on a 1440 px page and centred in the
+ * page, and the header's and footer's contents stand in it, while their bands
+ * run the page's width (decision 73, rule 10 as revised again 2026-10-12). The
+ * frame's width is read on a 1440 px page rather than restated.
+ */
+async function frame(page: Page) {
   const banner = page.getByRole("banner");
   const footer = page.getByRole("contentinfo");
   const frameStart = (await boxOf(page.locator('[data-slot="sidebar-content"]').locator(".."))).x;
@@ -225,7 +325,7 @@ async function frame(page: Page, width: number) {
     return frameEnd - (box.x + box.width);
   };
   return {
-    margins: { start: frameStart, end: width - frameEnd },
+    margins: { start: frameStart, end: (await pageWidth(page)) - frameEnd },
     /** The frame's width and how far inside it each band's first and last item stands. */
     inside: {
       width: frameEnd - frameStart,
@@ -238,12 +338,12 @@ async function frame(page: Page, width: number) {
 }
 
 for (const width of [1920, 2560]) {
-  test(`at ${width} px, the sidebar, the main grid and the bands' contents are the 1440 px frame centred in the window, the legend beside the plot`, async ({ page }) => {
-    await openStandard(page, 1440);
-    const at1440 = await frame(page, 1440);
+  test(`at ${width} px, the sidebar, the main grid and the bands' contents are the 1440 px page's frame centred in the page, the legend beside the plot`, async ({ page }) => {
+    await openStandard(page, 1440 + SCROLLBAR_GUTTER);
+    const at1440 = await frame(page);
 
     await openStandard(page, width);
-    const { margins, inside } = await frame(page, width);
+    const { margins, inside } = await frame(page);
 
     expect(inside).toEqual(at1440.inside);
     expect(margins.start).toBe(margins.end);
@@ -252,11 +352,12 @@ for (const width of [1920, 2560]) {
 }
 
 for (const width of [2560, 1920, 1440, 1366, 1280, 1024, 768, 767]) {
-  test(`at ${width} px, the header and footer bands span the window`, async ({ page }) => {
+  test(`at ${width} px, the header and footer bands span the page`, async ({ page }) => {
     await openStandard(page, width);
+    expect(await pageWidth(page)).toBe(width - SCROLLBAR_GUTTER);
 
     for (const band of [page.getByRole("banner"), page.getByRole("contentinfo")]) {
-      expect(await boxOf(band)).toMatchObject({ x: 0, width });
+      expect(await boxOf(band)).toMatchObject({ x: 0, width: width - SCROLLBAR_GUTTER });
     }
   });
 }
@@ -368,13 +469,13 @@ test.describe("the slots' names", () => {
     await expect(markerEntries(page)).toHaveText(["Input 1", "Input 2"]);
   });
 
-  test("at 1440 px, name the switch question's slot column with Compare on, slots 2 and 3 disabled too, and none with it off", async ({ page }) => {
+  test("at 1440 px, name the switch question's slot column by position while the session holds more than one slot, Compare on or off and slot 2 disabled too, and none while it holds one", async ({ page }) => {
     const question = page.getByRole("dialog");
-    // 2 m/s is Adaptive's top; PMV's bound at the default metabolic rate is lower, so the switch asks.
+    // PMV holds an air speed to its kind's bound alone; 3 m/s is past Adaptive's 2, so the switch asks.
     async function askSwitch(airSpeed: Locator) {
-      await airSpeed.fill("2");
+      await airSpeed.fill("3");
       await page.getByRole("button", { name: "Model", exact: true }).click();
-      await page.getByRole("option", { name: /^PMV/ }).click();
+      await page.getByRole("option", { name: /^Adaptive/ }).click();
       await expect(question).toBeVisible();
     }
     async function decline() {
@@ -382,7 +483,7 @@ test.describe("the slots' names", () => {
       await expect(question).toBeHidden();
     }
 
-    await openStandard(page, 1440, ADAPTIVE_ADDRESS);
+    await openStandard(page, 1440);
     await askSwitch(page.getByRole("spinbutton", { name: /^Air speed/ }));
     await expect(question.getByRole("columnheader")).toHaveCount(3);
     await expect(question.getByRole("cell", { name: /^Input \d$/ })).toHaveCount(0);
@@ -390,7 +491,7 @@ test.describe("the slots' names", () => {
 
     // Compare enables slot 2 on first use; slot 3 stays disabled.
     await page.getByRole("switch", { name: "Compare", exact: true }).click();
-    await page.getByRole("spinbutton", { name: /^Air speed.*, Input 2$/ }).fill("2");
+    await page.getByRole("spinbutton", { name: /^Air speed.*, Input 2$/ }).fill("3");
     await askSwitch(page.getByRole("spinbutton", { name: /^Air speed.*, Input 1$/ }));
     await expect(question.getByRole("columnheader")).toHaveCount(4);
     await expect(question.getByRole("cell", { name: /^Input \d$/ })).toHaveText(["Input 1", "Input 2"]);
@@ -401,7 +502,13 @@ test.describe("the slots' names", () => {
     await expect(slot2).toHaveAttribute("aria-pressed", "false");
     await askSwitch(page.getByRole("spinbutton", { name: /^Air speed.*, Input 1$/ }));
     await expect(question.getByRole("columnheader")).toHaveCount(4);
-    await expect(question.getByRole("cell", { name: /^Input \d$/ })).toHaveText(["Input 1"]);
+    await expect(question.getByRole("cell", { name: /^Input \d$/ })).toHaveText(["Input 1", "Input 2"]);
+    await decline();
+
+    await page.getByRole("switch", { name: "Compare", exact: true }).click();
+    await askSwitch(page.getByRole("spinbutton", { name: /^Air speed/ }));
+    await expect(question.getByRole("columnheader")).toHaveCount(4);
+    await expect(question.getByRole("cell", { name: /^Input \d$/ })).toHaveText(["Input 1", "Input 2"]);
     await decline();
   });
 });
@@ -551,15 +658,36 @@ test.describe("controls by their question", () => {
     );
   });
 
-  test("at 1440 px, the sidebar's settings are headed Settings, ruled off from Copy link and Reset", async ({ page }) => {
+  test("at 1440 px, the sidebar's settings are headed Settings, ruled off from Share and Reset", async ({ page }) => {
     await openStandard(page, 1440);
     const settings = page.getByRole("group", { name: "Settings" });
     const pressure = await boxOf(settings.getByRole("spinbutton", { name: /^Atmospheric pressure/ }));
     const rule = await boxOf(settings.locator('[data-slot="separator"]'));
-    const copyLink = await boxOf(settings.getByRole("button", { name: "Copy link" }));
+    const share = await boxOf(settings.getByRole("button", { name: "Share" }));
 
     expect(rule.y).toBeGreaterThan(pressure.y + pressure.height);
-    expect(copyLink.y).toBeGreaterThan(rule.y);
+    expect(share.y).toBeGreaterThan(rule.y);
+  });
+
+  test("the sidebar's Share puts the link to the page on the clipboard and says Link copied", async ({ page }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await openStandard(page, 1440);
+    const settings = page.getByRole("group", { name: "Settings" });
+    await settings.getByRole("button", { name: "Share" }).click();
+
+    await expect(settings.getByRole("button", { name: "Link copied" })).toBeVisible();
+    const prefix = `${new URL(page.url()).origin}${PMV_ADDRESS}?share=v1.`;
+    const link = await page.evaluate(() => navigator.clipboard.readText());
+    expect(link.slice(0, prefix.length)).toBe(prefix);
+  });
+
+  test("at 1440 px, the sidebar's line above Settings starts and ends where the line inside Settings does", async ({ page }) => {
+    await openStandard(page, 1440);
+    const outer = await boxOf(page.locator('[data-slot="sidebar-separator"]'));
+    const inner = await boxOf(page.getByRole("group", { name: "Settings" }).locator('[data-slot="separator"]'));
+
+    expect(Math.abs(outer.x - inner.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(outer.x + outer.width - (inner.x + inner.width))).toBeLessThanOrEqual(1);
   });
 });
 
@@ -596,35 +724,6 @@ test("a row's Presets is the word at the box's end, and its list's values end at
   );
   expect(insets.length).toBeGreaterThan(1);
   expect(new Set(insets.flat()).size).toBe(1);
-});
-
-test("under Compare with three slots, a row's Presets is the list icon saying the word in a tooltip, and no value beside it is clipped", async ({ page }) => {
-  await openStandard(page, 1440);
-  await page.getByRole("switch", { name: "Compare", exact: true }).click();
-  for (const slot of ["Input 2", "Input 3"]) {
-    const toggle = page.getByRole("button", { name: slot, exact: true });
-    if ((await toggle.getAttribute("aria-pressed")) !== "true") {
-      await toggle.click();
-    }
-  }
-
-  for (const slot of ["Input 1", "Input 2", "Input 3"]) {
-    const clothing = page.getByRole("spinbutton", { name: `Clothing insulation (clo), ${slot}` });
-    const presets = page
-      .locator('[data-slot="input-group"]')
-      .filter({ has: clothing })
-      .getByRole("button", { name: `Presets, ${slot}` });
-    await expect(presets).toHaveText("");
-    await expect(presets.locator("svg")).toHaveCount(1);
-
-    for (const value of ["0.57", "25.55"]) {
-      await clothing.fill(value);
-      expect(await clothing.evaluate((box: HTMLInputElement) => box.scrollWidth <= box.clientWidth)).toBe(true);
-    }
-  }
-
-  await page.getByRole("button", { name: "Presets, Input 1" }).first().hover();
-  await expect(page.locator('[data-slot="tooltip-content"]')).toHaveText("Presets");
 });
 
 /**
@@ -736,130 +835,66 @@ test.describe("the air-speed chart's Comfort zone", () => {
   });
 });
 
-test.describe("the applicability summary", () => {
-  test("at 1440 px, an air speed typed out of range shows Not calculated between the Results heading and the table, the focus staying in the box, and back in range it goes", async ({ page }) => {
-    await openStandard(page, 1440);
-    const results = card(page, "Results");
-    const summary = results.getByRole("alert");
-    await expect(summary).toHaveCount(0);
-    const airSpeed = page.getByRole("spinbutton", { name: /^Air speed/ });
-
-    await airSpeed.fill("5");
-
-    await expect(summary).toContainText("Not calculated, outside these limits:");
-    await expect(summary).toContainText(/Air speed must be .* m\/s/);
-    await expect(summary).toContainText("Showing the last valid result.");
-    await expect(airSpeed).toBeFocused();
-    const heading = await boxOf(results.getByRole("heading", { name: "Results", exact: true }));
-    const alert = await boxOf(summary);
-    const table = await boxOf(results.getByRole("table"));
-    expect(alert.y).toBeGreaterThanOrEqual(heading.y + heading.height);
-    expect(table.y).toBeGreaterThanOrEqual(alert.y + alert.height);
-
-    await airSpeed.fill("0.1");
-
-    await expect(summary).toHaveCount(0);
-  });
-
-  test("at 1440 px, two entries out of range over a kept result are one list under Not calculated, outside these limits:, the sentence on the result after it, every line at the heading's left edge", async ({ page }) => {
-    await openStandard(page, 1440);
-    const summary = card(page, "Results").getByRole("alert");
-
-    await page.getByRole("spinbutton", { name: /^Dry-bulb air temperature/ }).fill("50");
-    await page.getByRole("spinbutton", { name: /^Air speed/ }).fill("5");
-
-    const title = summary.locator('[data-slot="alert-title"]');
-    await expect(title).toHaveText("Not calculated, outside these limits:");
-    const items = summary.getByRole("listitem");
-    await expect(items).toHaveText([/Dry-bulb air temperature must be /, /Air speed must be /]);
-    const sentence = summary.getByText("Showing the last valid result.", { exact: true });
-    await expect(items.filter({ hasText: "Showing" })).toHaveCount(0);
-    const left = (await boxOf(title)).x;
-    for (const line of [...(await items.all()), sentence]) {
-      expect((await boxOf(line)).x).toBe(left);
-    }
-    const list = await boxOf(summary.getByRole("list"));
-    expect((await boxOf(sentence)).y).toBeGreaterThanOrEqual(list.y + list.height);
-  });
-
-  test("at 1440 px under Compare, two slots out of range are one list holding both slots' lines, a sentence on the result per slot after it", async ({ page }) => {
-    await openStandard(page, 1440);
-    await page.getByRole("switch", { name: "Compare", exact: true }).click();
-    await expect(page.getByRole("row", { name: /^Input 2/ })).toBeVisible();
-    const summary = card(page, "Results").getByRole("alert");
-
-    for (const slot of ["Input 1", "Input 2"]) {
-      await page.getByRole("spinbutton", { name: new RegExp(`^Air speed.*, ${slot}$`) }).fill("5");
-    }
-
-    await expect(summary.getByRole("list")).toHaveCount(1);
-    await expect(summary.getByRole("listitem")).toHaveText([/Input 1: Air speed must be /, /Input 2: Air speed must be /]);
-    const sentences = summary.getByText(/Input \d: Showing the last valid result\./);
-    await expect(sentences).toHaveText(["Input 1: Showing the last valid result.", "Input 2: Showing the last valid result."]);
-    // Every line and every sentence carries its slot's swatch.
-    await expect(summary.locator(".swatch")).toHaveCount(4);
-    const list = await boxOf(summary.getByRole("list"));
-    for (const sentence of await sentences.all()) {
-      expect((await boxOf(sentence)).y).toBeGreaterThanOrEqual(list.y + list.height);
-    }
-  });
-
-  test("at 1440 px, PMV (ASHRAE 55) at 0.9 m/s without local control shows the ink part between the Results heading and the table, and the Inputs card holds no status alert, on Standard and Explore", async ({ page }) => {
+/** A run that broke a limit is marked on its result row (ADR-0002 decision 84, rule 8), and the Results card has no alert. */
+test.describe("the result row's limits button", () => {
+  test("at 1440 px, PMV (ASHRAE 55) at 0.9 m/s without local control puts the button first in the row's first cell, the table straight under the Results heading and the compliance dash with no icon of its own, on Standard and Explore", async ({ page }) => {
     for (const address of [PMV_ADDRESS, EXPLORE_ADDRESS]) {
       await openStandard(page, 1440, address);
       const results = card(page, "Results");
-      const summary = results.getByRole("status");
-      await page.getByRole("spinbutton", { name: /^Air speed/ }).fill("0.9");
-
-      await expect(summary, address).toContainText("Calculated, but outside these limits:");
-      await expect(summary.getByRole("listitem"), address).toHaveText([/Relative air speed must be ≤ .* m\/s/]);
-      // Lettered in ink, the page's text colour, its lines too: no hue and not the muted caption grey.
-      const ink = await page.locator("body").evaluate((body) => getComputedStyle(body).color);
-      await expect(summary.locator('[data-slot="alert-description"]'), address).toHaveCSS("color", ink);
-      await expect(results.getByRole("alert"), address).toHaveCount(0);
-      await expect(card(page, "Inputs").getByRole("status"), address).toHaveCount(0);
-      const heading = await boxOf(results.getByRole("heading", { name: "Results", exact: true }));
-      const part = await boxOf(summary);
-      const table = await boxOf(results.getByRole("table"));
-      expect(part.y, address).toBeGreaterThanOrEqual(heading.y + heading.height);
-      expect(table.y, address).toBeGreaterThanOrEqual(part.y + part.height);
-    }
-  });
-
-  test("at 1440 px, PMV (ASHRAE 55) at 0.9 m/s without local control marks the compliance dash with the icon, named, and no input row, on Standard and Explore; at the defaults no dash is marked", async ({ page }) => {
-    for (const address of [PMV_ADDRESS, EXPLORE_ADDRESS]) {
-      await openStandard(page, 1440, address);
-      const table = card(page, "Results").getByRole("table");
-      const marked = table.getByRole("cell").filter({ has: page.getByRole("img", { name: "The result is outside a limit" }) });
+      const table = results.getByRole("table");
+      const headingBottom = async () => {
+        const heading = await boxOf(results.getByRole("heading", { name: "Results", exact: true }));
+        return heading.y + heading.height;
+      };
+      const gap = (await boxOf(table)).y - (await headingBottom());
       await expect(table.getByRole("cell", { name: "Yes", exact: true }), address).toHaveCount(1);
-      await expect(marked, address).toHaveCount(0);
 
       const airSpeed = page.getByRole("spinbutton", { name: /^Air speed/ });
       await airSpeed.fill("0.9");
+      await airSpeed.press("Enter");
 
-      await expect(marked, address).toHaveCount(1);
-      await expect(marked, address).toHaveText("—");
-      // The icon is found where it stands, the Results card's, so none in the Inputs card is a finding.
+      const button = results.getByRole("button", { name: "Limits broken" });
+      await expect(button, address).toBeVisible();
+      const firstCell = table.getByRole("row").nth(1).getByRole("cell").first();
+      await expect(firstCell.getByRole("button", { name: "Limits broken" }), address).toHaveCount(1);
+      // First in its cell and on the line of what the cell holds, not wrapped above it.
+      const box = await boxOf(button);
+      for (const text of await firstCell.locator(".swatch-label").all()) {
+        const entry = await boxOf(text);
+        expect(entry.x, address).toBeGreaterThan(box.x);
+        expect(entry.y, address).toBeLessThan(box.y + box.height);
+      }
+      await expect(results.getByRole("alert"), address).toHaveCount(0);
+      await expect(results.getByRole("status"), address).toHaveCount(0);
+      expect((await boxOf(table)).y - (await headingBottom()), address).toBe(gap);
+      const dash = table.getByRole("cell", { name: "—", exact: true });
+      await expect(dash, address).toHaveCount(1);
+      await expect(dash.locator("svg"), address).toHaveCount(0);
       const icon = "svg.lucide-triangle-alert";
-      await expect(card(page, "Results").locator(icon).first(), address).toBeVisible();
       await expect(card(page, "Inputs").locator(icon), address).toHaveCount(0);
       // The tab keeps its session across pages, so the next page opens at the default again only once it is typed back.
       await airSpeed.fill("0.1");
+      await airSpeed.press("Enter");
+      await expect(button, address).toHaveCount(0);
     }
   });
 
-  test("at 1440 px under Compare, only the slot at 0.9 m/s without local control has its compliance dash marked", async ({ page }) => {
+  test("at 1440 px under Compare, the slot at 0.9 m/s without local control has its button before its swatch and its compliance dash, and slot 1 neither", async ({ page }) => {
     await openStandard(page, 1440);
     await page.getByRole("switch", { name: "Compare", exact: true }).click();
     const table = card(page, "Results").getByRole("table");
-    const [first, second] = [/^Input 1/, /^Input 2/].map((name) => table.getByRole("row", { name }));
+    const [first, second] = [/^Input 1/, /Input 2/].map((name) => table.getByRole("row", { name }));
     await expect(second).toBeVisible();
-    const mark = page.getByRole("img", { name: "The result is outside a limit" });
 
-    await page.getByRole("spinbutton", { name: /^Air speed.*, Input 2$/ }).fill("0.9");
+    const airSpeed = page.getByRole("spinbutton", { name: /^Air speed.*, Input 2$/ });
+    await airSpeed.fill("0.9");
+    await airSpeed.press("Enter");
 
-    await expect(table.getByRole("cell").filter({ has: mark })).toHaveCount(1);
-    await expect(second.getByRole("cell").filter({ has: mark })).toHaveText("—");
+    const button = second.getByRole("button", { name: "Limits broken, Input 2" });
+    await expect(button).toBeVisible();
+    expect((await boxOf(button)).x).toBeLessThan((await boxOf(second.locator(".swatch-marker"))).x);
+    await expect(second.getByRole("cell", { name: "—", exact: true })).toHaveCount(1);
+    await expect(first.getByRole("button")).toHaveCount(0);
     await expect(first.getByRole("cell", { name: "Yes", exact: true })).toHaveCount(1);
   });
 });
