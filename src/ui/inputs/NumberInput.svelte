@@ -50,6 +50,22 @@
 
   const text = $derived(formatNumber(unit.fromSi(value)));
 
+  /**
+   * Where the draft in the box began: the text the input was given then, and
+   * the value it stands for, the one the typing began over or the one its
+   * pause committed. Set by the first keystroke; Enter, leaving the box and a
+   * step end the draft. Replaced whole, never mutated, so `$state.raw`.
+   */
+  let draftStart = $state.raw<{ readonly text: string; readonly value: number } | undefined>();
+  /** The draft's start while a draft is typed: none once the value is changed from elsewhere, which ends it. */
+  const typing = $derived(draftStart?.value === value ? draftStart : undefined);
+  /**
+   * The text the input is given: while a draft is typed, the one it began
+   * over, so neither the draft nor a commit on its pause is written over;
+   * else the committed value's.
+   */
+  const givenText = $derived(typing?.text ?? text);
+
   let box = $state<HTMLInputElement | null>(null);
 
   /** The draft's commit or mark waiting on the pause, while one does. */
@@ -86,44 +102,54 @@
 
   /**
    * The draft in `input` in SI, or `undefined` where there is nothing to
-   * commit: a text that is not yet a number, or the value already stored.
-   * While the user types "25." the parse is still 25, nothing is committed,
-   * and the displayed text is not rewritten under their cursor.
+   * commit: no draft typed, so the box's text is the committed value's, which
+   * stands for it and not for its rounding; a text that is not yet a number;
+   * or one that parses to the value already stored, as "25." does over 25.
    */
   function draftOf(input: HTMLInputElement): number | undefined {
+    if (!typing) {
+      return undefined;
+    }
     const parsed = Number.parseFloat(input.value);
     const si = Number.isFinite(parsed) ? unit.toSi(parsed) : undefined;
     return si === value ? undefined : si;
   }
 
-  /** The draft dropped: nothing waits on the pause, and the box is not marked for it. */
-  function dropDraft() {
+  /** The draft's judgement dropped: nothing waits on the pause, and the box is not marked for it. */
+  function dropJudgement() {
     clearTimeout(pause);
     draftIllegal = false;
   }
 
   // Once the typing pauses, a legal draft commits and an illegal one is marked
-  // and waits; while it is typed, no draft is marked.
+  // and waits; while it is typed, no draft is marked. A draft ended meanwhile,
+  // its value changed from elsewhere, commits nothing.
   function judgeDraft(event: Event) {
-    dropDraft();
+    dropJudgement();
+    draftStart = typing ?? { text, value };
     const si = draftOf(event.currentTarget as HTMLInputElement);
     if (si === undefined) {
       return;
     }
     pause = setTimeout(() => {
+      if (!typing) {
+        return;
+      }
       if (isLegal && !isLegal(si)) {
         draftIllegal = true;
       } else {
+        draftStart = { text: typing.text, value: si };
         oncommit(si);
       }
     }, COMMIT_PAUSE_MS);
   }
 
-  // Enter and leaving the box commit whatever the draft is, and the box then
-  // shows what the owner committed, the draft cut or refused.
+  // Enter and leaving the box commit whatever the draft is and end it, and the
+  // box then shows what the owner committed, the draft cut or refused.
   function commitDraft(input: HTMLInputElement) {
-    dropDraft();
+    dropJudgement();
     const si = draftOf(input);
+    draftStart = undefined;
     if (si !== undefined) {
       oncommit(si);
     }
@@ -146,9 +172,10 @@
   // A step moves the committed value by the unit's step, held to the bound in
   // SI so a step to the end lands on the end itself, and commits only when it
   // moves the way it points: none at the end, and none back from a value
-  // already past it.
+  // already past it. A step ends a draft typed before it.
   function stepBy(direction: 1 | -1) {
-    dropDraft();
+    dropJudgement();
+    draftStart = undefined;
     const stepped = unit.toSi(unit.fromSi(value) + direction * unit.step);
     const si = Math.min(Math.max(stepped, bound?.min ?? -Infinity), bound?.max ?? Infinity);
     if (Math.sign(si - value) === direction) {
@@ -187,8 +214,8 @@
 
   /**
    * The box's attributes, the same whether it stands alone or inside a group.
-   * The input binds its value, so a new object writes `text` over the draft:
-   * what changes while a draft is typed, its marking, is kept out of it.
+   * The input binds its value, so a new object writes `givenText` over the
+   * draft: what changes while a draft is typed, its marking, is kept out of it.
    */
   const boxAttributes = $derived({
     id,
@@ -196,7 +223,7 @@
     role: "spinbutton" as const,
     inputmode: allowsNegative ? undefined : ("decimal" as const),
     autocomplete: "off" as const,
-    value: text,
+    value: givenText,
     "aria-label": ariaLabel,
     onbeforeinput: admit,
     oninput: judgeDraft,

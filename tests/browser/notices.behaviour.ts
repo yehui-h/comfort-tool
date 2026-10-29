@@ -1,4 +1,4 @@
-import { Buffer } from "node:buffer";
+import { deflateRawSync } from "node:zlib";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 /**
@@ -6,18 +6,19 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
  * header's right end while the page is at its top, kept until its close
  * button closes it, and the header holds none (ADR-0002 decision 84, rule 7).
  * Each notice is raised
- * where the page raises it: a link at the first address, and a value it held
- * out of range, cut (rule 4, as noted 2026-10-28); Share's clipboard; the
+ * where the page raises it: a link at the first address, refused where it
+ * does not read back as written or holds a value out of range (decision 88,
+ * rules 4 and 5); Share's clipboard; the
  * Image's download. A notice raised again replaces its own toast, and
  * Reset takes the toasts standing with it.
  */
 
-const PMV_ADDRESS = "/standard/ashrae-55/pmv-ppd-ashrae";
-const ISO_ADDRESS = "/standard/iso-7730/pmv-ppd-iso";
+const PMV_ADDRESS = "/standard/ashrae-55-2023/pmv-ppd-ashrae";
+const ISO_ADDRESS = "/standard/iso-7730-2025/pmv-ppd-iso";
 
-/** PMV (ISO 7730) as Share writes it, slot 1 holding `values` alone. */
+/** PMV (ISO 7730) as Share writes it, slot 1 holding `values` alone, deflated by Node's own zlib. */
 function isoLinkWith(values: Record<string, number>): string {
-  return `v1.${Buffer.from(
+  return `v1.${deflateRawSync(
     JSON.stringify({
       model: "pmv_ppd_iso",
       unitSystem: "si",
@@ -31,8 +32,8 @@ function isoLinkWith(values: Record<string, number>): string {
   ).toString("base64url")}`;
 }
 
-/** PMV (ISO 7730) at its defaults, with slot 1's metabolic rate taken out: read, but not exactly. */
-const FILLED_LINK = isoLinkWith({ tdb: 25, tr: 25, v: 0.1, clo: 0.5, rh: 50 });
+/** PMV (ISO 7730) at its defaults, with slot 1's metabolic rate taken out: it does not read back as written. */
+const LACKING_LINK = isoLinkWith({ tdb: 25, tr: 25, v: 0.1, clo: 0.5, rh: 50 });
 
 /** PMV (ISO 7730) at its defaults, exactly. */
 const EXACT_LINK = isoLinkWith({ tdb: 25, tr: 25, v: 0.1, met: 1.1, clo: 0.5, rh: 50 });
@@ -106,18 +107,12 @@ test("a refused share link raises a toast at the window's top right, over the he
   await expect(toast).toHaveCount(0);
 });
 
-test("a link that needed something filled raises its toast", async ({ page }) => {
-  await open(page, `${ISO_ADDRESS}?share=${FILLED_LINK}`);
-
-  await expect(toasts(page)).toContainText("Some of this link could not be used as written; what it lacked starts at its defaults.");
-});
-
-test("a link with a value out of range opens with the value cut and one toast saying so, and no dialog", async ({ page }) => {
+test("a link with a value out of range opens nothing: the entry shows the model's default, one toast says the link could not be read, and no dialog", async ({ page }) => {
   await open(page, `${ISO_ADDRESS}?share=${OUT_OF_RANGE_LINK}`);
 
-  await expect(page.getByRole("spinbutton", { name: /^Dry-bulb air temperature/ })).toHaveValue("30");
+  await expect(page.getByRole("spinbutton", { name: /^Dry-bulb air temperature/ })).toHaveValue("25");
   await expect(toasts(page)).toHaveCount(1);
-  await expect(toasts(page)).toContainText("Some values were out of range and were cut to the nearest allowed value.");
+  await expect(toasts(page)).toContainText("The shared link could not be read, so nothing was opened from it.");
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
@@ -154,15 +149,14 @@ test("Reset, answered yes, closes every toast standing", async ({ page }) => {
   await expect(toasts(page)).toHaveCount(0);
 });
 
-test("a link's yes over a kept session raises the link's own toast", async ({ page }) => {
-  // The first visit leaves the tab a kept session, so the link asks.
+test("a link that does not read back as written, over a kept session, asks nothing and raises the one toast that it could not be read", async ({ page }) => {
+  // The first visit leaves the tab a kept session, which a link that can be read would ask to replace.
   await open(page, PMV_ADDRESS);
-  await open(page, `${ISO_ADDRESS}?share=${FILLED_LINK}`);
-
-  await page.getByRole("dialog").getByRole("button", { name: "Yes, open the link" }).click();
+  await open(page, `${ISO_ADDRESS}?share=${LACKING_LINK}`);
 
   await expect(toasts(page)).toHaveCount(1);
-  await expect(toasts(page)).toContainText("Some of this link could not be used as written; what it lacked starts at its defaults.");
+  await expect(toasts(page)).toContainText("The shared link could not be read, so nothing was opened from it.");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
 test("an Image that could not be made raises its toast", async ({ page }) => {

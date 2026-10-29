@@ -243,14 +243,6 @@ interface CommonDeclaration {
    */
   readonly info: ModelInfo;
   /**
-   * The standard `run` pins, named beside the results. Absent for an
-   * Explore-only model such as Heat Index. The declaration passes the same
-   * constant to `run`, so the label and the call cannot disagree (rewrite
-   * plan, Phase 3.6 item 3: pinned, never offered as an option while editions
-   * share a kernel).
-   */
-  readonly standard?: Standard;
-  /**
    * Whether the model has a Time-series page (`core/page.ts`). No registered
    * model writes it; PHS will (ADR-0002 decision 57).
    */
@@ -283,8 +275,8 @@ interface CommonDeclaration {
    * The contract: the model's own result object, carrying the model's numbers
    * unrounded (ADR-0002 decision 18), with the library's `round_output`
    * written off in the call (decision 35). A registry-wide test samples the
-   * table's first column and fails when it was left on (decision 38). Called by
-   * `state/compute` and by the chart spec builders.
+   * table's first number column and fails when it was left on (decision 38).
+   * Called by `state/compute` and by the chart spec builders.
    */
   readonly run: (values: Values, options: OptionsReader) => ModelResult;
   /**
@@ -301,7 +293,11 @@ interface CommonDeclaration {
    * two ranges for one quantity.
    */
   readonly axisRanges: readonly AxisRange[];
-  /** Result table columns, in order. Required (ADR §4.3). */
+  /**
+   * Result table columns, in order. Required (ADR §4.3). A classified output
+   * is a column, and the classified outputs come first, in the model info's
+   * order (ADR-0002 decision 85, rule 1).
+   */
   readonly table: readonly Quantity[];
 }
 
@@ -426,7 +422,17 @@ export function takesRelativeAirSpeed(model: RegisteredModel): boolean {
  */
 export function clothingCorrectionOf(model: RegisteredModel): ClothingCorrection | undefined {
   const takesClothing = Object.keys(model.info.inputs).some((key) => quantityFor(key) === quantities.clo);
-  return takesClothing ? clothingCorrectionFor(model.standard) : undefined;
+  return takesClothing ? clothingCorrectionFor(standardOf(model)) : undefined;
+}
+
+/**
+ * The model's standard: the first its info lists, the library's default
+ * edition for its function, which `run` leaves the library to pick (ADR-0002
+ * decision 86, rule 3). `undefined` for a model whose info lists none, such as
+ * Heat Index, which has no Standard page.
+ */
+export function standardOf(model: RegisteredModel): Standard | undefined {
+  return model.info.standards[0];
 }
 
 /** Whether the model has the clothing entry group: it takes the clothing, and its standard corrects it. */

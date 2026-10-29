@@ -11,9 +11,9 @@ import { formatNumber } from "../../src/core/numberFormat";
  * two decimals.
  */
 
-const PMV_ADDRESS = "/standard/ashrae-55/pmv-ppd-ashrae";
-const ISO_ADDRESS = "/standard/iso-7730/pmv-ppd-iso";
-const ADAPTIVE_ADDRESS = "/standard/ashrae-55/adaptive-ashrae";
+const PMV_ADDRESS = "/standard/ashrae-55-2023/pmv-ppd-ashrae";
+const ISO_ADDRESS = "/standard/iso-7730-2025/pmv-ppd-iso";
+const ADAPTIVE_ADDRESS = "/standard/ashrae-55-2023/adaptive-ashrae";
 const EXPLORE_ADDRESS = "/explore/pmv-ppd-ashrae";
 
 const SOLAR = "Solar gain on occupants";
@@ -223,7 +223,10 @@ test.describe("Solar gain on occupants", () => {
       "Average shortwave absorptivity",
     ]);
     await expect(panel.locator(".caption-line")).toHaveText(["", "0 – 90 °", "0 – 180 °", "200 – 1000 W/m²", "0 – 1", "0 – 1", "0 – 1", "0.2 – 0.9"]);
-    await expect(panel.getByRole("button", { name: "Posture", exact: true })).toHaveText("Seated");
+    const posture = panel.getByRole("button", { name: "Posture", exact: true });
+    await expect(posture).toHaveText("Seated");
+    // The choice select's default size, a box's height, where the chart type's is the small one.
+    expect((await posture.boundingBox())?.height).toBe((await panel.getByRole("spinbutton").first().boundingBox())?.height);
 
     await expect(dockLine(dialog, "ERF (W/m²)")).toBeVisible();
     await expect(dockLine(dialog, "Mean radiant temperature delta (°C)")).toHaveText(formatNumber(increaseAt(0)));
@@ -546,7 +549,7 @@ test.describe("the dock's row under the entry modes", () => {
   test("under dynamic clothing entry, it is the dynamic clothing insulation, and Apply writes the corrected value", async ({ page }) => {
     await open(page);
     await page.getByRole("spinbutton", { name: /^Metabolic rate/ }).fill("2");
-    await page.getByRole("button", { name: "Clothing", exact: true }).click();
+    await page.getByRole("button", { name: "Change clothing", exact: true }).click();
     await page.getByRole("menuitemradio", { name: /^Dynamic clothing insulation/ }).click();
 
     const dialog = await openDialog(page, CLOTHING);
@@ -558,7 +561,7 @@ test.describe("the dock's row under the entry modes", () => {
 
   test("under dynamic clothing entry, an ensemble past the row's bound shows the bound's end with the bound, and Apply writes that end", async ({ page }) => {
     await open(page);
-    await page.getByRole("button", { name: "Clothing", exact: true }).click();
+    await page.getByRole("button", { name: "Change clothing", exact: true }).click();
     await page.getByRole("menuitemradio", { name: /^Dynamic clothing insulation/ }).click();
 
     // 0.49 + 0.48 + 0.69 clo at the default 1.1 met, which the standard leaves as it is: 1.66, past ASHRAE 55's 1.5.
@@ -580,7 +583,7 @@ test.describe("the dock's row under the entry modes", () => {
 
   test("under operative entry, it is the operative temperature, and Apply folds the raise at the model's standard", async ({ page }) => {
     await open(page);
-    await page.getByRole("button", { name: "Temperature", exact: true }).click();
+    await page.getByRole("button", { name: "Change temperature", exact: true }).click();
     await page.getByRole("menuitemradio", { name: /^Operative temperature/ }).click();
 
     const dialog = await openDialog(page, SOLAR);

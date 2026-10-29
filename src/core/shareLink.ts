@@ -1,8 +1,10 @@
 /**
- * The share link's codec (ADR-0002 decision 63, rules 1, 6, 9 and 10): a
- * written session as one text, `v1.` followed by the URL-safe Base64 of its
- * JSON in UTF-8, and a text as a written session again, or nothing. The JSON's
- * shape is rule 1's, example included.
+ * The share link's codec (ADR-0002 decision 63, rules 1, 6, 9 and 10, rule 1
+ * as revised by decision 88): a written session as one text, `v1.` followed
+ * by the URL-safe Base64, unpadded, of the raw DEFLATE of its JSON in UTF-8,
+ * and a text as a written session again, or nothing. The JSON's shape is
+ * decision 63 rule 1's, example included. `fflate` deflates and inflates,
+ * synchronously and at its default level, and is imported here alone.
  *
  * The one module where the session's strings are read and written: a model's
  * name, the unit system's, entry modes' and chart types' ids, quantity keys
@@ -10,28 +12,34 @@
  * set. The registry is the caller's; the codec reads declarations and the
  * entry-group table, and names no model and no entry group.
  *
- * A text is refused whole where it cannot be read (rule 6 as amended
- * 2026-10-06): no partial answer. Where it can, a key the app does not read is
- * dropped, and a value, option or entry group it lacks starts at its default,
- * as a switch seeds a slot; the answer says whether either happened, so that
- * a model changed after deployment does not void the texts written before it.
- * An entered value outside its bound and a pressure out of range are taken as
- * written; the gate marks them. Until the app is deployed the format may
- * change, and a text an earlier build wrote may be refused (rule 9).
+ * A text is taken only where it reads back as written (decision 88 rule 4),
+ * and refused whole otherwise: no partial answer. It is read with what it
+ * lacks seeded as a switch seeds a slot and what the app does not read left
+ * out, and the session read is written out again: where that differs from the
+ * text, member order aside, something was filled or dropped, and the text is
+ * refused. The comparison, not the reading, is what makes the codec strict.
+ * A later change to a model's inputs therefore refuses the texts written
+ * before it. An entered value outside its bound and a pressure out of range
+ * are taken as written here; the first load cuts them in a kept text and
+ * refuses a link that holds one (decision 84 rule 4, decision 88 rule 5).
+ * Until the app is deployed the format may change, and a text an earlier
+ * build wrote may be refused (rule 9).
  *
  * A share link is a session narrowed to what its page is computed from
  * (rule 5), written by the same encoder; the decoder does not know which it
  * reads.
  */
+import { deflateSync, inflateSync } from "fflate";
 import type { ClassifierBins } from "jsthermalcomfort";
 import { bandListFrom } from "./bands";
 import { dynamicAxisQuantities } from "./charts/dynamicChart";
 import { humidityMode, type HumidityMode, type ValueEntryMode } from "./entryModes";
-import { dynamicChartOf, hasHumidityGroup, inputsOf, optionsOf, type OptionSpec, type RegisteredModel } from "./modelDeclaration";
+import { dynamicChartOf, hasHumidityGroup, optionsOf, type OptionSpec, type RegisteredModel } from "./modelDeclaration";
 import { page, paintsBandsOn, type Page } from "./page";
 import { quantities, type Quantity } from "./quantities";
 import {
   defaultEntryModes,
+  inputsUnderEntryModes,
   isHumidityQuantity,
   seedDeclaredDefaults,
   underEntryModes,
@@ -55,7 +63,7 @@ const entryModeFields = Object.keys(defaultEntryModes) as (keyof ValueEntryModes
 
 /** `session` written out as a text, its options grouped under the model in `models` that declares each. */
 export function toText(session: WrittenSession, models: readonly RegisteredModel[]): string {
-  return PREFIX + toBase64Url(JSON.stringify(sessionJson(session, models)));
+  return PREFIX + toBase64Url(deflateSync(new TextEncoder().encode(JSON.stringify(sessionJson(session, models)))));
 }
 
 /**
@@ -98,35 +106,40 @@ function enteredSlot(slot: Slot, model: RegisteredModel): Slot {
   };
 }
 
-/** What a text reads as. */
-export interface DecodedSession {
-  readonly session: WrittenSession;
-  /** Whether the session is what the text wrote: `false` where a key was dropped or something started at its default. */
-  readonly exact: boolean;
-}
-
 /**
  * The written session `text` holds, its names looked up in `models`, or
- * `undefined` for a text refused (rule 6 as amended): one that does not
- * parse; lacks a member rule 1 requires, or has one of another type; names a
- * model, unit system, entry mode or chart type the app does not have, or a
- * chart type or axis its model does not declare; holds a value that is not a
- * finite number or a Band list not well formed; writes a humidity mode with a
- * slot that holds no humidity value; or has slot 1, or an enabled slot,
- * `null`.
+ * `undefined` for a text refused (rule 6, decision 88 rule 4): one that does
+ * not parse; lacks a member rule 1 requires, or has one of another type;
+ * names a model, unit system, entry mode or chart type the app does not have,
+ * or a chart type or axis its model does not declare; holds a value that is
+ * not a finite number or a Band list not well formed; writes a humidity mode
+ * with a slot that holds no humidity value; has slot 1, or an enabled slot,
+ * `null`; or does not read back as written.
+ *
+ * A scanning model's chart entry without a Band list, which a link copied on
+ * the Standard page writes (rule 5), reads back as written, and starts on
+ * the classifier's list once the comparison is made.
  */
-export function toDecodedSession(text: string, models: readonly RegisteredModel[]): DecodedSession | undefined {
+export function toDecodedSession(text: string, models: readonly RegisteredModel[]): WrittenSession | undefined {
   try {
     const json = jsonOf(text);
     const session = sessionFrom(json, models);
     // Anything dropped or started at a default makes the session written out again differ from the text.
-    return { session, exact: canonicalOf(sessionJson(session, models)) === canonicalOf(json) };
+    if (canonicalOf(sessionJson(session, models)) !== canonicalOf(json)) {
+      refuse();
+    }
+    return { ...session, charts: new Map([...session.charts].map(([model, settings]) => [model, withStartingBands(settings, model)])) };
   } catch (error) {
     if (error instanceof Refused) {
       return undefined;
     }
     throw error;
   }
+}
+
+/** `settings` with the Band list `model` starts on where they hold none and it scans. */
+function withStartingBands(settings: ChartSettings, model: RegisteredModel): ChartSettings {
+  return settings.bands ? settings : { ...settings, bands: startingChartSettings(model).bands };
 }
 
 function sessionJson(session: WrittenSession, models: readonly RegisteredModel[]) {
@@ -177,9 +190,9 @@ function chartJson({ type, axes, bands }: ChartSettings) {
   };
 }
 
-/** UTF-8, then Base64 by the classic functions, which every browser of the app's floor has, made URL-safe and unpadded. */
-function toBase64Url(text: string): string {
-  const binary = Array.from(new TextEncoder().encode(text), (byte) => String.fromCharCode(byte)).join("");
+/** Base64 by the classic functions, which every browser of the app's floor has, made URL-safe and unpadded. */
+function toBase64Url(bytes: Uint8Array): string {
+  const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
@@ -199,7 +212,7 @@ function refuse(): never {
   throw new Refused();
 }
 
-/** The JSON value `text` writes, after its prefix and URL-safe Base64 of UTF-8. */
+/** The JSON value `text` writes, after its prefix and URL-safe Base64 of the raw DEFLATE of UTF-8. */
 function jsonOf(text: string): unknown {
   if (!text.startsWith(PREFIX)) {
     refuse();
@@ -210,10 +223,10 @@ function jsonOf(text: string): unknown {
   }
   try {
     const binary = atob(body.replace(/-/g, "+").replace(/_/g, "/"));
-    const json = new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
-    return JSON.parse(json);
+    const bytes = inflateSync(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch {
-    // Base64 that does not parse, bytes that are not UTF-8 or JSON that does not parse.
+    // Base64 that does not parse, bytes that do not inflate, inflated bytes that are not UTF-8 or JSON that does not parse.
     return refuse();
   }
 }
@@ -236,7 +249,7 @@ function sessionFrom(json: unknown, models: readonly RegisteredModel[]): Written
     enabled: [second, third],
     slots: [first, slots[1], slots[2]],
     charts: new Map([
-      // A session holds its own model's chart settings, so a text without them has them start at the model's own.
+      // A session holds its own model's chart settings: a text without them reads back as other than written.
       [model, startingChartSettings(model)],
       ...Object.entries(recordOf(written.charts)).flatMap(([name, settings]) => {
         const charted = modelNamed(name, models);
@@ -272,8 +285,9 @@ function entryModesFrom(json: unknown): WrittenEntryModes {
  * A slot in `modes`: the values some model in `models` enters under them and
  * the options a model in `models` declares, each other key dropped, and what
  * `model` takes that the slot lacks at its default, seeded as a switch seeds
- * it. A slot without a value in the humidity mode the text writes is
- * refused, since a default there would be in another mode than slot 1's.
+ * it, so that the comparison sees either. A slot without a value in the
+ * humidity mode the text writes is refused, since a default there would be in
+ * another mode than slot 1's.
  */
 function slotFrom(json: unknown, modes: WrittenEntryModes, model: RegisteredModel, models: readonly RegisteredModel[]): Slot {
   const written = membersOf(json, ["values", "options"]);
@@ -311,18 +325,19 @@ function slotFrom(json: unknown, modes: WrittenEntryModes, model: RegisteredMode
 
 /**
  * The quantities a slot in `modes` holds `model`'s inputs under among its
- * values, each sought as a switch seeds it: humidity is held apart from them.
+ * values, by the walk a switch seeds by ({@link inputsUnderEntryModes}):
+ * humidity is held apart from them.
  */
 function heldQuantities(model: RegisteredModel, modes: ValueEntryModes): Quantity[] {
-  return inputsOf(model).map(({ quantity }) => underEntryModes(quantity, modes)).filter((quantity) => !isHumidityQuantity(quantity));
+  return inputsUnderEntryModes(model, modes).map(({ held }) => held).filter((quantity) => !isHumidityQuantity(quantity));
 }
 
 /**
  * `model`'s chart settings: a chart type it declares, axes it offers under
  * `modes` where it declares a dynamic chart, and a well-formed Band list on
- * its scan's classifier where it scans and the text writes one. A link copied
- * on the Standard page writes none (rule 5), and the session then starts on
- * the classifier's.
+ * its scan's classifier where it scans and the text writes one; `null` where
+ * it writes none, as a link copied on the Standard page does (rule 5), until
+ * {@link toDecodedSession} starts it on the classifier's after comparing.
  */
 function chartSettingsFrom(json: unknown, model: RegisteredModel, modes: WrittenEntryModes): ChartSettings {
   const dynamic = dynamicChartOf(model);

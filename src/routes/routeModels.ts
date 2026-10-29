@@ -1,7 +1,7 @@
 import { Standard } from "jsthermalcomfort";
-import type { RegisteredModel } from "$lib/core/modelDeclaration";
+import { standardOf, type RegisteredModel } from "$lib/core/modelDeclaration";
 import { page, type Address } from "$lib/core/page";
-import { isSameStandard, routeSegmentFor, standards, type StandardEntry } from "$lib/core/standard";
+import { standardEntryFor, type StandardEntry } from "$lib/core/standard";
 import { registeredModels } from "$lib/models";
 import type { ModelGroup } from "$lib/ui/inputs/ModelSelect.svelte";
 
@@ -15,17 +15,15 @@ import type { ModelGroup } from "$lib/ui/inputs/ModelSelect.svelte";
 
 /** Models that belong to a standard, in registry order. */
 export function standardModels(): RegisteredModel[] {
-  return registeredModels.filter((model) => model.standard !== undefined);
+  return registeredModels.filter((model) => standardOf(model) !== undefined);
 }
 
 /**
  * The navigation's Standard group: one link per standard that has a registered
  * model, in the order the registry first names each, each opening the
  * standard's first registered model on the Standard page (ADR-0002 decisions
- * 57 and 74). A model pinned to another edition of a standard already linked
- * shares its link; the link names the edition its first model declares. The
- * link is an address, so it opens the same model whichever model the person
- * is on.
+ * 57, 74 and 86). Two years of one standard are two standards and two links.
+ * The link is an address, so it opens the same model whichever model the person is on.
  */
 export function standardLinks(
   models: readonly RegisteredModel[] = registeredModels,
@@ -37,13 +35,12 @@ export function standardLinks(
 
 /**
  * Whether the navigation marks `link` current at `address`: a standard's link
- * on any model of that standard, of whichever edition, on the Standard page,
- * though it opens the standard's first, and the Explore link on Explore.
+ * on any model of that standard on the Standard page, though it opens the
+ * standard's first, and the Explore link on Explore.
  */
 export function isCurrentLink(link: Address, address: Address): boolean {
   return (
-    link.page === address.page &&
-    (link.page !== page.standard || isSameStandard(requireStandard(link.model), requireStandard(address.model)))
+    link.page === address.page && (link.page !== page.standard || requireStandard(link.model) === requireStandard(address.model))
   );
 }
 
@@ -74,34 +71,29 @@ export function modelChoicesOn(
     return groups;
   }
   const open = requireStandard(address.model);
-  return groups.filter(({ standard }) => standard !== undefined && isSameStandard(standard.id, open));
+  return groups.filter(({ standard }) => standard?.id === open);
 }
 
 /**
- * `models` grouped by standard (ADR-0002 decision 74): one group per
- * standard, of whichever edition, in the order `models` first names each,
- * under the entry of the edition its first model declares; then one group of
- * the models with no standard, when there are any.
+ * `models` grouped by standard (ADR-0002 decisions 74 and 86): one group per
+ * standard, in the order `models` first names each, under its entry; then one
+ * group of the models with no standard, when there are any.
  */
 function modelGroupsOf(models: readonly RegisteredModel[]): ModelGroup[] {
   const groups: { standard: StandardEntry; models: RegisteredModel[] }[] = [];
   const withoutStandard: RegisteredModel[] = [];
   for (const model of models) {
-    const id = model.standard;
+    const id = standardOf(model);
     if (id === undefined) {
       withoutStandard.push(model);
       continue;
     }
-    const group = groups.find(({ standard }) => isSameStandard(standard.id, id));
+    const group = groups.find(({ standard }) => standard.id === id);
     if (group) {
       group.models.push(model);
       continue;
     }
-    const standard = standards.find((entry) => entry.id === id);
-    if (!standard) {
-      throw new Error(`No entry declared for standard "${id}"`);
-    }
-    groups.push({ standard, models: [model] });
+    groups.push({ standard: standardEntryFor(id), models: [model] });
   }
   return withoutStandard.length > 0 ? [...groups, { standard: undefined, models: withoutStandard }] : groups;
 }
@@ -114,9 +106,9 @@ export function defaultModel(): RegisteredModel {
   return model;
 }
 
-/** `model.standard`, or throws when the model has none (an Explore-only model has no Standard page). */
+/** `standardOf(model)`, or throws when the model has none (an Explore-only model has no Standard page). */
 export function requireStandard(model: RegisteredModel): Standard {
-  const standard = model.standard;
+  const standard = standardOf(model);
   if (!standard) {
     throw new Error(`${model.info.label} has no standard and no Standard page`);
   }
@@ -141,7 +133,7 @@ export function toRouteSegment(name: string): string {
  * for a model with no standard, which has no Standard page.
  */
 export function routeSegmentsOf(model: RegisteredModel): { standard: string; model: string } {
-  return { standard: routeSegmentFor(requireStandard(model)), model: toRouteSegment(model.info.name) };
+  return { standard: standardEntryFor(requireStandard(model)).routeSegment, model: toRouteSegment(model.info.name) };
 }
 
 /**
@@ -155,9 +147,9 @@ export function exploreSegmentsOf(model: RegisteredModel): { model: string } {
 /**
  * The model whose own route segments are `standardSegment` and `modelSegment`,
  * or `undefined` when the URL names none. Matched against each registered
- * model's segments rather than by parsing the address into a `Standard` first:
- * two editions of one standard share a segment (ADR-0002 decision 6), and a
- * model pinned to either must be found by the address it produces. A
+ * model's segments, so a model is found by the address it produces and a
+ * standard no registered model declares, an address in the old form without
+ * a year among them, finds none (ADR-0002 decision 86, rule 5). A
  * standard-less model has no Standard page and so is never found.
  */
 export function modelBySegment(
@@ -166,7 +158,7 @@ export function modelBySegment(
   models: readonly RegisteredModel[] = registeredModels,
 ): RegisteredModel | undefined {
   return models.find((model) => {
-    if (model.standard === undefined) {
+    if (standardOf(model) === undefined) {
       return false;
     }
     const segments = routeSegmentsOf(model);

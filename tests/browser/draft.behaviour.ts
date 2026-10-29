@@ -14,7 +14,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
  */
 
 /** PMV (ASHRAE 55): dry-bulb 10 – 40 °C. */
-const PMV_ADDRESS = "/standard/ashrae-55/pmv-ppd-ashrae";
+const PMV_ADDRESS = "/standard/ashrae-55-2023/pmv-ppd-ashrae";
 
 /** How long typing pauses before a legal draft commits, [ms]: the box's `COMMIT_PAUSE_MS`. */
 const COMMIT_PAUSE = 400;
@@ -107,6 +107,25 @@ test.describe("a legal draft", () => {
     await expect(box).toHaveValue("16");
   });
 
+  test("a commit on the pause leaves the box as typed: 0.0 over 0.1 still reads 0.0, and a 5 typed after it gives 0.05, not 5", async ({ page }) => {
+    await open(page);
+    const box = page.getByRole("spinbutton", { name: /^Air speed/ });
+    const table = resultTable(page);
+    const before = await textOf(table);
+
+    await box.selectText();
+    await box.pressSequentially("0.0");
+    await page.clock.runFor(COMMIT_PAUSE);
+    await changedFrom(table, before);
+    await expect(box).toHaveValue("0.0");
+
+    await box.press("5");
+    await page.clock.runFor(COMMIT_PAUSE);
+    await expect(box).toHaveValue("0.05");
+    await box.blur();
+    await expect(box).toHaveValue("0.05");
+  });
+
   test("Enter commits at once", async ({ page }) => {
     await open(page);
     const table = resultTable(page);
@@ -186,7 +205,7 @@ test.describe("a draft past its bound", () => {
 test.describe("a draft that would put a humidity entry out of range", () => {
   test("a dry-bulb temperature below the held dew point is marked once the typing pauses and refused on Enter: the box shows the committed value and a toast at the top right says why until it is closed", async ({ page }) => {
     await open(page);
-    await page.getByRole("button", { name: "Humidity", exact: true }).click();
+    await page.getByRole("button", { name: "Change humidity", exact: true }).click();
     await page.getByRole("menu").getByRole("menuitemradio", { name: /^Dew-point temperature/ }).click();
     await commit(page.getByRole("spinbutton", { name: /^Dew-point temperature/ }), "15");
     const box = dryBulb(page);
@@ -232,8 +251,7 @@ test.describe("an air speed held under a metabolic rate", () => {
     await expect(captionOf(airSpeed)).toHaveText("≥ 0 m/s");
     await expect(captionOf(page.getByRole("spinbutton", { name: /^Clothing insulation/ }))).toHaveText("≥ 0 clo");
     // 1.5 m/s at 3 met is a relative air speed of 2.1 m/s, past the model's 2.
-    await table.getByRole("button", { name: "Limits broken" }).click();
-    await expect(page.locator(`[data-slot="popover-content"]`).getByRole("listitem")).toHaveText([/Relative air speed must be 0 – 2 m\/s/]);
+    await expect(table.getByRole("img", { name: "Calculated, but outside these limits:" })).toHaveAttribute("title", "Calculated, but outside these limits:\nRelative air speed must be 0 – 2 m/s");
     // One toast, the air speed's own commit's, past the limit without local control at 1.1 met; the metabolic rate
     // keeps the relative air speed's limit broken, so it raises none.
     await expect(toasts(page)).toHaveCount(1);

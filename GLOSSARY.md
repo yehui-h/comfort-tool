@@ -21,7 +21,7 @@ The library's published metadata for one model (`<MODEL>_INFO`): the model's nam
 _Avoid_: schema, metadata object, model docs
 
 **Applicability**:
-The bounds within which a model's answer holds, published by the library per quantity. Every value a slot holds is within them: a draft past its bound is cut to the bound's end when it is committed, and a draft that would put another held value outside its bound is refused. Where many values change at once, a model switch or an arrival by address, the values are cut to their bounds and the cut is listed for the person. A value a run derives or returns outside a bound is a violation, calculated and marked on its result row.
+The bounds within which a model's answer holds, published by the library per quantity. Every value a slot holds is within them: a draft past its bound is cut to the bound's end when it is committed, and a draft that would put a held humidity entry outside its bound, or whose cut would, is refused. An air speed or a clothing insulation is held to its kind's bound alone, a run whose relative air speed or dynamic clothing insulation breaks the model's applicability being a violation. Where many values change at once, the values are cut to their bounds: a model switch lists the cut and asks first; an arrival by address cuts and says so in one toast, but a share link it would cut is refused; an entry-mode switch cuts what its conversion puts past a bound. A value a run derives or returns outside a bound is a violation, calculated and marked on its result row.
 _Avoid_: limit, range check, validation, clamp (for the cut, say what it does: cut to the bound)
 
 **Bound**:
@@ -29,11 +29,11 @@ The minimum and maximum a value is tested against; either may be absent. The lib
 _Avoid_: limit, range (that is an axis range)
 
 **Out of range**:
-Said of a draft that breaks its bound: the model's applicability, narrowed by the bound the quantity's kind has by definition (a percentage is 0 to 100), in the entry mode the value is entered in. Its box turns red once the typing pauses, and it is never committed as it is. Never said of a value a slot holds, nor of a result.
+Said of a draft that breaks its bound: the model's applicability, narrowed by the bound the quantity's kind has by definition (a percentage is 0 to 100), in the entry mode the value is entered in; an entered air speed or clothing insulation by its kind's bound alone. Its box turns red once the typing pauses, and it is never committed as it is. Never said of a value a slot holds, nor of a result.
 _Avoid_: invalid, violation
 
 **Violation**:
-A bound a completed run broke, as the library reports it with the result: either the model's applicability, on a value the run derives or returns, or a requirement the standard sets on the conditions, such as ASHRAE 55's air-speed limit without local control. The number is calculated and shown; its row in the result table is marked, and no yes-or-no answer is given beside it.
+A bound a completed run broke, as the library reports it with the result: either the model's applicability, on a value the run derives or returns, or a requirement the standard sets on the conditions, such as ASHRAE 55's air-speed limit without local control. The number is calculated and shown; its row in the result table is marked, a bound on a corrected value reported on the value entered, and no yes-or-no answer is given beside it.
 _Avoid_: warning (that is the sentence shown), error, out of range, non-compliance
 
 **Axis range**:
@@ -41,15 +41,11 @@ How far a quantity is drawn on a chart. A viewport, declared by the model file; 
 _Avoid_: limit, extent, domain
 
 **Standard**:
-A published standard as a family, `ISO 7730`: what a sidebar item, a Standard page, a route segment and a model select are each one of. Its display name and route segment are generated from the library's identifier. A model belongs to one standard by declaring one of its editions.
-_Avoid_: norm, edition (that is one version of a standard)
-
-**Edition**:
-One version of a standard: the versioned identifier the library names and a declaration writes (`iso_7730_2025`). It appears in the result table's caption and the Input summary (`ISO 7730:2025`) and nowhere else; two models may declare different editions of one standard and share its page.
-_Avoid_: version, revision, year (the year is how an edition is written)
+One published edition of a standard, as the library's `Standard` names it (`iso_7730_2025`), written with its year (`ISO 7730:2025`): what a sidebar item, a Standard page, a route segment and a model select's group are each one of. Its name and route segment are generated from the library's identifier. A model belongs to the standard its model info lists first; a model whose info lists none has no standard.
+_Avoid_: norm, edition, family, version (two years of one standard are two standards)
 
 **Declaration**:
-The one file in `src/models/` that binds a model: its info, standard, run call, defaults, axis ranges, table columns and charts.
+The one file in `src/models/` that binds a model: its info, run call, defaults, axis ranges, table columns and charts. Its standard is not declared but read from its info.
 _Avoid_: definition, config, registration (that is the one line in the registry)
 
 **Entry group**:
@@ -69,7 +65,7 @@ A named reference value the library publishes for a quantity (a typical task for
 _Avoid_: default, option, template
 
 **Input calculator**:
-A one-shot helper on one input row: from inputs of its own it computes a value for that row and, on Apply, writes it into the slots chosen for it, converted into the entry mode each slot is in. Those a model declares are offered together, apart from the rows they write, each in its own tab of one dialog. Three exist: the clothing ensemble summed from garments, the clothing predicted from the outdoor temperature at 6 a.m., and the solar gain that raises the mean radiant temperature. Its own inputs belong to nothing: not the slot, not the session, not the share link.
+A one-shot helper on one input row: from inputs of its own it computes a value for that row and, on Apply, writes it into the slots chosen for it, converted into the entry mode each slot is in and cut to the row's bound. Those a model declares are offered together, apart from the rows they write, each in its own tab of one dialog. Three exist: the clothing ensemble summed from garments, the clothing predicted from the outdoor temperature at 6 a.m., and the solar gain that raises the mean radiant temperature. Its own inputs belong to nothing: not the slot, not the session, not the share link.
 _Avoid_: modifier, tool, wizard, helper
 
 **Option**:
@@ -77,7 +73,7 @@ A switch a model takes beside its quantities, carrying no unit and never on a ch
 _Avoid_: setting, flag, parameter
 
 **Draft**:
-The text in a number box from the first keystroke until it is committed: after a pause in typing, on Enter or on leaving the box. A draft is not an input: nothing is calculated from it, and the Inputs, the Results and the Chart agree on what was last committed.
+The text in a number box from the first keystroke until it is committed: after a pause in typing when it is within its bounds, and on Enter or on leaving the box whatever it is, when it is written, cut or refused. A draft is not an input: nothing is calculated from it, and the Inputs, the Results and the Chart agree on what was last committed.
 _Avoid_: pending value, uncommitted input
 
 **Slot**:
@@ -93,7 +89,7 @@ What makes three slots one table, shared by the Standard and Explore pages: the 
 _Avoid_: store, app state
 
 **Share link**:
-An address that carries what one page shows to another tab or another person: its path names the page and the model, and its `share` parameter what that page is computed from, the model's inputs and settings, never a result. Opening one is an arrival by address: a value outside its bound is cut to it, and what was cut is listed. In a tab that already holds a session it asks once, before it replaces that session, with that list in the question.
+An address that carries what one page shows to another tab or another person: its path names the page and the model, and its `share` parameter what that page is computed from, the model's inputs and settings, never a result. It opens exactly as it was written or not at all: a link that does not read back as written, or that holds a value outside its bound, is refused, nothing is opened from it, and one toast says so. In a tab that already holds a session it asks once, before it replaces that session.
 _Avoid_: export link, permalink, state URL
 
 **Atmospheric pressure**:
@@ -113,8 +109,12 @@ The Bands of one model as the Explore page paints them: a copy of the model's Cl
 _Avoid_: thresholds, ranges, custom bands, scale
 
 **Classifier**:
-The library's bins that cut one output into categories: its Edges, its labels and which end of each interval is included. A model's default Band list is a copy of one, and the Compliance column's category is read against one.
+The library's bins that cut one output into categories: its Edges, its labels and which end of each interval is included. A model's default Band list is a copy of one, and a Band badge is read against one.
 _Avoid_: scale, interval scale, bins (in prose)
+
+**Band badge**:
+How the result table shows a classified output: the label of the Classifier's band the value falls in (for example "Neutral"), on a pill filled with that band's colour from its Palette, in that output's own column. A band without a colour gives an outlined pill. It reads the Classifier, never the Explore page's Band list.
+_Avoid_: swatch (that is a sample with no words), chip, tag, compliance (a yes or no is a column of its own)
 
 **Palette**:
 The colours a Classifier's Bands start with: one colour family per Classifier, diverging for a scale around neutral and sequential for a one-sided one, taken by band position, never by label; a sequential family is read without its lightest colour, a diverging one centred on its neutral band.
@@ -141,7 +141,7 @@ The text in an Image that says what its chart is computed from: the model and it
 _Avoid_: parameters, inputs table, caption
 
 **Swatch**:
-The small colour sample that stands for one thing on the page: a slot, a band or a category, drawn as a filled square, a line or a dot to match how the chart draws that thing. The same swatch appears in the legend, the result table and the slot buttons.
+The small colour sample that stands for one thing on the page: a slot or a band, drawn as a filled square, a line or a dot to match how the chart draws that thing. A slot's swatch appears in the legend, the result table and the slot buttons; a band's in the legend, as the result table shows a band by its Band badge.
 _Avoid_: dot, chip, colour key (a key is a quantity's library name), marker (that is the slot's point on the chart)
 
 **Session controls**:

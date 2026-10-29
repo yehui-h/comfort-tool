@@ -148,7 +148,6 @@ function pmvAt(db: number, rh: number, tr: number): number {
     met,
     clo,
     wme: 0,
-    standard: pmvPpdIso.standard,
     limit_inputs: false,
     round_output: false,
   }).pmv;
@@ -470,7 +469,7 @@ describe("the psychrometric chart's hover readout on the Standard page", () => {
     expect(hoverText[10][30]).toEqual([
       "Dry-bulb air temperature: 25 °C",
       "Humidity ratio: 6 g/kg",
-      "Predicted Mean Vote: -0.56",
+      "PMV: -0.56",
     ]);
     expect(new Set(hoverText.flat().map((readout) => readout.length))).toEqual(new Set([3]));
   });

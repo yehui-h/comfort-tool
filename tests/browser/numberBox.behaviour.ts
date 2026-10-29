@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+import { inflateRawSync } from "node:zlib";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 /**
@@ -12,7 +14,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
  */
 
 /** PMV (ASHRAE 55): dry-bulb 10 – 40 °C, air speed from 0, so neither takes a minus. */
-const PMV_ADDRESS = "/standard/ashrae-55/pmv-ppd-ashrae";
+const PMV_ADDRESS = "/standard/ashrae-55-2023/pmv-ppd-ashrae";
 const EXPLORE_ADDRESS = "/explore/pmv-ppd-ashrae";
 
 async function open(page: Page, address: string) {
@@ -49,7 +51,7 @@ async function typeAt(box: Locator, where: "start" | "end", keys: string) {
 }
 
 async function enterHumidityAs(page: Page, mode: RegExp) {
-  await page.getByRole("button", { name: "Humidity", exact: true }).click();
+  await page.getByRole("button", { name: "Change humidity", exact: true }).click();
   await page.getByRole("menu").getByRole("menuitemradio", { name: mode }).click();
 }
 
@@ -272,5 +274,99 @@ test.describe("the row's presets", () => {
     await walking.click();
     await expect(list).toHaveCount(0);
     await expect(metabolicRate).toHaveValue("1.7");
+  });
+});
+
+/** The toasts standing: a closed one stays a moment for Sonner's exit animation, marked `data-removed`. */
+function toasts(page: Page) {
+  return page.getByRole("region", { name: /^Notifications/ }).locator('li[data-sonner-toast]:not([data-removed="true"])');
+}
+
+const pressure = (page: Page) => page.getByRole("spinbutton", { name: /^Atmospheric pressure/ });
+
+/** The text the tab keeps, which is the link's, read as JSON: what the page holds, without a click on Share. */
+async function keptSession(page: Page): Promise<{ p_atm: number; slots: ({ values: Record<string, number> } | null)[] }> {
+  const kept = await page.evaluate(() => sessionStorage.getItem("comfort-tool.session") ?? "");
+  return JSON.parse(inflateRawSync(Buffer.from(kept.slice("v1.".length), "base64url")).toString());
+}
+
+/** The pressure the page holds, in pascals. */
+async function heldPressure(page: Page): Promise<number> {
+  return (await keptSession(page)).p_atm;
+}
+
+// In SI the pressure is shown in kPa and held in pascals (ADR-0002 decision 87, rule 6).
+test.describe("the atmospheric pressure", () => {
+  test("at the default reads 101.33 kPa within 30 – 110 kPa, a step up moves the held value by 100 Pa, and 101.325 typed holds 101 325 Pa", async ({ page }) => {
+    await open(page, PMV_ADDRESS);
+    const box = pressure(page);
+    await expect(page.getByText("Atmospheric pressure (kPa)", { exact: true })).toBeVisible();
+    await expect(box).toHaveValue("101.33");
+    await expect(captionOf(box)).toHaveText("30 – 110 kPa");
+    await expect.poll(() => heldPressure(page)).toBe(101325);
+
+    // The box's last digit is the formatter's rounding of 101.425, so the held value is read, not the text.
+    await stepButtons(box).up.click();
+    await expect.poll(() => heldPressure(page)).toBeCloseTo(101425, 6);
+
+    await commit(box, "101.325");
+    await expect.poll(() => heldPressure(page)).toBe(101325);
+  });
+
+  test("a focus and a blur with nothing typed keep 101 325 Pa, not the 101 330 Pa the box shows", async ({ page }) => {
+    await open(page, PMV_ADDRESS);
+    const box = pressure(page);
+    await expect(box).toHaveValue("101.33");
+
+    await box.focus();
+    await box.blur();
+    // A later commit writes the kept text, so it holds whatever the blur committed.
+    await commit(dryBulb(page), "26");
+    await expect.poll(async () => (await keptSession(page)).slots[0]?.values.tdb).toBe(26);
+
+    expect(await heldPressure(page)).toBe(101325);
+  });
+
+  test("101.43 typed over the 101 425 Pa a step holds commits 101 430 Pa, though the box shows 101.43", async ({ page }) => {
+    await open(page, PMV_ADDRESS);
+    const box = pressure(page);
+    await stepButtons(box).up.click();
+    await expect.poll(() => heldPressure(page)).toBeCloseTo(101425, 6);
+
+    await commit(box, "101.43");
+
+    await expect.poll(() => heldPressure(page)).toBe(101430);
+  });
+
+  test("a pressure refused for a humidity ratio it would put out of range is written in kPa in the toast", async ({ page }) => {
+    await open(page, PMV_ADDRESS);
+    await commit(dryBulb(page), "25");
+    await enterHumidityAs(page, /^Humidity ratio/);
+    // At 25 °C saturated air holds 20.08 g/kg at 101 325 Pa and 18.45 g/kg at 110 000 Pa.
+    await commit(page.getByRole("spinbutton", { name: /^Humidity ratio/ }), "19.5");
+
+    await commit(pressure(page), "110");
+    await expect(toasts(page)).toHaveCount(1);
+    await expect(toasts(page)).toContainText("Atmospheric pressure was not changed to 110 kPa");
+    await expect(pressure(page)).toHaveValue("101.33");
+  });
+});
+
+test.describe("a value changed while the box has the focus", () => {
+  test("back from PMV (ASHRAE 55) to ISO 7730 cuts 35 °C to 30 °C, and the dry-bulb box, focused still, reads 30", async ({ page }) => {
+    await open(page, "/explore/pmv-ppd-iso");
+    await page.getByRole("button", { name: "Model", exact: true }).click();
+    await page.getByRole("option", { name: /^PMV \/ PPD \(ASHRAE 55/ }).click();
+    await expect(page).toHaveURL(/pmv-ppd-ashrae/);
+    const box = dryBulb(page);
+    await commit(box, "35");
+    await expect(box).toHaveValue("35");
+
+    await box.focus();
+    await page.goBack();
+
+    await expect(page).toHaveURL(/pmv-ppd-iso/);
+    await expect(box).toBeFocused();
+    await expect(box).toHaveValue("30");
   });
 });

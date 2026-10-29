@@ -1,12 +1,12 @@
 import { copy } from "$lib/text/copy";
-import { warningFor, type ViolationRow } from "./applicability";
+import { limitsBrokenLines, type ViolationRow } from "./applicability";
 import type { BandList } from "./bands";
 import { optionsReader } from "./libraryInputs";
-import { optionsOf, type RegisteredModel } from "./modelDeclaration";
+import { optionsOf, standardOf, type RegisteredModel } from "./modelDeclaration";
 import { formatNumber } from "./numberFormat";
 import { quantities, type Quantity } from "./quantities";
 import { enteredValue, panelQuantities, type Slot } from "./slot";
-import { standardCaptionFor } from "./standard";
+import { standardEntryFor } from "./standard";
 import { displayUnitFor, labelWithUnit } from "./units";
 import type { UnitSystem } from "./unitSystem";
 
@@ -47,7 +47,8 @@ export function inputSummary(parts: {
   bands: BandList | null;
 }): InputSummary {
   const { model, runs, unitSystem, bands } = parts;
-  const modelLine = model.standard === undefined ? model.info.label : copy.summaryModel(model.info.label, standardCaptionFor(model.standard));
+  const standard = standardOf(model);
+  const modelLine = standard === undefined ? model.info.label : copy.summaryModel(model.info.label, standardEntryFor(standard).name);
   const edges = bands && model.scan ? [[edgesLine(model.scan.output, bands, unitSystem)]] : [];
   return [[modelLine], ...runs.map((run) => runLines(model, run, unitSystem)), ...edges];
 }
@@ -63,7 +64,7 @@ function runLines(model: RegisteredModel, run: DrawnRun, unitSystem: UnitSystem)
     ...optionsOf(model).map((option) => copy.summaryValue(option.label, options(option) ? copy.yes : copy.no)),
     valueLine(quantities.p_atm, atmosphericPressure, unitSystem),
     // One line a limit: a line holding them all runs off the single-column Image, which wraps nothing.
-    ...(violations.length === 0 ? [] : [copy.limitsBrokenHeading, ...violations.map((row) => warningFor(row, unitSystem))]),
+    ...limitsBrokenLines(violations, unitSystem),
   ];
 }
 

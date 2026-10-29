@@ -5,8 +5,11 @@
  * one expected after it. No expected text is written out but the prefix, so
  * the encoding may change until the format is frozen (rule 9); a refused text
  * is a valid one changed in one place, read and written again through Node's
- * own URL-safe Base64, so its edits name rule 1's members.
+ * own raw DEFLATE and URL-safe Base64 (decision 88 rule 1), not the codec's
+ * `fflate`, so its edits name rule 1's members and the wire format is checked
+ * apart from the library that writes it.
  */
+import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { registeredModels } from "$lib/models";
 import { adaptiveAshrae } from "$lib/models/adaptiveAshrae";
@@ -16,11 +19,11 @@ import { heatIndexRothfusz } from "$lib/models/heatIndexRothfusz";
 import { addEdge, moveEdge, setColor, setLabel } from "./bands";
 import { chartType } from "./chartType";
 import { airSpeedMode, clothingMode, humidityMode, temperatureMode } from "./entryModes";
-import { inputsOf, optionsOf, type RegisteredModel } from "./modelDeclaration";
+import { optionsOf, type RegisteredModel } from "./modelDeclaration";
 import { rehearseSwitch } from "./modelSwitch";
-import { page, pagesOf } from "./page";
+import { page, pagesOf, paintsBandsOn, type Page } from "./page";
 import { DEFAULT_ATMOSPHERIC_PRESSURE, quantities, type Quantity } from "./quantities";
-import { narrowedToPage, toText, toDecodedSession, type DecodedSession } from "./shareLink";
+import { narrowedToPage, toText, toDecodedSession } from "./shareLink";
 import {
   enteredQuantities,
   isHumidityQuantity,
@@ -42,7 +45,7 @@ const PREFIX = "v1.";
 const PRESSURE_OUT_OF_RANGE = 20000;
 
 /** `session` written out and read back, with the registry the app has. */
-function roundTrip(session: WrittenSession): DecodedSession | undefined {
+function roundTrip(session: WrittenSession): WrittenSession | undefined {
   return toDecodedSession(toText(session, registeredModels), registeredModels);
 }
 
@@ -53,7 +56,7 @@ function inOtherEntryModes(slot: Slot, model: RegisteredModel): Slot {
   return withHumidityMode(corrected, humidityMode.dewPoint, DEFAULT_ATMOSPHERIC_PRESSURE);
 }
 
-/** A Band list label outside Latin-1. */
+/** A Band list label outside Latin-1, so that the JSON's UTF-8 is more than one byte a character. */
 const FAR_LABEL = "很冷 ❄️";
 
 /**
@@ -95,15 +98,14 @@ function editedSession(): WrittenSession {
 describe("toText and toDecodedSession", () => {
   it("are the identity on every registered model's defaults", () => {
     for (const model of registeredModels) {
-      expect(roundTrip(startingSession(model)), model.info.label).toEqual({ session: startingSession(model), exact: true });
+      expect(roundTrip(startingSession(model)), model.info.label).toEqual(startingSession(model));
     }
   });
 
   it("are the identity on an edited session: three slots, every entry group's other mode, an option, values and the pressure out of range, two models' edited Band lists", () => {
     const session = editedSession();
-    const decoded = roundTrip(session);
-    expect(decoded).toEqual({ session, exact: true });
-    const back = decoded?.session;
+    const back = roundTrip(session);
+    expect(back).toEqual(session);
     expect(back?.slots[0].values.get(q.met)).toBe(1.2345678901234567);
     expect(back?.charts.get(pmvPpdIso)?.bands?.labels[0]).toBe(FAR_LABEL);
     expect(back?.charts.get(pmvPpdIso)?.bands?.colors[4]).toBeUndefined();
@@ -117,7 +119,7 @@ describe("toText and toDecodedSession", () => {
         charts.set(model, startingChartSettings(model));
       }
     }
-    expect(roundTrip({ ...session, charts })).toEqual({ session: { ...session, charts }, exact: true });
+    expect(roundTrip({ ...session, charts })).toEqual({ ...session, charts });
   });
 
   it("are the identity on a session that has left a model for one without its entry groups", () => {
@@ -129,7 +131,7 @@ describe("toText and toDecodedSession", () => {
       model: adaptiveAshrae,
       slots: [seeded(first), second && seeded(second), third && seeded(third)],
     };
-    expect(roundTrip(onAdaptive)).toEqual({ session: onAdaptive, exact: true });
+    expect(roundTrip(onAdaptive)).toEqual(onAdaptive);
   });
 
   it("write a text that starts with the prefix and holds only URL-safe characters", () => {
@@ -139,16 +141,24 @@ describe("toText and toDecodedSession", () => {
       expect(text.slice(PREFIX.length)).toMatch(/^[A-Za-z0-9_-]+$/);
     }
   });
+
+  it("write rule 1's JSON, raw DEFLATE in URL-safe Base64, as Node's own zlib inflates it (decision 88 rule 1)", () => {
+    const session = editedSession();
+    const json = jsonOf(toText(session, registeredModels)) as { model: string; slots: { values: Record<string, number> }[] };
+    expect(Object.keys(json).sort()).toEqual(["charts", "compare", "enabled", "entryModes", "model", "p_atm", "slots", "unitSystem"]);
+    expect(json.model).toBe(pmvPpdAshrae.info.name);
+    expect(json.slots[0].values[q.met.key]).toBe(session.slots[0].values.get(q.met));
+  });
 });
 
-/** The JSON a text writes, read by Node's own URL-safe Base64 rather than the codec's. */
+/** The JSON a text writes, read by Node's own raw DEFLATE and URL-safe Base64 rather than the codec's. */
 function jsonOf(text: string): unknown {
-  return JSON.parse(Buffer.from(text.slice(PREFIX.length), "base64url").toString("utf8"));
+  return JSON.parse(inflateRawSync(Buffer.from(text.slice(PREFIX.length), "base64url")).toString("utf8"));
 }
 
-/** `json` written as a text by Node's own URL-safe Base64. */
+/** `json` written as a text by Node's own raw DEFLATE and URL-safe Base64. */
 function textOf(json: string): string {
-  return PREFIX + Buffer.from(json).toString("base64url");
+  return PREFIX + deflateRawSync(json).toString("base64url");
 }
 
 type Path = readonly (string | number)[];
@@ -169,22 +179,19 @@ function changed(text: string, path: Path, value: unknown): string {
 describe("toDecodedSession", () => {
   const valid = toText(editedSession(), registeredModels);
   const ashrae = pmvPpdAshrae.info.name;
-  const [airSpeedControl] = optionsOf(pmvPpdAshrae);
   const read = (text: string) => toDecodedSession(text, registeredModels);
   const values = ["slots", 0, "values"];
-  /** PMV (ASHRAE 55)'s declared default of `quantity`. */
-  const declared = (quantity: Quantity) => inputsOf(pmvPpdAshrae).find((input) => input.quantity === quantity)?.value;
 
-  it("reads a valid text through another Base64 encoder as it reads the codec's own", () => {
-    expect(read(textOf(JSON.stringify(jsonOf(valid))))).toEqual({ session: editedSession(), exact: true });
+  it("reads a valid text through another DEFLATE and Base64 encoder as it reads the codec's own", () => {
+    expect(read(textOf(JSON.stringify(jsonOf(valid))))).toEqual(editedSession());
   });
 
-  it("reads a text whose members are in another order as exact", () => {
+  it("reads a text whose members are in another order as written", () => {
     const reversed = JSON.stringify(jsonOf(valid), (key, value: unknown) =>
       typeof value === "object" && value !== null && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).reverse()) : value,
     );
     expect(reversed).not.toBe(JSON.stringify(jsonOf(valid)));
-    expect(read(textOf(reversed))).toEqual({ session: editedSession(), exact: true });
+    expect(read(textOf(reversed))).toEqual(editedSession());
   });
 
   it("refuses another prefix", () => {
@@ -194,18 +201,27 @@ describe("toDecodedSession", () => {
     }
   });
 
-  it("refuses Base64 that does not parse, bytes that are not UTF-8, and JSON that does not parse", () => {
+  it("refuses Base64 that does not parse, bytes that do not inflate, inflated bytes that are not UTF-8, and JSON that does not parse", () => {
     expect(read(`${valid}*`)).toBeUndefined();
     expect(read(`${valid}=`)).toBeUndefined();
     // Classic Base64's characters and whitespace, which `atob` alone would take.
     expect(read(`${valid.slice(0, 10)} ${valid.slice(10)}`)).toBeUndefined();
+    // The deflated bytes, not the session, put a `-` or `_` in the text: the guard says if they stop doing so.
     const classic = valid.replace(/-/g, "+").replace(/_/g, "/");
     expect(classic).not.toBe(valid);
     expect(read(classic)).toBeUndefined();
     expect(read(`${PREFIX}A`)).toBeUndefined();
+    // A reserved block type, and a stream cut before its end.
     expect(read(`${PREFIX}${Buffer.from([0xff, 0xfe]).toString("base64url")}`)).toBeUndefined();
+    expect(read(`${PREFIX}${deflateRawSync(JSON.stringify(jsonOf(valid))).subarray(0, -4).toString("base64url")}`)).toBeUndefined();
+    // A stream that inflates to bytes that are not UTF-8.
+    expect(read(`${PREFIX}${deflateRawSync(Buffer.from([0xff, 0xfe])).toString("base64url")}`)).toBeUndefined();
     expect(read(textOf(JSON.stringify(jsonOf(valid)).slice(0, -1)))).toBeUndefined();
     expect(read(PREFIX)).toBeUndefined();
+  });
+
+  it("refuses a text in the former format, the URL-safe Base64 of the JSON not deflated (decision 88 rule 3)", () => {
+    expect(read(PREFIX + Buffer.from(JSON.stringify(jsonOf(valid))).toString("base64url"))).toBeUndefined();
   });
 
   it("refuses a member rule 1 requires, missing or mistyped", () => {
@@ -214,7 +230,9 @@ describe("toDecodedSession", () => {
     expect(read(changed(valid, ["enabled"], [true]))).toBeUndefined();
     expect(read(changed(valid, ["slots"], [jsonOf(valid)]))).toBeUndefined();
     expect(read(changed(valid, ["slots", 0, "options"], undefined))).toBeUndefined();
+    // A dynamic chart's entry without its axes (B19), and a chart entry without its type.
     expect(read(changed(valid, ["charts", ashrae, "axes"], undefined))).toBeUndefined();
+    expect(read(changed(valid, ["charts", ashrae, "type"], undefined))).toBeUndefined();
     expect(read(changed(valid, ["charts", ashrae, "bands", "colors", 0], 5))).toBeUndefined();
   });
 
@@ -254,22 +272,21 @@ describe("toDecodedSession", () => {
   });
 
   it("takes a disabled slot nothing, an entered value outside its bound and a pressure out of range, as written", () => {
-    expect(read(changed(valid, ["slots", 2], null))?.session.slots[2]).toBeNull();
-    expect(read(changed(valid, [...values, q.met.key], 100))?.session.slots[0].values.get(q.met)).toBe(100);
-    expect(read(changed(valid, [q.p_atm.key], 1))?.session.atmosphericPressure).toBe(1);
-    for (const text of [changed(valid, ["slots", 2], null), changed(valid, [...values, q.met.key], 100), changed(valid, [q.p_atm.key], 1)]) {
-      expect(read(text)?.exact).toBe(true);
-    }
+    expect(read(changed(valid, ["slots", 2], null))?.slots[2]).toBeNull();
+    expect(read(changed(valid, [...values, q.met.key], 100))?.slots[0].values.get(q.met)).toBe(100);
+    expect(read(changed(valid, [q.p_atm.key], 1))?.atmosphericPressure).toBe(1);
   });
 
-  it("takes a scanning model's chart entry without a Band list as none written, exactly: a link copied on the Standard page (rule 5)", () => {
+  it("takes a scanning model's chart entry without a Band list, a link copied on the Standard page (rule 5), and starts it on the classifier's list", () => {
     const decoded = read(changed(valid, ["charts", ashrae, "bands"], undefined));
-    expect(decoded?.session.charts.get(pmvPpdAshrae)).toEqual({ ...editedSession().charts.get(pmvPpdAshrae), bands: null });
-    expect(decoded?.exact).toBe(true);
+    expect(decoded?.charts.get(pmvPpdAshrae)).toEqual({
+      ...editedSession().charts.get(pmvPpdAshrae),
+      bands: startingChartSettings(pmvPpdAshrae).bands,
+    });
   });
 
-  it("drops a key the app does not read, and says the session is not exact", () => {
-    const dropped = [
+  it("refuses a key the app does not read (decision 88 rule 4)", () => {
+    const unread = [
       changed(valid, ["page"], "explore"),
       changed(valid, ["charts", adaptiveAshrae.info.name, "axes"], { x: q.tdb.key, y: q.rh.key }),
       changed(valid, ["charts", "pmv_ppd"], { type: chartType.dynamic.id }),
@@ -284,54 +301,29 @@ describe("toDecodedSession", () => {
       // No registered model enters these, or none under the text's entry modes.
       ...[q.wme, q.pmv, q.tdb, q.tr, q.v, q.clo, q.rh, q.hr].map((quantity) => changed(valid, [...values, quantity.key], 1)),
     ];
-    for (const text of dropped) {
-      expect(read(text)).toEqual({ session: editedSession(), exact: false });
+    for (const text of unread) {
+      expect(read(text)).toBeUndefined();
     }
   });
 
-  it("starts a value or option a slot lacks at the model's default, and says the session is not exact", () => {
-    const met = read(changed(valid, ["slots", 1, "values", q.met.key], undefined));
-    expect(met?.session.slots[1]?.values.get(q.met)).toBe(declared(q.met));
-    expect(met?.exact).toBe(false);
-    // Under relative air speed entry the slot holds the air speed's default as `vr`, as a switch seeds it.
-    expect(read(changed(valid, ["slots", 2, "values", q.vr.key], undefined))?.session.slots[2]?.values.get(q.vr)).toBe(declared(q.v));
-    const options = read(changed(valid, ["slots", 1, "options"], {}));
-    expect(options?.session.slots[1]?.options.get(airSpeedControl)).toBe(airSpeedControl.default);
-    expect(options?.exact).toBe(false);
+  it("refuses a slot that lacks a value or its options", () => {
+    expect(read(changed(valid, ["slots", 1, "values", q.met.key], undefined))).toBeUndefined();
+    expect(read(changed(valid, ["slots", 1, "options"], {}))).toBeUndefined();
   });
 
-  it("puts an entry group the text lacks in its default mode, and a humidity the text lacks at the model's default", () => {
-    const temperature = read(changed(valid, ["entryModes", "temperature"], undefined));
-    const [first] = temperature?.session.slots ?? [];
-    expect(first?.temperature.mode).toBe(temperatureMode.separate);
-    // The operative entry is of the other mode, so it is dropped, and the separate temperatures start at their defaults.
-    expect(first?.values.has(q.operative_tmp)).toBe(false);
-    expect(first?.values.get(q.tdb)).toBe(declared(q.tdb));
-    expect(temperature?.exact).toBe(false);
-    const humidity = read(changed(valid, ["entryModes", "humidity"], undefined));
-    for (const slot of humidity?.session.slots ?? []) {
-      expect(slot?.humidity).toEqual({ mode: humidityMode.rh, value: declared(q.rh) });
+  it("refuses a slot in the relative-air-speed mode without `vr`, and one in the dynamic-clothing mode without `clo_dynamic` (B1)", () => {
+    expect(read(changed(valid, ["slots", 2, "values", q.vr.key], undefined))).toBeUndefined();
+    expect(read(changed(valid, ["slots", 2, "values", q.clo_dynamic.key], undefined))).toBeUndefined();
+  });
+
+  it("refuses a text that lacks an entry group, whose slots then hold the values of another mode", () => {
+    for (const group of ["temperature", "airSpeed", "clothing", "humidity"]) {
+      expect(read(changed(valid, ["entryModes", group], undefined)), group).toBeUndefined();
     }
-    expect(humidity?.exact).toBe(false);
   });
 
-  it("puts the air-speed and clothing groups the text lacks in their default modes, the values of the other mode dropped", () => {
-    const airSpeed = read(changed(valid, ["entryModes", "airSpeed"], undefined));
-    expect(airSpeed?.session.slots[0].airSpeed.mode).toBe(airSpeedMode.uncorrected);
-    expect(airSpeed?.session.slots[0].values.has(q.vr)).toBe(false);
-    expect(airSpeed?.session.slots[0].values.get(q.v)).toBe(declared(q.v));
-    expect(airSpeed?.exact).toBe(false);
-    const clothing = read(changed(valid, ["entryModes", "clothing"], undefined));
-    expect(clothing?.session.slots[0].clothing.mode).toBe(clothingMode.uncorrected);
-    expect(clothing?.session.slots[0].values.has(q.clo_dynamic)).toBe(false);
-    expect(clothing?.session.slots[0].values.get(q.clo)).toBe(declared(q.clo));
-    expect(clothing?.exact).toBe(false);
-  });
-
-  it("starts the text's model on its starting chart where the text has no chart entry for it, and says the session is not exact", () => {
-    const decoded = read(changed(valid, ["charts", ashrae], undefined));
-    expect(decoded?.session.charts.get(pmvPpdAshrae)).toEqual(startingChartSettings(pmvPpdAshrae));
-    expect(decoded?.exact).toBe(false);
+  it("refuses a text without a chart entry for its own model", () => {
+    expect(read(changed(valid, ["charts", ashrae], undefined))).toBeUndefined();
   });
 });
 
@@ -418,11 +410,17 @@ describe("narrowedToPage", () => {
     });
   });
 
-  it("writes a text that reads back as the narrowed session, exactly, for every registered model on each of its pages", () => {
+  /** `narrowed` as it reads back on `onPage`: on Standard, which carries no Band list, each model's on its classifier's. */
+  const readBack = (narrowed: WrittenSession, onPage: Page): WrittenSession =>
+    paintsBandsOn(onPage)
+      ? narrowed
+      : { ...narrowed, charts: new Map([...narrowed.charts].map(([model, settings]) => [model, { ...settings, bands: startingChartSettings(model).bands }])) };
+
+  it("writes a text that reads back as the narrowed session for every registered model on each of its pages, a Band list it does not carry on the classifier's", () => {
     for (const model of registeredModels) {
       for (const onPage of pagesOf(model).filter((candidate) => candidate !== page.timeSeries)) {
         const narrowed = narrowedToPage(switchedTo(model), onPage);
-        expect(roundTrip(narrowed), `${model.info.label} on ${onPage.title}`).toEqual({ session: narrowed, exact: true });
+        expect(roundTrip(narrowed), `${model.info.label} on ${onPage.title}`).toEqual(readBack(narrowed, onPage));
       }
     }
     // Heat Index has no Standard page: its link is Explore's alone.

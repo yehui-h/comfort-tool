@@ -77,7 +77,6 @@ describe("Outputs", () => {
   it("derives a result and a chart from a valid session", () => {
     const outputs = new Outputs(new Session(pmvPpdIso));
 
-    expect(outputs.slots[0].outOfRangeQuantities).toEqual([]);
     expect(resultValueOf(outputs.slots[0].result, q.pmv)).toBeTypeOf("number");
     expect(outputs.chart?.traces.length).toBeGreaterThan(0);
   });
@@ -267,14 +266,14 @@ describe("the violation rows, in the words of the limits popover", () => {
     expect(sentencesOf(outputs.slots[0])).toEqual(["Water vapour partial pressure must be 0 – 2.7 kPa"]);
   });
 
-  it("name an output's broken bound, as its Compliance cell does", () => {
+  it("name an output's broken bound, as an input's", () => {
     const session = new Session(pmvPpdIso);
     const outputs = new Outputs(session);
     for (const [quantity, value] of [[q.tdb, 30], [q.tr, 40], [q.met, 2], [q.clo, 1]] as const) {
       session.commitEntry(0, quantity, value);
     }
 
-    expect(sentencesOf(outputs.slots[0])).toEqual(["Predicted Mean Vote must be -2 – 2"]);
+    expect(sentencesOf(outputs.slots[0])).toEqual(["PMV must be -2 – 2"]);
   });
 
   it("under Compare, are only the rows of the slot whose run broke a bound", () => {

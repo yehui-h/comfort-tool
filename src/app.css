@@ -20,12 +20,13 @@
 	--header-height: 3.5rem;
 
 	/* The type sizes (decision 73, rule 2), and the plot's height cap, which its 4:3 shape, the exported image's
-	   plot area, is derived from (rule 8). */
+	   plot area, is derived from (rule 8), with the width that shape gives it at the cap. */
 	--font-size-title: 1.125rem;
 	--font-size-heading: 0.875rem;
 	--font-size-body: 0.875rem;
 	--font-size-caption: 0.75rem;
 	--chart-cap: 24rem;
+	--plot-width: calc(var(--chart-cap) * 4 / 3);
 
 	--background: #ffffff;
 	--foreground: #0f172a;
@@ -42,6 +43,7 @@
 	--accent: #e2e8f0;
 	--accent-foreground: #0f172a;
 	--destructive: #dc2626;
+	--warning: #d97706;
 	--border: #e2e8f0;
 	--input: #e2e8f0;
 	--ring: var(--brand);
@@ -167,11 +169,15 @@
 		align-items: center;
 		gap: var(--space-page);
 	}
+	/* The chart type select's label, a screen reader's alone: the card's heading says Chart (decision 87, rule 4). */
+	.chart-type-label {
+		@apply sr-only;
+	}
 	/* The node Plotly draws the chart on: the exported image's 4:3 plot area, the cap tall, on the card's leading
 	   edge; it shrinks at 4:3 only where its column is narrower than it. */
 	.chart-plot {
 		flex: none;
-		inline-size: calc(var(--chart-cap) * 4 / 3);
+		inline-size: var(--plot-width);
 		max-inline-size: 100%;
 		aspect-ratio: 4 / 3;
 	}
@@ -227,11 +233,7 @@
 			linear-gradient(to left, color-mix(in oklab, var(--foreground) 20%, transparent), transparent) right / 1.5rem
 				100% no-repeat scroll;
 	}
-	/* A caveat in the Compliance column wraps, so a long warning does not widen the table (decision 70, rule 1). */
-	.result-table .caveat {
-		white-space: normal;
-	}
-	/* The first column, the slot's name, stays in view while the region scrolls (decision 70, rule 3), opaque so the
+	/* The first column, the Input column, stays in view while the region scrolls (decision 70, rule 3), opaque so the
 	   columns under it do not show through: on the paper, or on the colour the row primitive's `hover:bg-muted/50`
 	   gives a hovered row, changing with the row's own `transition-colors` so the cell does not lead the row. */
 	.result-table tr > :first-child {
@@ -242,6 +244,11 @@
 	}
 	.result-table tr:hover > :first-child {
 		background-color: color-mix(in oklab, var(--muted) 50%, var(--background));
+	}
+	/* While the slots are not named, the Input heading's word is a screen reader's alone (decision 85, as amended
+	   2026-10-28), hidden from the eye by the utility the primitives use. */
+	.result-table .input-heading-hidden {
+		@apply sr-only;
 	}
 	/* An input calculator's settings in its tab, the one region of the dialog that scrolls (decision 75, rule 6 (b)),
 	   padded so focus rings are not clipped. */
@@ -286,6 +293,11 @@
 		line-height: 1.75rem;
 		font-weight: 500;
 	}
+	/* The Units label takes the weight of the Atmospheric pressure label under it, the field label's, so the settings
+	   read as one kind of thing (decision 87, rule 5). */
+	.units-label {
+		font-weight: 500;
+	}
 }
 
 /* Adjustments to the generated primitives, selected by `data-slot` (ADR-0002 decision 65, rule 2, as decision 73
@@ -306,8 +318,9 @@
 }
 /* Every control has the one radius whatever its size (decision 73, rule 2), where Nova rounds a small button (`sm`,
    `xs`, `icon-sm`, `icon-xs`), an `sm` toggle, toggle-group and select trigger a step smaller, and the input group's
-   button smaller again. A button that opens or closes a dialog, a sheet, a popover or a menu carries that part's slot, the sidebar's
-   trigger its own. A toggle-group's items keep the primitive's corners, the group's at the outer ends and none
+   button smaller again; so has a dialog, which Nova rounds at the radius and 4 px (decision 87, rule 10). The
+   checkbox keeps the primitive's 4 px, the named exception. A button that opens or closes a dialog, a sheet, a
+   popover or a menu carries that part's slot, the sidebar's trigger its own. A toggle-group's items keep the primitive's corners, the group's at the outer ends and none
    between; an item inside a popup or the sidebar's menu keeps Nova's smaller step. */
 [data-slot="button"],
 [data-slot="dialog-trigger"],
@@ -318,7 +331,8 @@
 [data-slot="sidebar-trigger"],
 [data-slot="toggle"],
 [data-slot="toggle-group"],
-[data-slot="select-trigger"] {
+[data-slot="select-trigger"],
+[data-slot="dialog-content"] {
 	border-radius: var(--radius);
 }
 /* A quantity's row is the generated field (the shell's spec, "The rows"): its label, box and caption the field's spacing
@@ -513,30 +527,51 @@
 .table-scroll > [data-slot="table-container"] {
 	overflow-x: visible;
 }
-/* The result table's headings wrap, standing at the foot of their cell over the column they name; a result's
-   value, a number, Yes or No, or a dash, is right-aligned in tabular figures under its heading, so decimals line
-   up (decision 70, rule 1). Unlayered, as the heading's `text-left` and `whitespace-nowrap` are the primitive's. */
+/* The result table's headings wrap, standing at the foot of their cell over the column they name, padded as the body
+   cells are rather than held to the primitive's 40 px; a result's value, a category, a number, Yes or No, or a dash,
+   is right-aligned in tabular figures under its heading, so decimals line up (decision 70, rule 1). Unlayered, as the
+   heading's `h-10`, `text-left` and `whitespace-nowrap` are the primitive's. */
 .result-table [data-slot="table-head"] {
+	height: auto;
+	padding-block: 0.5rem;
 	white-space: normal;
 	vertical-align: bottom;
 }
+/* The Input column is as wide as what it holds, the value columns share the rest equally (decision 85, as amended
+   2026-10-28). Chromium's auto layout, as measured, gives a table of percentage columns its spare width by their
+   percentages: a 0% column keeps its content's width, equal ones stay equal, and their sum, one share short of the
+   whole, leaves the Input column its room. A badge or a number wider than its share widens its column. The table
+   sets `--value-columns`. */
+.result-table tr > :first-child {
+	width: 0%;
+}
 .result-table .value {
+	width: calc(100% / (var(--value-columns) + 1));
 	text-align: right;
 	font-variant-numeric: tabular-nums;
 }
-/* A row's limits button (decision 84, rule 8) stands on the text's line without making the row taller, before what
-   its cell holds: spaced by the gap of the swatch's label, beside the Compliance entries by the lead's, which keeps
-   it on their first line, and in a value cell by its own margin. */
-.result-table .limits-button {
-	margin-block: -0.25rem;
+/* A Band badge (decision 85, rule 3) in the fill and lettering the table sets on it, `--band-fill` and
+   `--band-lettering`, edged as a fill swatch is, so a near-white band shows on the paper. Unlayered, as the
+   primitive's default fill is a utility. */
+.result-table .band-badge {
+	border-color: var(--border);
+	background-color: var(--band-fill);
+	color: var(--band-lettering);
 }
-.result-table .limits-lead {
-	display: flex;
-	align-items: center;
-	gap: 0.4em;
+/* A row's limits icon (decision 85, rule 5), in the warning's amber, stands on the text's line at the text's size,
+   first in the Input cell: before the swatch, spaced by the gap of the swatch's label, where the rows are named. */
+.result-table .limits-icon {
+	display: inline-flex;
+	vertical-align: middle;
+	color: var(--warning);
 }
-.result-table .value .limits-button {
-	margin-inline-end: 0.25rem;
+.result-table .limits-icon svg {
+	width: 1em;
+	height: 1em;
+}
+/* On a row that broke no limit the icon keeps its room and leaves the accessibility tree (decision 87, rule 9). */
+.result-table .limits-icon-hidden {
+	visibility: hidden;
 }
 /* The Bands panel is a compact table (decision 67, rule 4), now in the Bands dialog (decision 73, rule 8): a row as
    tall as its small buttons, and a colour box narrow enough that No colour stands beside it. */

@@ -14,6 +14,7 @@ export type EntryModeId =
 /** The repository's address, a placeholder target for the footer's links (the Phase 5c spec, Out of Scope). */
 const REPOSITORY = "https://github.com/FedericoTartarini/comfort-tool";
 const LIBRARY_NAME = "jsthermalcomfort";
+const CHANGE = "Change";
 
 /**
  * UI copy, English only in v1 (ADR §2). Quantity names never appear here:
@@ -25,6 +26,8 @@ export const copy = {
   // The page's header and footer (ADR-0002 decision 67, rules 6 and 7). The licence's
   // name and target, the Code link's target and the citation's text are placeholders
   // until the user decides them (the Phase 5c spec, Out of Scope).
+  // The header's first control, which collapses the sidebar, is named for it (decision 87, rule 1).
+  sidebar: "Sidebar",
   documentation: "Documentation",
   documentationAddress: `${REPOSITORY}/blob/main/docs/user-guide.md`,
   libraryName: LIBRARY_NAME,
@@ -52,11 +55,16 @@ export const copy = {
   units: "Units",
   // The Explore model select's heading over the models with no standard (ADR-0002 decision 74, rule 4).
   otherModels: "Other",
-  // The entry groups' names, each its menu button's whole text (ADR-0002 decision 72, rule 1).
+  // The entry groups' names, each read into its menu button's name (ADR-0002 decision 72, rule 1, as decision 87
+  // rule 7 revised it).
   temperatureGroup: "Temperature",
   humidityGroup: "Humidity",
   airSpeedGroup: "Air speed",
   clothingGroup: "Clothing",
+  // An entry group's menu button: "Change" on every group, named "Change air speed" so the visible word is in the name
+  // (WCAG 2.5.3).
+  entryGroupButton: CHANGE,
+  entryGroupButtonName: (groupName: string) => `${CHANGE} ${groupName.toLowerCase()}`,
   // An entry mode in its group's menu, by the quantities it enters: "Dry-bulb air temperature and mean radiant temperature".
   entryModeChoice: (labels: readonly string[]) =>
     labels.map((label, index) => (index === 0 ? label : label.charAt(0).toLowerCase() + label.slice(1))).join(" and "),
@@ -117,11 +125,8 @@ export const copy = {
   presetSearchPlaceholder: "Search…",
   presetEmpty: "No matches.",
   inputColumn: "Input",
-  complianceColumn: "Compliance",
-  // A result row's button for the limits its run broke, its accessible name, and the heading of the popover it opens
-  // and of a slot's broken limits in an Image's Input summary (ADR-0002 decision 84, rule 8), the heading in decision
-  // 83's words: "limits", the standards' word for both kinds of bound.
-  limitsBroken: "Limits broken",
+  // The heading of the limits a run broke, in a result row's icon name (ADR-0002 decision 85, rule 5) and in an Image's
+  // Input summary (decision 84, rule 8), in decision 83's words: "limits", the standards' word for both kinds of bound.
   limitsBrokenHeading: "Calculated, but outside these limits:",
   // One broken applicability row: `bound` already carries its unit.
   applicabilityWarning: (label: string, bound: string) => `${label} must be ${bound}`,
@@ -150,7 +155,6 @@ export const copy = {
   share: "Share",
   linkCopied: "Link copied",
   linkRefusedNotice: "The shared link could not be read, so nothing was opened from it.",
-  linkFilledNotice: "Some of this link could not be used as written; what it lacked starts at its defaults.",
   copyRefusedNotice: "The link could not be copied.",
   // An arrival that cut values to their bounds (decision 84, rule 4, as noted 2026-10-28).
   valuesCutNotice: "Some values were out of range and were cut to the nearest allowed value.",
@@ -172,6 +176,9 @@ export const copy = {
   imageDownload: "Download",
   imageFailedNotice: "The image could not be made.",
   imageIncludesSummaryAndFooter: "Include input summary and footer",
+  // A standard's name, `ASHRAE 55:2023`, as the sidebar, the Explore select's group heading and the Input summary write
+  // it (decision 86, rule 2): the colon for every body.
+  standardName: (bodyAndNumber: string, year: string) => `${bodyAndNumber}:${year}`,
   // The Input summary's lines (decision 64, rule 3): `label` is a quantity's with its unit, or an option's.
   summaryModel: (model: string, standard: string) => `${model} · ${standard}`,
   summaryValue: (label: string, value: string) => `${label}: ${value}`,
@@ -180,7 +187,6 @@ export const copy = {
   // The Image's footer, two lines (decision 64, rule 4): `day` as `2026-10-07`.
   footerTool: (name: string, version: string) => `${name} ${version}`,
   footerLibrary: (version: string, day: string) => `${LIBRARY_NAME} ${version} · ${day}`,
-  standardCaption: (displayName: string, year: string) => `${displayName}:${year}`,
   notAvailable: "—",
   // A yes-or-no result cell (`acceptability_80`, `compliance`).
   yes: "Yes",
@@ -201,7 +207,8 @@ export const copy = {
   // A chart's legend entry or readout line of one slot, while the slots are named.
   slotEntry: (slotName: string, entry: string) => `${slotName} · ${entry}`,
   chart: "Chart",
-  // The chart type toggle-group's name, on the chart card's view row with no visible label (ADR-0002 decision 73, rule 8).
+  // The chart type select's name, on the chart card's view row with no visible label (ADR-0002 decision 73, rule 8, as
+  // revised by decision 87, rule 4).
   chartType: "Chart type",
   xAxis: "X axis",
   yAxis: "Y axis",
@@ -223,7 +230,7 @@ export const copy = {
   bandNoColor: "No colour",
   bandAdd: "Add",
   bandRemove: "Remove",
-  // Why an Edge typed out of order was not taken, in its cell until that Edge is next moved (ADR-0002 decision 84,
+  // Why an Edge typed out of order was not taken, in its cell until that Edge is next typed in (ADR-0002 decision 84,
   // rule 6): `edge` and its neighbours carry the unit; the first band has no Edge below, the last none above.
   bandEdgeRefused: (edge: string, below: string | undefined, above: string | undefined) =>
     below === undefined

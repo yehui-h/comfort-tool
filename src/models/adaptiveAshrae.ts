@@ -1,4 +1,4 @@
-import { adaptive_ashrae, ADAPTIVE_ASHRAE_INFO, Standard } from "jsthermalcomfort";
+import { adaptive_ashrae, ADAPTIVE_ASHRAE_INFO } from "jsthermalcomfort";
 import { chartType } from "$lib/core/chartType";
 import type { RegisteredModel, ZoneLimits } from "$lib/core/modelDeclaration";
 import { quantities } from "$lib/core/quantities";
@@ -18,8 +18,6 @@ function toZoneLimits(band: AdaptiveAshraeBand, label: string): ZoneLimits {
 
 export const adaptiveAshrae = {
   info: ADAPTIVE_ASHRAE_INFO,
-  // The one version `adaptive_ashrae` implements.
-  standard: Standard.ashrae_55_2023,
   // After the quantities, the app's fixed policy: `limit_inputs: false`, since
   // the app gates entered values itself and reads the rows the run breaks off
   // `warnings`; `round_output: false`, since the library rounds `tmp_cmf`
@@ -50,9 +48,8 @@ export const adaptiveAshrae = {
     { quantity: q.operative_tmp, min: 10, max: 40 },
   ],
   // The library's outputs, in its order. The two acceptabilities are the
-  // reading, as Yes or No: the compliance column appears only for a classified
-  // output or a broken output row, and Adaptive has neither, so there is no
-  // compliance line (Phase 4b spec, Out of Scope).
+  // reading, as Yes or No; Adaptive classifies no output, so no category
+  // column leads (ADR-0002 decision 85, rule 1).
   table: [
     q.tmp_cmf,
     q.tmp_cmf_80_low,

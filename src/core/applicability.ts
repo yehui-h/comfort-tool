@@ -410,11 +410,6 @@ export function atmosphericPressureRow(atmosphericPressure: number): OutOfRangeR
     : undefined;
 }
 
-/** Which quantities {@link outOfRangeRows} names — what the input panel marks. */
-export function outOfRangeQuantities(slot: Slot, model: RegisteredModel, atmosphericPressure: number): Quantity[] {
-  return outOfRangeRows(slot, model, atmosphericPressure).map((row) => row.quantity);
-}
-
 /**
  * The rows a completed run broke, as the library reports them on the result's
  * `warnings` (ADR-0002 decision 23) — the app finds no row of its own. Each
@@ -488,30 +483,6 @@ export function breaksNewLimit(before: readonly ViolationRow[], now: readonly Vi
   return now.some((row) => !before.some((earlier) => isSameLimit(row, earlier)));
 }
 
-/** A run's violation rows by the side they describe: the inputs they came from, or the outputs. */
-export interface ViolationSides {
-  readonly inputs: readonly ViolationRow[];
-  readonly outputs: readonly ViolationRow[];
-}
-
-// `satisfies Record<ViolationRow["role"], …>`: a role added to `ViolationRow`
-// fails to compile here until it is given a side. A role the library adds
-// fails first in `violationRows`, where its warning becomes a `ViolationRow`.
-const sideOfRole = {
-  input: "inputs",
-  derived: "inputs",
-  output: "outputs",
-} as const satisfies Record<ViolationRow["role"], keyof ViolationSides>;
-
-/** `rows` split by role, each row on exactly one side, the side `sideOfRole` gives its role. */
-export function splitViolations(rows: readonly ViolationRow[]): ViolationSides {
-  const sides: { inputs: ViolationRow[]; outputs: ViolationRow[] } = { inputs: [], outputs: [] };
-  for (const row of rows) {
-    sides[sideOfRole[row.role]].push(row);
-  }
-  return sides;
-}
-
 /**
  * `bound` on `quantity` in its display unit under `system`, formatted, without
  * the unit symbol. Each end is written as any number is, nearest: `0 – 1.88`
@@ -544,4 +515,12 @@ export function boundSentence(quantity: Quantity, bound: Bound, system: UnitSyst
 /** The sentence a violation row shows the user, of the bounded quantity ({@link boundSentence}). */
 export function warningFor(row: ViolationRow, unitSystem: UnitSystem): string {
   return boundSentence(row.bounded, row.bound, unitSystem);
+}
+
+/**
+ * The lines naming the limits a run broke, a result row's icon's and an Image's Input summary's: the heading, then
+ * one sentence a limit; none for a run that broke none.
+ */
+export function limitsBrokenLines(rows: readonly ViolationRow[], unitSystem: UnitSystem): string[] {
+  return rows.length === 0 ? [] : [copy.limitsBrokenHeading, ...rows.map((row) => warningFor(row, unitSystem))];
 }

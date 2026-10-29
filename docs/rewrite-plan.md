@@ -411,6 +411,98 @@ Calculation logic moves out into the forked `jsthermalcomfort` (`typescript` bra
 > width three slots need to show "Presets". Decision 33 and decision 83 rule 2 are withdrawn, ten decisions noted;
 > GLOSSARY.md follows and gains **Draft**. Ticket 05 (N6) and open-points B28 are new. **Next: the user's `/to-spec`
 > and `/to-tickets` for decision 84, then the README's workflow.**
+>
+> **2026-10-28 — position, the input gate done**: `.scratch/input-gate/` landed on `rewrite/v1`, tickets 01 to 13:
+> every notice a toast at the window's top right (`10eb789`, `32508d5`, `0f83fba`); the box takes only a number and
+> carries its own step buttons, the line under it the bound with its unit (`173c517`, `dd83b9a`, `e2fbcf1`, `d2b795b`);
+> the wet bulb's upper end (`89e45a6`); the input card at `28.75rem` and two columns from a `74.5rem` main area
+> (`ab38a5f`); a draft committed at the pause, cut or refused (`e299915`, `abf01b9`); air speed and clothing held to
+> their kinds, a run past the model's row a violation (`6dea251`); the switch over every held slot and the arrival's
+> cut with one toast (`feee2a7`); Apply, presets and the entry-mode switch kept within bounds (`f351fed`); nothing kept,
+> a violation's button on its result row and a toast when a limit is first broken (`4535b5d`); the Image's broken
+> limits (`5ae5254`); the Bands dialog's draft (`94710e1`, `b791664`, `9f461e4`). Decision 84 carries the user's
+> rulings of 2026-10-28 and a close-out note naming the commits and where the code says more or less than the rules;
+> decision 73 has a note, decisions 32's and 63's notes of 2026-10-27 are marked; ADR-0001 §4.5 and §5 are noted;
+> `docs/design.md` and GLOSSARY.md follow the code. Open for the user: a toast still covers part of the Results card at
+> 1440 px (story 18), and the PMV pages' input cards end below 780 px. **Next: the frontend review's ticket 05 (N6),
+> then its themes (result table, edition, shell, link) and I9.**
+>
+> **2026-10-28 — position, the result table decided**: ticket 05 (N6) landed as `5483eb3`. The result-table theme
+> (review items R1 to R4) is grilled into ADR-0002 decision 85: the Compliance column goes and each classified output
+> is a column of the model's `table`, first, its category a Band badge; `pmv` and `ppd` are labelled "PMV" and "PPD",
+> `compliance` "Compliance" and `category` "Category"; a violation is an amber icon, `warning` `#d97706`, once per row
+> and no control, its words in its `title`; the table keeps one row per slot. Decisions 8, 66, 83 and 84 and ADR-0001
+> §4.3 are amended; GLOSSARY.md gains **Band badge**; `docs/design.md` follows. **Next: the user's `/to-spec` in
+> `.scratch/result-table/`, then the edition, shell and link themes and I9.**
+>
+> **2026-10-28 — position, the result table done**: `.scratch/result-table/` landed on `rewrite/v1`, tickets 01 to 07:
+> the labels "PMV", "PPD", "Compliance" and "Category" (`b9432b2`); each classified output a column of `table`, first,
+> and the Compliance column gone (`b4621af`); its category a Band badge (`e8a6150`); a violation an amber icon once per
+> row, no control, its words in its `title` (`10bc4e1`); then, after decision 85's amendment of that day (`f7ec7ff`),
+> the Input column in both Compare states with the icon always in it (`c8f75dd`) and the value columns in equal shares
+> under a heading row as tall as its line (`ee09684`). Decision 85 carries a close-out note: Chromium names the icon by
+> its `title`; at 1440 × 900 every PMV heading fits one line, Adaptive's still wrap and its table scrolls; ADR-0001
+> §4.3's notes are marked; `docs/design.md` follows the code. Review items R1, R3 and R4 are done, for the Linear reply. `npm test`
+> passes at 1184 tests and `npm run test:browser` at 122. Open for the user: the icon widens the Input column, so the
+> value columns move by 14 to 16 px when a violation appears, where the amendment says the table does not shift; and
+> whether the Results heading row's right side still reads as empty. **Next: the edition, shell and link themes and
+> I9.**
+>
+> **2026-10-29 — position, the edition done**: `.scratch/edition/` landed on `rewrite/v1`, tickets 01 to 04: the result
+> table's standard caption gone, an Image's Input summary keeping the edition (`04e063b`); a model's standard read from
+> its info's first, no declaration writing one and the PMV runs passing none (`0db1df3`); a standard one edition, named
+> and routed with its year, "ASHRAE 55:2023" and `/standard/ashrae-55-2023/…`, an old-form address opening the default
+> model (`873b175`). Decision 86 carries a close-out note; ADR-0001's `model.standard` sentences are marked; GLOSSARY.md
+> and `docs/design.md` follow the code. Review items O5, N5 and R5 are done, for the Linear reply. `npm test` passes at
+> 1184 tests and `npm run test:browser` at 125. **Next: the shell and link themes and I9.**
+>
+> **2026-10-29 — position, the shell decided**: the shell theme (review items N1, N3, N4, N7 and I5), with the layout
+> points the input gate, the result table and the shell's second grilling left open, is grilled into ADR-0002 decision
+> 87: the sidebar collapses by a toggle first in the header, by the user's hand alone, never by a desktop's width; a
+> phone is a window under 768 px, where the sidebar is the sheet, the cards one column, Documentation in the sheet and
+> the title on two lines; a desktop keeps two columns, the result and chart cards at least `33.5rem`, and scrolls
+> sideways below, the `74.5rem` container query gone; the chart type is a `ChoiceSelect`; the sidebar's group labels
+> are `h2` headings; the pressure is shown in kPa; the entry-mode button reads "Change"; the footer wraps; the Input
+> cell keeps the violation icon's room; the dialog and the toast take the one radius. Decisions 49, 67, 72, 73, 76, 84
+> and 85 are revised; `docs/design.md` follows; GLOSSARY.md is unchanged. **Next: the user's `/to-spec` for the shell,
+> then the link theme and I9.**
+>
+> **2026-10-29 — position, the shell done**: `.scratch/shell-review/` landed on `rewrite/v1`, tickets 01 to 08: the
+> pressure in kPa (`a98a8e0`); the entry group's button "Change", named "Change air speed" (`b2d1e99`); the value
+> columns held still by the Input cell's room (`bee6d5b`); the chart type a `ChoiceSelect` (`852c47d`); the sidebar's
+> groups `h2` headings and the dialog and toast at the one radius (`729ae37`); the toggle first in the header
+> (`cb3d551`); two columns on every desktop, scrolling sideways below 1259 px with the sidebar and 1047 collapsed, one
+> column under 768 px (`e0b3d01`); the header and footer on a phone (`ce0272e`). Decision 87 carries a close-out note:
+> Dynamic's view row is 524.7 px, wider than the chart card's 512 px of content at its floor, so it wraps, and a chart
+> type switch moves the plot, at every desktop window of 1271 px or narrower with the sidebar, not only in 1271 to
+> 1310 px; ADR-0001's three-column sentences are noted;
+> `docs/design.md` follows the code. Review items N1, N3, N4, N7 and I5 are done, for the Linear reply. `npm test`
+> passes at 1184 tests and `npm run test:browser` at 149. Open for the user: a tab through a number box
+> commits its shown text (101 325 Pa becomes 101 330); the footer's text beside the marks at 510 to 640 px. **Next:
+> the link theme and I9.**
+>
+> **2026-10-29 — position, the link decided**: the link theme (review item O7, with open-points B1 and B19 and
+> tidy-later T1, T4 and T16) is grilled into ADR-0002 decision 88: the text, the link's and the kept one alike, is
+> `v1.` and the URL-safe Base64 of the JSON's raw DEFLATE, by `fflate`'s synchronous `deflateSync` and `inflateSync`,
+> the JSON unchanged and every member written (a three-slot link from 1180 characters to about 466, measured); `v1z.`
+> is withdrawn; a text is taken only where the session it reads, written out again, is the text's JSON, so nothing is
+> filled or dropped and the filled notice goes (decision 63's amendment of 2026-10-06 withdrawn; B1 and B19 become
+> refusals); a link holding a value past its bound is refused, not cut; the kept text stays the whole session in
+> `sessionStorage`; the Band list's default is written once (T1); one function holds the walk the codec and the
+> seeding share (T4); T16 is not done. Decision 63 rules 1, 6 and 9 and decision 84 rule 4 are revised; ADR-0001
+> §4.8's `v1z.` is withdrawn; GLOSSARY.md's **Share link** follows rule 5. **Next: the user's `/to-spec` for the link,
+> then I9.**
+>
+> **2026-10-29 — position, the link done**: `.scratch/link/` landed on `rewrite/v1`, tickets 01 to 04: one walk from a
+> model's inputs to the quantities a slot holds them under, read by the codec and the seeding (`08b6a93`, T4); the text
+> deflated, the kept text with it (`fd078ae`); a text taken only where it reads back as written, a session's Band list
+> started in `startingChartSettings`, the filled notice gone (`e3c3585`, T1, B1, B19); a link past a bound refused, not
+> cut (`7ce0186`). Walked on the preview build at 1440 × 900: a three-slot Standard link is 457 characters with the
+> deployed origin and an Explore link with an edited Band list 584, each opening in a new tab as written, and the
+> Standard link cut by 12 characters refused with its one toast. Decision 88 carries a close-out note naming the commits
+> and where the code says more or other than the rules; ADR-0001's Links row, its decision-84 note and §4.8 are noted;
+> GLOSSARY.md's **Applicability** names the refused link. Review item O7 is done, for the Linear reply. `npx vitest run
+> src tests` passes at 1174 and `npm run test:browser` at 148. **Next: I9.**
 
 and the one rule is "**adding a model = one declaration file + one registry line, zero other files change**".
 
@@ -977,6 +1069,9 @@ Everything in `core/entryModes.ts`, `core/libraryInputs.ts`, `core/modelDeclarat
    **Corrected 2026-09-28 (review after Phase 4b, `P023`)**: the reason for 2005 above no longer holds. The library's kernel
    now follows ISO 7730:2025 Annex D, and the library lists 2025 first, so the declaration pins `Standard.iso_7730_2025`
    (Proposal 27; ADR-0002 decision 6 as amended) and the result table captions 2025.
+   **Corrected 2026-10-29 (ADR-0002 decision 86; `.scratch/edition/`)**: no declaration pins an edition. A model's
+   standard is the first its info lists, ISO 7730:2025 for PMV (ISO 7730), `run` passes none, and the result table has
+   no caption: the year is in the standard's name and address.
 4. **The three kinds of applicability** (handed over by the library alignment). `pmv_ppd_iso.limits` now carries rows for
    the derived `p_vap ≤ 2700 Pa` and the output `pmv ∈ [−2, 2]` beside the entered quantities, and `outOfRangeInputs`
    walks entered quantities only, so both are silently ignored — the same hole the library just closed. They cannot
@@ -1327,6 +1422,13 @@ revised, in `.scratch/review-after-4b/decisions.md`): the v1 date no longer cons
    means 101 325 Pa; one whose pressure is out of range shows it as out of range and does not replace it.
    Skipped: `migrate()` (v1 has no source to migrate from; write it in v2) and `v1z.` deflate + `fflate`
    (together with Time-series, see below).
+   **Revised 2026-10-29** (ADR-0002 decision 88): every text is deflated by `fflate` now, the link and the kept text
+   alike, and `v1z.` is withdrawn. Built 2026-10-29 (`.scratch/link/` tickets 01 to 04: `08b6a93`, `fd078ae`,
+   `e3c3585`, `7ce0186`), with these sentences below withdrawn: "Where it can, what a text lacks starts at its default
+   and a key the app does not read is dropped, and a link read so opens with a notice that says so" (a text that does
+   not read back as written is refused), and the Done note's "a filled link's notice waits for the yes" (there is no
+   filled notice). A link holding a value past its bound is refused, not cut. A three-slot link is 457 characters and
+   an Explore link with an edited Band list 584, measured with the deployed origin.
    **Grilled 2026-10-06** (ADR-0002 decision 63; decisions 32, 49, 50, 57 and 59 carry notes of the same day;
    `CONTEXT.md` gains Share link). The item is three things on one format. The session is written out as one text,
    `v1.<Base64URL(JSON)>`, whose schema is decision 63's rule 1 and no longer ADR §4.8's example. The tab keeps the
@@ -1661,7 +1763,8 @@ revision removed the field they read. The four scripts pass at 959 tests and `np
 behind it, so the page is built on the design system.
 **Process**: the grilling decision 57 rule 6 asks for (the page, its own session, the PHS declaration, what the share
 link's text carries for it, and whether `v1z.` deflate is needed, measured first on a link that holds a time series);
-then the library; then spec and tickets.
+then the library; then spec and tickets. **Revised 2026-10-29** (ADR-0002 decision 88): every text is deflated
+already and `v1z.` is withdrawn, so the grilling decides only what the text carries for the page.
 
 1. Library side, first (decision 22): `phs` is 719 lines of JavaScript in the main repository (`src/models/phs.js`)
    with no `_INFO`; it is ported to TypeScript with `PHS_INFO` and what the grilling finds the page needs of it. With
@@ -1674,6 +1777,8 @@ then the library; then spec and tickets.
    not to work around.
 3. The share link: what a Time-series page is computed from (decision 63 rule 1 extended), and `v1z.` only if the
    measured link needs it (decision 63's note: `v1z.` waits for Time-series).
+   **Withdrawn 2026-10-29** (ADR-0002 decision 88): `v1z.` is gone; a Time-series text is `v1.`, deflated as
+   every text is.
 
 **Done criteria**
 - PHS enters as one declaration file + one registry line, judged by `git diff --stat`.
@@ -1728,6 +1833,7 @@ all — Export Link covers them.
 > **Scheduled 2026-10-07** as Phase 5d; the line below is rewritten without Time-series and PHS, and `v1z.` goes to
 > Phase 5d's grilling (it read "the remaining 5 models (heat_index / humidex / wind_chill / PHS / adaptive_en, …) →
 > Time-series + PHS + `v1z.` compression → ES5 summary page …").
+> **Noted 2026-10-29** (ADR-0002 decision 88): `v1z.` is withdrawn; every text is deflated.
 
 **After v1**: local discomfort (ankle draft, vertical air temperature difference) as standalone models under the ASHRAE tab; the remaining models (heat_index / humidex / wind_chill / adaptive_en,
 each = library port + one declaration file + one registry line)
@@ -1766,7 +1872,7 @@ Any transcribed applicability or classification number (they are read from `_INF
 outside `src/temporary-library/` (written to the library's conventions, ADR-0002 decision 24: the PMV zone solver and its
 root finders came from the fork, the solver with its tests, and Adaptive's band solver was written there, calling `adaptive_ashrae`),
 a `Measure` / `Outcome` / `io` layer over the model's own result object, a hand-written name or route segment per standard (generated from `Standard`'s key), `defineModel`,
-`InputCalculator`, `sequentialSimulation`, `evaluateMany`, `migrate()`, `fflate`; on the library side, `Unit` / `InputSpec` /
+`InputCalculator`, `sequentialSimulation`, `evaluateMany`, `migrate()`, `fflate` (withdrawn 2026-10-29 by ADR-0002 decision 88: the codec deflates by it, `fd078ae`); on the library side, `Unit` / `InputSpec` /
 `OptionSpec` / `ModelDefinition` / the `models` registry / a quantities table with labels (they belong to the app); on the app
 side, enum classes.
 

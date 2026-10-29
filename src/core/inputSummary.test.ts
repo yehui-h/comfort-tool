@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Standard } from "jsthermalcomfort";
 import { registeredModels } from "$lib/models";
 import { heatIndexRothfusz } from "$lib/models/heatIndexRothfusz";
 import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
@@ -15,7 +16,7 @@ import { copy } from "$lib/text/copy";
 import { DEFAULT_ATMOSPHERIC_PRESSURE, quantities, quantityFor, type Quantity } from "./quantities";
 import { panelQuantities, startingSlot, withEntryModes, withHumidityMode, withOption, type Slot } from "./slot";
 import { slotNames } from "./slotBadge";
-import { standardCaptionFor } from "./standard";
+import { standardEntryFor } from "./standard";
 import { displayUnitFor, labelWithUnit } from "./units";
 import { unitSystem, type UnitSystem } from "./unitSystem";
 import type { SlotPosition } from "./writtenSession";
@@ -60,16 +61,19 @@ function hasRowOf(lines: readonly string[], quantity: Quantity): boolean {
 
 const [ashraeOption] = optionsOf(pmvPpdAshrae);
 const LOWER_PRESSURE = 90_000;
+/** The default and the lower pressure as a row shows them, in kPa. */
+const DEFAULT_PRESSURE_SHOWN = "101.33";
+const LOWER_PRESSURE_SHOWN = "90";
 
 describe("inputSummary", () => {
   it("of one run on a model's defaults lists the model, its standard, the panel's rows, its options and the pressure, with no slot heading", () => {
     const summary = summaryOf(pmvPpdAshrae, [runOf(startingSlot(pmvPpdAshrae))]);
     expect(summary).toEqual([
-      [copy.summaryModel(pmvPpdAshrae.info.label, standardCaptionFor(pmvPpdAshrae.standard))],
+      [copy.summaryModel(pmvPpdAshrae.info.label, standardEntryFor(Standard.ashrae_55_2023).name)],
       [
         ...inputsOf(pmvPpdAshrae).map(({ quantity, value }) => `${rowOf(quantity)}${formatNumber(value)}`),
         `${ashraeOption.label}: ${copy.no}`,
-        `${rowOf(q.p_atm)}${DEFAULT_ATMOSPHERIC_PRESSURE}`,
+        `${rowOf(q.p_atm)}${DEFAULT_PRESSURE_SHOWN}`,
       ],
     ]);
   });
@@ -150,8 +154,8 @@ describe("inputSummary", () => {
     const [, first, second] = summaryOf(pmvPpdAshrae, [runOf(off), runOf(on, LOWER_PRESSURE)]);
     expect(first).toContain(`${ashraeOption.label}: ${copy.no}`);
     expect(second).toContain(`${ashraeOption.label}: ${copy.yes}`);
-    expect(first).toContain(`${rowOf(q.p_atm)}${DEFAULT_ATMOSPHERIC_PRESSURE}`);
-    expect(second).toContain(`${rowOf(q.p_atm)}${LOWER_PRESSURE}`);
+    expect(first).toContain(`${rowOf(q.p_atm)}${DEFAULT_PRESSURE_SHOWN}`);
+    expect(second).toContain(`${rowOf(q.p_atm)}${LOWER_PRESSURE_SHOWN}`);
   });
 
   it("writes the limits a run broke after its values, under the popover's heading, one line a limit", () => {
@@ -173,7 +177,7 @@ describe("inputSummary", () => {
     expect(run.violations).toEqual([]);
     const [, lines] = summaryOf(pmvPpdIso, [run]);
     expect(lines).not.toContain(copy.limitsBrokenHeading);
-    expect(lines[lines.length - 1]).toBe(`${rowOf(q.p_atm)}${DEFAULT_ATMOSPHERIC_PRESSURE}`);
+    expect(lines[lines.length - 1]).toBe(`${rowOf(q.p_atm)}${DEFAULT_PRESSURE_SHOWN}`);
   });
 
   it("writes, under Compare, each run's own limits after its own values", () => {
@@ -202,7 +206,7 @@ describe("inputSummary", () => {
     expect(last).toHaveLength(1);
     expect(last[0]).toContain(labelWithUnit(scan.output, displayUnitFor(scan.output, si)));
     expect(last[0]).toContain(bands.edges.map(formatNumber).join(", "));
-    expect(summaryOf(pmvPpdIso, [runOf(startingSlot(pmvPpdIso))]).flat().some((line) => line.includes(scan.output.label))).toBe(false);
+    expect(summaryOf(pmvPpdIso, [runOf(startingSlot(pmvPpdIso))]).flat().some((line) => line.includes(rowOf(scan.output)))).toBe(false);
   });
 
   it("holds no result of the model", () => {
@@ -213,7 +217,8 @@ describe("inputSummary", () => {
       for (const key of Object.keys(model.info.outputs)) {
         const output = quantityFor(key);
         if (output && !entered.includes(output)) {
-          expect(lines.some((line) => line.startsWith(`${output.label}`)), `${model.info.label} ${key}`).toBe(false);
+          // A value line, not the label alone: the model line "PMV / PPD (…)" starts with PMV's label.
+          expect(hasRowOf(lines, output), `${model.info.label} ${key}`).toBe(false);
         }
       }
     }

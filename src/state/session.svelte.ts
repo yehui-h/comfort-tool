@@ -1,6 +1,6 @@
 import { SvelteMap } from "svelte/reactivity";
 import type { ClassifierBins } from "jsthermalcomfort";
-import { bandListOf, type BandList } from "$lib/core/bands";
+import type { BandList } from "$lib/core/bands";
 import { shownRow, type Calculator, type CalculatorResult } from "$lib/core/calculators";
 import type { ChartType } from "$lib/core/chartType";
 import type { AirSpeedMode, ClothingMode, HumidityMode, TemperatureMode } from "$lib/core/entryModes";
@@ -164,8 +164,10 @@ export class ChartState {
   type: ChartType;
   /** The dynamic chart's picked axes, its declared ones to begin with; `null` for a model that declares no dynamic chart. */
   axes: ChartAxes | null;
-  /** The classifier the Band list began as, which a draft's Add and Reset read; none for a model that scans nothing. */
+  /** The classifier the Band list began as, which a draft's Add reads; none for a model that scans nothing. */
   readonly #classifier: ClassifierBins | null;
+  /** The Band list the model starts on, which a draft's Reset returns to; none for a model that scans nothing. */
+  readonly #startingBands: BandList | null;
   // Replaced whole, never mutated, so `$state.raw`.
   #bands: BandList | null;
 
@@ -174,8 +176,8 @@ export class ChartState {
     this.type = $state.raw(settings.type);
     this.axes = $state.raw(settings.axes);
     this.#classifier = model.scan?.classifier ?? null;
-    // No list written for a model that scans: a link copied on the Standard page (ADR-0002 decision 63, rule 5).
-    this.#bands = $state.raw(settings.bands ?? (this.#classifier && bandListOf(this.#classifier)));
+    this.#startingBands = startingChartSettings(model).bands;
+    this.#bands = $state.raw(settings.bands);
   }
 
   /** How it is set up, as plain chart settings. */
@@ -208,10 +210,10 @@ export class ChartState {
    * nothing.
    */
   draftBands(): BandListDraft | null {
-    if (!this.#bands || !this.#classifier) {
+    if (!this.#bands || !this.#classifier || !this.#startingBands) {
       return null;
     }
-    return new BandListDraft(this.#bands, this.#classifier, (list) => {
+    return new BandListDraft(this.#bands, this.#startingBands, this.#classifier, (list) => {
       this.#bands = list;
     });
   }

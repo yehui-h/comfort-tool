@@ -15,12 +15,23 @@
   content needs, the row and the bands' contents stand in one frame,
   `--frame-width`, centred in the window (rule 10 as revised again
   2026-10-12). The provider's Cmd/Ctrl+B is stopped at the window, so it
-  writes no cookie (rule 6).
+  writes no cookie (rule 6). On a desktop the header's toggle collapses the
+  sidebar (decision 87, rule 1): the column goes and the inset takes its room
+  in the unchanged frame, as its first child with the gutter on its left; the
+  provider's `open` is never set, as its setter writes a cookie.
 -->
+<script module lang="ts">
+  // Whether the sidebar's column stands on a desktop (decision 87, rule 1). Each page mounts its own frame, so the
+  // module keeps it across a page switch and a rebuild by Reset or a link's yes, and a load opens it; it is not session
+  // state, so no storage entry and no share link holds it.
+  let sidebarOpen = $state(true);
+</script>
+
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { copy } from "$lib/text/copy";
   import * as Card from "$lib/ui/primitives/card";
+  import { IsMobile } from "$lib/ui/primitives/hooks/is-mobile.svelte";
   import * as Sidebar from "$lib/ui/primitives/sidebar";
   import { SIDEBAR_KEYBOARD_SHORTCUT } from "$lib/ui/primitives/sidebar/constants";
   import AppSidebar from "./AppSidebar.svelte";
@@ -48,10 +59,14 @@
 
   const id = $props.id();
 
+  // A phone, the sidebar primitive's own check (decision 87, rule 2): the frame renders the provider, so it cannot
+  // read the provider's state, and asks the class that state asks.
+  const isMobile = new IsMobile();
+
   // The tool sets no cookie (decision 73, rule 6), and the sidebar provider's Cmd/Ctrl+B writes `sidebar_state`
-  // whatever its `open`, at a width where the sidebar never collapses. The key stops at the window, before the
-  // provider's listener hears it, and does what the browser does with it; below `md` it no longer opens the sheet,
-  // which the trigger does.
+  // whatever its `open`, and the header's toggle alone collapses the sidebar (decision 87, rule 1). The key stops at
+  // the window, before the provider's listener hears it, and does what the browser does with it; below `md` it no
+  // longer opens the sheet, which the toggle does.
   function stopSidebarShortcut(event: KeyboardEvent) {
     if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey)) event.stopPropagation();
   }
@@ -67,20 +82,26 @@
 <!--
   The frame: the sidebar and the main area's `76rem`, the main area's width at
   1440 px, so a wide monitor keeps those proportions (decision 73, rule 10 as
-  revised again 2026-10-12).
+  revised again 2026-10-12). The result and chart column's least width is the
+  plot at its cap with the chart card's padding on both sides (decision 87,
+  rule 3). On a desktop the page is at least as wide as its content needs, so
+  a narrower window scrolls it sideways and the header's and footer's bands
+  run under the whole of it.
 -->
-<Sidebar.Provider class="flex-col" style="--sidebar-width: 14rem; --frame-width: calc(var(--sidebar-width) + 76rem);">
-  <SiteHeader {mark} />
+<Sidebar.Provider
+  class={["flex-col", !isMobile.current && "min-w-min"]}
+  style="--sidebar-width: 14rem; --frame-width: calc(var(--sidebar-width) + 76rem); --result-column-min: calc(var(--plot-width) + 2 * var(--space-page));"
+>
+  <SiteHeader {mark} bind:sidebarOpen />
 
   <div class="mx-auto flex w-full max-inline-(--frame-width) flex-1">
-    <AppSidebar {navigation} {sessionControls} />
+    <AppSidebar open={sidebarOpen} {navigation} {sessionControls} />
     <!--
-      The inset is the block's content area, the page's `main`, on the ground,
-      and a container: two columns, the input card and the results and the
-      chart beside them, while it is at least `74.5rem` wide, the input card,
-      the chart card's plot and the legend's basis with their gaps (decision
-      73, rule 10, the sum recomputed by decision 84, rule 12); one column
-      below, the input card above the others at the left. The input card is
+      The inset is the block's content area, the page's `main`, on the ground:
+      on a desktop two columns at every width, the input card and the results
+      and the chart beside them, the latter alone shrinking as the window
+      narrows, down to its least width (decision 87, rule 3); on a phone one column, the
+      input card above the others (rule 2). The input card is
       `28.75rem` at every width, the narrowest at which three slots show
       Presets beside a four-character value
       (`.scratch/input-gate/issues/04-…md` Comments); its column is `auto`,
@@ -88,12 +109,16 @@
       gutter is the spacing token on three sides; on the fourth the sidebar's
       own insets make it, so its fills stand that far from the cards and its
       first group label's top is level with theirs. Below `md` the sidebar is
-      a sheet out of the row, the inset its first child, and the token makes
-      the fourth side too.
+      a sheet out of the row, and on a desktop collapsed it is not rendered:
+      the inset is then the row's first child, and the token makes the fourth
+      side too.
     -->
-    <Sidebar.Inset class="@container min-w-0 bg-transparent first:pl-(--space-page)">
+    <Sidebar.Inset class="min-w-0 bg-transparent first:pl-(--space-page)">
       <div
-        class="grid grid-cols-[minmax(0,1fr)] items-start gap-(--space-page) p-(--space-page) pl-0 @min-[74.5rem]:grid-cols-[auto_minmax(0,1fr)]"
+        class={[
+          "grid items-start gap-(--space-page) p-(--space-page) pl-0",
+          isMobile.current ? "grid-cols-[minmax(0,1fr)]" : "grid-cols-[auto_minmax(var(--result-column-min),1fr)]",
+        ]}
       >
         <Card.Root class="w-[28.75rem]">
           <Card.Header class="items-center">
@@ -138,13 +163,16 @@
     A band of the brand as the header is (decision 73, rule 5): decision 67
     rule 6's two lines at the left, its links in the band's white and
     underlined, as the CBE tools' footers draw them; the two marks at the
-    right, each a link to its institution; the two sides in the frame.
+    right, each a link to its institution; the two sides in the frame. The
+    text narrows first, from no width of its own; where its longest word and
+    the marks no longer fit side by side, the row wraps and the marks stand
+    under it (decision 87, rule 8).
   -->
   <footer
     class="bg-(--brand) text-(length:--font-size-caption) text-background [&_a]:text-background [&_a]:underline [&_a]:underline-offset-2 [&_a]:[--ring:var(--background)]"
   >
-    <div class="mx-auto flex max-inline-(--frame-width) items-center justify-between gap-(--space-page) p-(--space-page)">
-      <div>
+    <div class="mx-auto flex max-inline-(--frame-width) flex-wrap items-center justify-between gap-(--space-page) p-(--space-page)">
+      <div class="flex-1">
         <p>
           {copy.footerTool(copy.appTitle, __APP_VERSION__)}
           {@render separator()}
