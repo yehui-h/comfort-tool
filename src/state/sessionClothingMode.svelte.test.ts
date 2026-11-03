@@ -22,7 +22,16 @@ import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
 import { pmvPpdIso } from "$lib/models/pmvPpdIso";
 import { Outputs } from "./compute.svelte";
 import { Session, slotPositions } from "./session.svelte";
-import { heldSlot, listedRowsOf, outOfRangeQuantitiesAt, sessionComparingThreeSlots, shapeOf } from "./sessionTestReaders";
+import {
+  differenceFromSlot1,
+  enterSlot1ValuesInOthers,
+  heldSlot,
+  listedRowsOf,
+  outOfRangeQuantitiesAt,
+  sessionComparingThreeSlots,
+  shapeOf,
+  shownDifferences,
+} from "./sessionTestReaders";
 
 const q = quantities;
 
@@ -44,7 +53,7 @@ const corrections = [
 ] as const;
 
 function threeDifferentSlots(model: RegisteredModel): Session {
-  const session = sessionComparingThreeSlots(model);
+  const session = enterSlot1ValuesInOthers(sessionComparingThreeSlots(model));
   slotPositions.forEach((position) => {
     const { clo, v, met } = entriesOfSlot[position];
     heldSlot(session, position).setEntered(q.clo, clo);
@@ -191,9 +200,10 @@ describe("the session's clothing entry mode", () => {
     });
   });
 
-  it("converts a slot that holds values and is not compared, and hands a slot first enabled slot 1's mode", () => {
+  it("converts a slot that holds values and is not compared, and hands a slot first enabled slot 1's mode, its dynamic clothing moved by its Slot offset", () => {
     const session = new Session(pmvPpdAshrae);
     session.setCompare(true);
+    enterSlot1ValuesInOthers(session);
     heldSlot(session, 1).setEntered(q.met, 2);
     session.setSlotEnabled(1, false);
 
@@ -201,8 +211,10 @@ describe("the session's clothing entry mode", () => {
     session.setSlotEnabled(2, true);
 
     expect(heldSlot(session, 1).values.get(q.clo_dynamic)).toBe(clo_dynamic_ashrae(0.5, 2));
-    expect(shapeOf(heldSlot(session, 2))).toEqual(shapeOf(session.slots[0]));
     expect(heldSlot(session, 2).clothing.mode).toBe(clothingMode.corrected);
+    expect(differenceFromSlot1(session, 2)).toEqual(
+      shownDifferences([q.tdb, 3], [q.tr, 3], [q.v, 0.2], [q.met, 0.3], [q.clo_dynamic, 0.22]),
+    );
   });
 
   it.each([

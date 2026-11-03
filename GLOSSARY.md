@@ -4,6 +4,8 @@ A front-end that declares thermal-comfort models, takes their inputs, and render
 
 ## Language
 
+_Avoid_ lists bind prose and copy, not identifiers.
+
 **Quantity**:
 A physical quantity a model or an input calculator takes or returns, defined once in the app's table with the library's key, a kind and a label. Referenced by object identity, never by its key string outside the library boundary.
 _Avoid_: variable, field, parameter
@@ -77,12 +79,16 @@ The text in a number box from the first keystroke until it is committed: after a
 _Avoid_: pending value, uncommitted input
 
 **Slot**:
-One set of values to run a model on: what describes one air and one occupant, a value per quantity entered for the model, held in the entry mode it was entered in, and the options. It belongs to no model: it keeps what it holds across a model switch, and holds no humidity until a model or the user gives one. A session holds three. They are named by position, "Input 1" to "Input 3", while Compare is on; otherwise the one slot has no name, and reads "Input" where a word is needed. A slot that has never been enabled holds nothing until it is, when it takes what slot 1 holds. The test for what is a slot's: two slots could differ on it and the page would still read as one row, one chart and one table. What fails the test is the session's.
+One set of values to run a model on: what describes one air and one occupant, a value per quantity entered for the model, held in the entry mode it was entered in, and the options. It belongs to no model: it keeps what it holds across a model switch, and holds no humidity until a model or the user gives one. A session holds three. They are named by position, "Input 1" to "Input 3", while Compare is on; otherwise the one slot has no name, and reads "Input" where a word is needed. A slot that has never been enabled holds nothing until it is, when it takes what slot 1 holds, moved by its Slot offset. The test for what is a slot's: two slots could differ on it and the page would still read as one row, one chart and one table. What fails the test is the session's.
 _Avoid_: scenario, case, column, inputs (those are what a model takes)
 
 **Compare**:
 Showing up to three slots side by side on the Standard page, each with its own result, its own comfort zones and its own marker. It is on or off. Slot 1 is always compared; slots 2 and 3 are each enabled by the person, and are compared while Compare is on and they are enabled. No slot is a reference for the others.
 _Avoid_: baseline, active slot, scenario
+
+**Slot offset**:
+How far slot 2 or slot 3 starts from slot 1's values when it is first enabled: each value moved by a share of its quantity's axis range, one share for slot 2 and two for slot 3, by one rule for every model, so that the compared slots' markers do not start on top of each other. The humidity and the options start as slot 1's.
+_Avoid_: delta, variation, default (that is the model's starting value)
 
 **Session**:
 What makes three slots one table, shared by the Standard and Explore pages: the model they run; the conventions they are read under (the unit system, one entry mode per entry group); the air they share (the atmospheric pressure); which of them are shown (whether Compare is on, and whether slots 2 and 3 are each enabled); and the chart settings and the Band list, remembered per model. A quantity a model names that the session holds is filled from the session, not entered in the slot. A session lasts as long as its tab, where the browser allows storage: it survives a reload and an address typed into the tab, and is replaced only on the person's yes, by a share link opened in the tab or by Reset, which returns it to what a new tab at the same address would show.

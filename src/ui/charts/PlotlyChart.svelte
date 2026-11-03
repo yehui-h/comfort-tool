@@ -7,7 +7,7 @@
     // plotly 4 shows the Chart Studio upload button by default (ADR §2.1).
     showSendToCloud: false,
     // `toImage` goes too: Plotly's own PNG would come out without the legend,
-    // which is markup of its own beside the plot. Export image draws a figure of its own,
+    // which is markup of its own above the plot. Export image draws a figure of its own,
     // legend included (`plotlyImage.ts`).
     modeBarButtonsToRemove: [
       "toImage",
@@ -59,10 +59,16 @@
     };
   }
 
+  // The viewport revision of the figure on the node; read by the effect only,
+  // so not state.
+  let drawnRevision: unknown;
+
   // Plotly is an external system, so synchronising it is what $effect is for
   // (ADR §6). `react` draws the plot on a node that holds none (plotly.js
   // 4.0.0 hands it to `newPlot`), and afterwards diffs against the drawn
-  // figure and keeps the viewport.
+  // figure and keeps the viewport. Reset axes returns to the ranges saved
+  // when the plot was drawn on an empty node, which `react` never saves
+  // again; so a figure with a new viewport revision is drawn on an emptied node.
   $effect(() => {
     const data = toPlotlyData(spec);
     const layout = toPlotlyLayout(spec);
@@ -70,6 +76,10 @@
     const api = plotly;
     if (!node || !api) {
       return;
+    }
+    if (layout.uirevision !== drawnRevision) {
+      api.purge(node);
+      drawnRevision = layout.uirevision;
     }
     void api.react(node, data, layout, plotlyConfig);
   });

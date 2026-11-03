@@ -25,6 +25,7 @@ import {
   withEnteredValues,
   withHumidityMode,
   withOption,
+  withSlotOffset,
   withTemperatureMode,
   type Slot,
   type ValueEntryModes,
@@ -370,12 +371,16 @@ export class Session {
 
   /**
    * Enable or disable the slot at `position`. A slot enabled for the first
-   * time takes a copy of what slot 1 holds now, entry modes and options
-   * included; a slot enabled again holds what it held.
+   * time takes what slot 1 holds now, entry modes and options included, each
+   * value moved by its Slot offset, one share of its axis range per position
+   * past slot 1, and is cut to its bounds as an arrival is (ADR-0002 decision
+   * 89's revision of rule 8). It raises no notice for the cut, as an entry
+   * cut raises none. A slot enabled again holds what it held.
    */
   setSlotEnabled(position: OptionalSlotPosition, enabled: boolean): void {
     if (enabled && this.#slots[position] === null) {
       const copy = new InputSlot(this.#slots[0]);
+      this.#replaceCut(copy, withSlotOffset(copy, this.model, position));
       const [first, second, third] = this.#slots;
       this.#slots = position === 1 ? [first, copy, third] : [first, second, copy];
     }
@@ -394,7 +399,8 @@ export class Session {
    * (`WrittenSession`); the session changes a mode in every held slot at once
    * ({@link setTemperatureMode}, {@link setAirSpeedMode},
    * {@link setClothingMode}, {@link setHumidityMode}); a slot first
-   * enabled copies slot 1 ({@link setSlotEnabled}); a switch puts every held
+   * enabled takes slot 1's entry modes ({@link setSlotEnabled}), its Slot
+   * offset moving values alone; a switch puts every held
    * slot through one rehearsal, which reads the slot's modes, the model and
    * the model left ({@link #rehearse}); and the input panel enters a value
    * only in a row of the modes the slot is in, where
@@ -447,7 +453,7 @@ export class Session {
    * compared or not, is converted by `withTemperatureMode` at its own values,
    * weighed by the session's model, and cut to its bounds
    * ({@link #replaceCut}). A slot never enabled holds nothing and takes the mode
-   * when it copies slot 1.
+   * from slot 1 when it is first enabled.
    */
   setTemperatureMode(mode: TemperatureMode): void {
     for (const slot of this.#heldSlots()) {
@@ -671,7 +677,8 @@ export class Session {
    * its bound at the session's model and pressure, read at the entries as
    * cut (ADR-0002 decision 84, rules 4 and 5), and answer whether it cut
    * anything. An arrival lands so, and an entry-mode switch, as a conversion
-   * can carry an entry past a bound the mode it left did not hold it to.
+   * can carry an entry past a bound the mode it left did not hold it to, and
+   * a slot first enabled, as a Slot offset can.
    */
   #replaceCut(slot: InputSlot, held: Slot): boolean {
     const rows = settledOutOfRangeRows(held, this.model, this.atmosphericPressure);

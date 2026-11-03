@@ -29,7 +29,11 @@ export const copy = {
   // The header's first control, which collapses the sidebar, is named for it (decision 87, rule 1).
   sidebar: "Sidebar",
   documentation: "Documentation",
-  documentationAddress: `${REPOSITORY}/blob/main/docs/user-guide.md`,
+  // The user guide on the rewrite's branch, where it lives until the rewrite reaches `main` (the rewrite plan's
+  // Phase 6 item 6 points it back).
+  documentationAddress: `${REPOSITORY}/blob/rewrite/v1/docs/user-guide.md`,
+  // The words that end a link to another site, a screen reader's alone (ADR-0002 decision 89, rule 2).
+  opensInNewTab: "(opens in a new tab)",
   libraryName: LIBRARY_NAME,
   licence: "Licence",
   licenceAddress: REPOSITORY,
@@ -207,8 +211,8 @@ export const copy = {
   // A chart's legend entry or readout line of one slot, while the slots are named.
   slotEntry: (slotName: string, entry: string) => `${slotName} · ${entry}`,
   chart: "Chart",
-  // The chart type select's name, on the chart card's view row with no visible label (ADR-0002 decision 73, rule 8, as
-  // revised by decision 87, rule 4).
+  // The chart type select's name, in the chart card's heading row with no visible label (ADR-0002 decision 87, rule 4,
+  // as revised by decision 89, rule 6).
   chartType: "Chart type",
   xAxis: "X axis",
   yAxis: "Y axis",

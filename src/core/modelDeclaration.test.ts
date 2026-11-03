@@ -2,7 +2,7 @@
  * What a declaration says about itself: the name its model info gives it,
  * unique across the registry; the standard that model info lists first, for
  * every registered model; the table columns it lists;
- * the charts it offers; the input calculators its rows offer; and the axis
+ * the charts it offers; the input calculators its rows offer; the axis
  * range a chart reads off it. What its `run` does is the sibling
  * `modelDeclarationRun.test.ts`'s.
  */
@@ -378,6 +378,18 @@ describe("axisRanges", () => {
     expect(declared).toContain(q.operative_tmp);
     expect(declared).not.toContain(q.tdb);
     expect(() => expectEveryModeAxisRangeBesideTheDefaultModes(adaptiveAshrae)).not.toThrow();
+  });
+
+  it("end PMV (ISO 7730)'s dry-bulb and operative temperatures at its 30 °C entry bound, its mean radiant temperature at 40 °C", () => {
+    expect(axisRangeFor(pmvPpdIso, q.tdb)).toEqual({ min: 10, max: 30 });
+    expect(axisRangeFor(pmvPpdIso, q.operative_tmp)).toEqual({ min: 10, max: 30 });
+    expect(axisRangeFor(pmvPpdIso, q.tr)).toEqual({ min: 10, max: 40 });
+  });
+
+  it("leave PMV (ASHRAE 55)'s temperatures at 10 to 40 °C", () => {
+    for (const quantity of [q.tdb, q.operative_tmp, q.tr]) {
+      expect(axisRangeFor(pmvPpdAshrae, quantity), quantity.label).toEqual({ min: 10, max: 40 });
+    }
   });
 
   it("draw PMV (ISO 7730)'s relative air speed as far as its air speed", () => {

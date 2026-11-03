@@ -1,8 +1,9 @@
 /**
  * What a slot holds; the entry groups held among its values and the rules
  * over them; the functions that read what the person entered, enter values,
- * set an option, convert an entry mode, seed a model's defaults and build the
- * slot a model starts on; and the get-or-throws they read through.
+ * add a Slot offset, set an option, convert an entry mode, seed a model's
+ * defaults and build the slot a model starts on; and the get-or-throws they
+ * read through.
  * Turning a slot into the library's params is `core/libraryInputs.ts`'s and
  * adjusting it to bounds `core/modelSwitch.ts`'s; both depend on this module,
  * and this module on neither.
@@ -22,6 +23,7 @@ import {
   type ValueEntryMode,
 } from "./entryModes";
 import {
+  axisRangeFor,
   clothingCorrectionOf,
   hasClothingGroup,
   hasHumidityGroup,
@@ -512,6 +514,34 @@ export function withEnteredValues(slot: Slot, overrides: ReadonlyMap<Quantity, n
     }
   }
   return changedSlot(slot, { values, humidity });
+}
+
+/**
+ * The share of a quantity's axis range a slot first enabled is moved by, per
+ * position past slot 1: the app's policy, not a library constant
+ * (GLOSSARY.md, **Slot offset**).
+ */
+const SLOT_OFFSET_SHARE = 1 / 20;
+
+/**
+ * The same slot with each value it holds moved up by `shares` times
+ * {@link SLOT_OFFSET_SHARE} of its quantity's axis range on `model`
+ * ({@link axisRangeFor}): the Slot offset (GLOSSARY.md) of a slot first
+ * enabled, one share for slot 2 and two for slot 3 (ADR-0002 decision 89's
+ * revision of rule 8). A value whose quantity has no axis range on `model`,
+ * as one only another model names, is left. Humidity is held apart from the
+ * values, so no share reaches it; nor the options or the entry modes. Nothing
+ * is cut here; the session cuts the slot it lands.
+ */
+export function withSlotOffset(slot: Slot, model: RegisteredModel, shares: number): Slot {
+  const values = new Map(slot.values);
+  for (const [quantity, value] of slot.values) {
+    const range = axisRangeFor(model, quantity);
+    if (range) {
+      values.set(quantity, value + shares * SLOT_OFFSET_SHARE * (range.max - range.min));
+    }
+  }
+  return changedSlot(slot, { values });
 }
 
 /** The same slot with `option` set to `value`: how the person ticks an option. */

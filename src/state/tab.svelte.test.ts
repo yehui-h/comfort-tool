@@ -14,13 +14,26 @@ import { toText } from "$lib/core/shareLink";
 import { unitSystem } from "$lib/core/unitSystem";
 import { startingChartSettings, startingSession } from "$lib/core/writtenSession";
 import { registeredModels } from "$lib/models";
+import { adaptiveAshrae } from "$lib/models/adaptiveAshrae";
 import { heatIndexRothfusz } from "$lib/models/heatIndexRothfusz";
 import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
 import { pmvPpdIso } from "$lib/models/pmvPpdIso";
 import { writeKeptText } from "./keptText";
 import type { Notice } from "./openSession";
 import type { Session } from "./session.svelte";
-import { addressOf, editBands, heldSlot, keptTextOf, lackingLinkTextOf, linkSessionOf, openedOn, outOfRangeRowsOf, sessionComparingThreeSlots } from "./sessionTestReaders";
+import {
+  addressOf,
+  differenceFromSlot1,
+  editBands,
+  heldSlot,
+  keptTextOf,
+  lackingLinkTextOf,
+  linkSessionOf,
+  openedOn,
+  outOfRangeRowsOf,
+  sessionComparingThreeSlots,
+  sharesAtDefaults,
+} from "./sessionTestReaders";
 import { Tab } from "./tab.svelte";
 
 const q = quantities;
@@ -258,5 +271,34 @@ describe("Reset (ADR-0002 decision 63, rule 8)", () => {
 
       expect(outOfRangeRowsOf(openSessionOf(tab)), model.info.label).toEqual([]);
     }
+  });
+
+  it.each([pmvPpdAshrae, pmvPpdIso, adaptiveAshrae])(
+    "on $info.label, returns slots 2 and 3 to never enabled, so the next switch-on of Compare moves slot 2 from slot 1 by its Slot offset again",
+    (model) => {
+      writeKeptText(keptTextOf(keptSession()));
+      const { tab } = recordingTab();
+      tab.arrive(standardAddress(model), undefined);
+
+      tab.reset();
+      const session = openSessionOf(tab);
+      session.setCompare(true);
+
+      expect(differenceFromSlot1(session, 1)).toEqual(sharesAtDefaults(model, 1));
+    },
+  );
+});
+
+describe("a share link with three compared slots, at a tab with nothing kept", () => {
+  it.each([pmvPpdAshrae, pmvPpdIso])("on $info.label, opens each slot as the sender had it, moved by no Slot offset", (model) => {
+    const sender = sessionComparingThreeSlots(model);
+    heldSlot(sender, 2).setEntered(q.tdb, 21);
+    const { tab } = recordingTab();
+
+    tab.arrive(addressOf(sender), toText(linkSessionOf(sender), registeredModels));
+
+    const opened = openSessionOf(tab);
+    expect(opened.comparedPositions).toEqual([0, 1, 2]);
+    expect(opened.toWrittenSession().slots).toEqual(sender.toWrittenSession().slots);
   });
 });

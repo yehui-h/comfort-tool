@@ -1,9 +1,11 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
 
 /**
  * The page answers the window (ADR-0002 decision 73, rule 10): at one width,
- * a click moves no region and not the plot; the legend stands beside the plot
- * while the room there holds its basis; a desktop keeps two columns and
+ * a click moves no region, and the plot only down or back by a row that comes
+ * or goes; the legend stands above the plot, which fills the chart card
+ * (decision 89, rules 3 and 4); a desktop keeps two columns and
  * scrolls sideways where they do not fit, and a phone, the sidebar
  * primitive's check, stands the cards in one column (decision 87, rules 2 and
  * 3); the sidebar is the
@@ -23,6 +25,11 @@ const ISO_ADDRESS = "/standard/iso-7730-2025/pmv-ppd-iso";
 const EXPLORE_ADDRESS = "/explore/pmv-ppd-ashrae";
 /** PMV (ISO 7730) on Explore, which draws the same result table as Standard. */
 const ISO_EXPLORE_ADDRESS = "/explore/pmv-ppd-iso";
+
+/** The words that end a link to another site, a screen reader's alone (ADR-0002 decision 89, rule 2). */
+const NEW_TAB = "(opens in a new tab)";
+/** Documentation's whole accessible name, in the header and in the sheet. */
+const DOCUMENTATION = `Documentation ${NEW_TAB}`;
 
 /** A box as the test compares it: where it starts and how wide it is, its height being its content's. */
 interface Box {
@@ -44,6 +51,15 @@ interface Boxes {
 
 function card(page: Page, heading: string) {
   return page.locator('[data-slot="card"]').filter({ has: page.getByRole("heading", { name: heading, exact: true }) });
+}
+
+/** Where an element's content starts and ends across: its box less its padding on each side. */
+function contentEdgesOf(locator: Locator) {
+  return locator.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return { left: box.left + parseFloat(style.paddingLeft), right: box.right - parseFloat(style.paddingRight) };
+  });
 }
 
 async function boxOf(locator: Locator) {
@@ -76,7 +92,8 @@ async function boxes(page: Page): Promise<Boxes> {
  * footer's apart from its height on the page, which follows the content's;
  * the plot's start and size. Compare may move the plot down, by the Results
  * card's new rows (the user's call, `.scratch/shell/issues/09-…md`
- * Comments), so its check leaves the plot's `y` out.
+ * Comments), and a chart with axes by its view row (decision 89, rule 6), so
+ * their checks leave the plot's `y` out.
  */
 function inPlace({ header, sidebar, inputs, results, footer, plot }: Boxes, plotMayDrop = false) {
   return {
@@ -89,9 +106,9 @@ function inPlace({ header, sidebar, inputs, results, footer, plot }: Boxes, plot
   };
 }
 
-/** Whether the legend is a column to the plot's right, at the plot's height. */
-function isLegendBesidePlot({ plot, legend }: Boxes) {
-  return legend.x >= plot.x + plot.width && legend.y < plot.y + plot.height && legend.y + legend.height > plot.y;
+/** Whether the legend is a row above the plot, from the plot's left edge and no wider than it (decision 89, rule 3). */
+function isLegendAbovePlot({ plot, legend }: Pick<Boxes, "plot" | "legend">) {
+  return legend.y + legend.height <= plot.y && Math.abs(legend.x - plot.x) < 0.5 && legend.width <= plot.width;
 }
 
 /** The page's width: the root's box, the window less the scrollbar's gutter. */
@@ -116,18 +133,18 @@ async function chooseChartType(page: Page, name: string) {
 }
 
 /**
- * Records the boxes as they are, with the legend beside the plot; the check
+ * Records the boxes as they are, with the legend above the plot; the check
  * it returns runs a click, which waits for its own effect, and expects the
  * page to settle with every held box where it was and the legend still
- * beside the plot.
+ * above the plot.
  */
 async function holdBoxes(page: Page) {
   const before = await boxes(page);
-  expect(isLegendBesidePlot(before)).toBe(true);
+  expect(isLegendAbovePlot(before)).toBe(true);
   return async (click: () => Promise<void>, plotMayDrop = false) => {
     await click();
     await expect.poll(async () => inPlace(await boxes(page), plotMayDrop)).toEqual(inPlace(before, plotMayDrop));
-    expect(isLegendBesidePlot(await boxes(page))).toBe(true);
+    expect(isLegendAbovePlot(await boxes(page))).toBe(true);
   };
 }
 
@@ -136,12 +153,6 @@ async function holdBoxes(page: Page) {
  * Playwright's Chromium: the page is the window less it.
  */
 const SCROLLBAR_GUTTER = 15;
-/**
- * The narrowest window with the legend beside the plot: the main area's
- * `74.5rem`, the input card, the plot and the legend's basis with their gaps
- * and the cards' padding; the `14rem` sidebar; and the gutter.
- */
-const LEGEND_BESIDE_FROM = (74.5 + 14) * 16 + SCROLLBAR_GUTTER;
 
 /** Whether the result and chart cards stand to the input card's right, their tops level, not under it. */
 async function isResultBesideInputs(page: Page) {
@@ -162,8 +173,10 @@ function scrollsSideways(page: Page) {
   });
 }
 
-for (const width of [1440, LEGEND_BESIDE_FROM]) {
-  test(`at ${width} px, on PMV in two columns, no click moves a region, only Compare moves the plot down, and the legend stays beside it`, async ({ page }) => {
+// 1440 px, and 1280 px, the narrowest desktop width here that does not scroll sideways (a click's scroll into view
+// would move every box), the plot there 533 px wide, just wider than the cap's 4:3.
+for (const width of [1440, 1280]) {
+  test(`at ${width} px, on PMV in two columns, no click moves a region, only Compare and Dynamic's view row move the plot down, and the legend stays above it`, async ({ page }) => {
     await openStandard(page, width);
     expect(await isResultBesideInputs(page)).toBe(true);
     const expectInPlace = await holdBoxes(page);
@@ -212,10 +225,12 @@ for (const width of [1440, LEGEND_BESIDE_FROM]) {
       await expect(toast).toHaveCount(0);
     });
 
+    const psychrometricPlot = (await boxes(page)).plot;
     await expectInPlace(async () => {
       await chooseChartType(page, "Dynamic");
       await expect(page.getByLabel("X axis")).toBeVisible();
-    });
+    }, true);
+    expect((await boxes(page)).plot.y).toBeGreaterThan(psychrometricPlot.y);
     await expectInPlace(async () => {
       await chooseChartType(page, "Psychrometric");
       await expect(page.getByLabel("X axis")).toHaveCount(0);
@@ -251,15 +266,13 @@ for (const width of [1440, LEGEND_BESIDE_FROM]) {
 /**
  * A desktop keeps two columns at every width (decision 87, rule 3): on a
  * laptop with the sidebar open the result and chart cards stand beside the
- * input card, the legend under the plot where the room beside it is too
- * narrow, and Compare moves neither card sideways.
+ * input card, and Compare moves neither card sideways.
  */
 for (const width of [1366, 1280]) {
   test(`at ${width} px, the result card is beside the input card, nothing scrolls sideways, and Compare off and on move neither card sideways`, async ({ page }) => {
     await openStandard(page, width);
     expect(await isResultBesideInputs(page)).toBe(true);
     expect(await scrollsSideways(page)).toBe(false);
-    expect(isLegendBesidePlot(await boxes(page))).toBe(false);
     const horizontalBoxes = async () => {
       const { inputs, results } = await boxes(page);
       return { inputs: { x: inputs.x, width: inputs.width }, results: { x: results.x, width: results.width } };
@@ -284,9 +297,230 @@ test("at 1024 px, the page scrolls sideways and the result and chart column is 3
 
   const { results, plot } = await boxes(page);
   expect(results.width).toBe(33.5 * 16);
-  // The plot at its cap, `24rem` tall, at 4:3.
+  // The column at its least, so the plot is at 4:3 and the cap, `24rem`, tall.
   expect({ width: plot.width, height: plot.height }).toEqual({ width: 32 * 16, height: 24 * 16 });
 });
+
+/** The chart card's plot and legend boxes, and where its content starts and ends across. */
+async function chartAreaOf(page: Page) {
+  const chart = card(page, "Chart");
+  return {
+    plot: await boxOf(chart.locator(".chart-plot")),
+    legend: await boxOf(chart.locator(".chart-legend")),
+    content: await contentEdgesOf(chart.locator('[data-slot="card-content"]')),
+  };
+}
+
+// The legend is a row above the plot, and the plot fills the chart card's content width at a height of
+// `min(width × 3/4, 24rem)` (ADR-0002 decision 89, rules 3 and 4), on both pages.
+for (const address of [PMV_ADDRESS, EXPLORE_ADDRESS]) {
+  test(`at 1440 × 900 on ${address}, the legend stands above a plot that fills the card, 384 px tall, with the sidebar open and collapsed`, async ({ page }) => {
+    await openStandard(page, 1440, address);
+    const open = await chartAreaOf(page);
+    expect(isLegendAbovePlot(open)).toBe(true);
+    expect(open.plot.x).toBeCloseTo(open.content.left, 0);
+    expect(open.plot.x + open.plot.width).toBeCloseTo(open.content.right, 0);
+    expect(open.plot.height).toBe(24 * 16);
+
+    await sidebarToggle(page).click();
+    await expect.poll(async () => (await chartAreaOf(page)).plot.width).toBeGreaterThan(open.plot.width);
+    const collapsed = await chartAreaOf(page);
+    expect(isLegendAbovePlot(collapsed)).toBe(true);
+    expect(collapsed.plot.x + collapsed.plot.width).toBeCloseTo(collapsed.content.right, 0);
+    expect(collapsed.plot.height).toBe(24 * 16);
+  });
+}
+
+/**
+ * Where the plot's y tick labels stand against its plot area, Plotly's drag
+ * surface: every one past the area's right edge, every one short of its left
+ * edge, or neither.
+ */
+async function yTicksSideOf(page: Page) {
+  const plot = page.locator(".chart-plot");
+  const area = await boxOf(plot.locator(".nsewdrag"));
+  const ticks = await plot.locator("g.ytick text").evaluateAll((texts) =>
+    texts.map((text) => {
+      const box = text.getBoundingClientRect();
+      return { left: box.left, right: box.right };
+    }),
+  );
+  expect(ticks.length).toBeGreaterThan(0);
+  if (ticks.every((tick) => tick.left >= area.x + area.width)) {
+    return "right";
+  }
+  return ticks.every((tick) => tick.right <= area.x) ? "left" : "neither";
+}
+
+// The psychrometric chart draws the humidity ratio on the right, the Dynamic chart its y axis on the left (ADR-0002
+// decision 89, rule 7), on both pages.
+for (const address of [PMV_ADDRESS, EXPLORE_ADDRESS]) {
+  test(`at 1440 px on ${address}, the psychrometric chart's humidity-ratio ticks stand right of the plot area and the Dynamic chart's y ticks left of it`, async ({ page }) => {
+    await openStandard(page, 1440, address);
+    expect(await yTicksSideOf(page)).toBe("right");
+    await chooseChartType(page, "Dynamic");
+    await expect.poll(() => yTicksSideOf(page)).toBe("left");
+  });
+}
+
+test("at 375 px, the plot fills the card at 4:3", async ({ page }) => {
+  await openStandard(page, 375);
+  const { plot, legend, content } = await chartAreaOf(page);
+  expect(isLegendAbovePlot({ plot, legend })).toBe(true);
+  expect(plot.x + plot.width).toBeCloseTo(content.right, 0);
+  expect(plot.height).toBeCloseTo((plot.width * 3) / 4, 0);
+});
+
+test("at 1440 px with three compared slots, the legend wraps above the plot and every entry is in view", async ({ page }) => {
+  await openStandard(page, 1440);
+  const oneLine = (await chartAreaOf(page)).legend.height;
+  await page.getByRole("switch", { name: "Compare", exact: true }).click();
+  await page.getByRole("button", { name: "Input 3", exact: true }).click();
+  await expect(page.getByRole("row", { name: /^Input 3/ })).toBeVisible();
+
+  const area = await chartAreaOf(page);
+  expect(isLegendAbovePlot(area)).toBe(true);
+  expect(area.legend.height).toBeGreaterThan(oneLine);
+  const entries = card(page, "Chart").locator(".chart-legend li");
+  expect(await entries.count()).toBeGreaterThan(3);
+  for (const entry of await entries.all()) {
+    await expect(entry).toBeInViewport();
+    const box = await boxOf(entry);
+    expect(box.x).toBeGreaterThanOrEqual(area.legend.x);
+    expect(box.x + box.width).toBeLessThanOrEqual(area.legend.x + area.legend.width + 0.5);
+  }
+});
+
+/** A box in an Image's SVG, in its px from the file's top left. */
+interface FileBox {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/** Where an Image's parts land, read off its SVG drawn in a page of its own. */
+interface ImageParts {
+  height: number;
+  /** Plotly's plot area: its axes' clip, in whole px. */
+  plotArea: FileBox;
+  /** Plotly's legend box, padded around its rows. */
+  legend: FileBox;
+  /** What the legend draws: its labels and swatches. */
+  legendInk: FileBox;
+  yTicks: FileBox[];
+  /** From the top tick label to the x axis's title, the plot area with its axes. */
+  chart: FileBox;
+  /** Every annotation drawn outside the plot area: the title, the Input summary and the footer, top to bottom. */
+  textBlocks: FileBox[];
+}
+
+/**
+ * Downloads the chart shown as an SVG Image through Export image's dialog at
+ * `size`, with its default title and the Input summary and footer, or with
+ * neither, and reads its parts.
+ */
+async function downloadedImageOf(page: Page, size: string, titleSummaryAndFooter: boolean): Promise<ImageParts> {
+  await page.getByRole("button", { name: "Export image" }).click();
+  const dialog = page.getByRole("dialog");
+  if (!titleSummaryAndFooter) {
+    await dialog.getByRole("textbox", { name: "Title", exact: true }).fill("");
+  }
+  await dialog.getByRole("radio", { name: size, exact: true }).click();
+  await dialog.getByRole("radio", { name: "SVG", exact: true }).click();
+  await dialog.getByRole("checkbox").setChecked(titleSummaryAndFooter);
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    dialog.getByRole("button", { name: "Download", exact: true }).click(),
+  ]);
+  const svg = readFileSync((await download.path())!, "utf8");
+  const view = await page.context().newPage();
+  try {
+    await view.setContent(`<body style="margin: 0">${svg}</body>`);
+    return await view.evaluate(() => {
+      const boxOf = (element: Element): FileBox => {
+        const { top, bottom, left, right } = element.getBoundingClientRect();
+        return { top, bottom, left, right };
+      };
+      const boxesOf = (selector: string) => [...document.querySelectorAll(selector)].map(boxOf);
+      const extentOf = (boxes: FileBox[]) => ({
+        top: Math.min(...boxes.map((box) => box.top)),
+        bottom: Math.max(...boxes.map((box) => box.bottom)),
+        left: Math.min(...boxes.map((box) => box.left)),
+        right: Math.max(...boxes.map((box) => box.right)),
+      });
+      const clip = document.querySelector('clipPath.axesclip[id$="xy"] rect')!;
+      const [x, y, width, height] = ["x", "y", "width", "height"].map((name) => Number(clip.getAttribute(name)));
+      const plotArea = { top: y, bottom: y + height, left: x, right: x + width };
+      const yTicks = boxesOf("g.ytick text");
+      const xTitle = boxOf(document.querySelector(".g-xtitle text")!);
+      const chartTop = Math.min(plotArea.top, ...yTicks.map((tick) => tick.top));
+      const textBlocks = boxesOf(".annotation-text")
+        .filter((box) => box.bottom <= plotArea.top || box.top >= plotArea.bottom)
+        .sort((a, b) => a.top - b.top);
+      return {
+        height: Number(document.querySelector("svg")!.getAttribute("height")),
+        plotArea,
+        legend: boxOf(document.querySelector("g.legend rect.bg")!),
+        legendInk: extentOf(boxesOf("g.legend .legendtext, g.legend .legendsymbols")),
+        yTicks,
+        chart: { ...plotArea, top: chartTop, bottom: xTitle.bottom },
+        textBlocks,
+      };
+    });
+  } finally {
+    await view.close();
+  }
+}
+
+/** The most room, in px, an Image leaves over its first part and under its last: its margin, no empty band. */
+const IMAGE_EDGE_ROOM = 10;
+
+/** True where `upper` ends at or above `lower`'s top. */
+function isAbove(upper: FileBox, lower: FileBox) {
+  return upper.bottom <= lower.top;
+}
+
+// An Image reads, from the top, the title, the legend, the chart, then the Input summary and the footer, its plot area
+// 4:3 in a single column and 16:9 in a double one, the humidity ratio on the right (ADR-0002 decision 89, rules 3, 5
+// and 7).
+for (const [size, ratio] of [["Single column", 4 / 3], ["Double column", 16 / 9]] as const) {
+  test(`Export image's SVG at ${size}, with no title, summary or footer, is its legend over its plot area at its ratio, the humidity-ratio ticks right of it, with no empty band`, async ({ page }) => {
+    await openStandard(page, 1440);
+    const image = await downloadedImageOf(page, size, false);
+    const { plotArea } = image;
+    const width = plotArea.right - plotArea.left;
+    const height = plotArea.bottom - plotArea.top;
+    expect(Math.abs(height - width / ratio)).toBeLessThanOrEqual(1);
+    expect(isAbove(image.legend, plotArea)).toBe(true);
+    expect(image.textBlocks).toHaveLength(0);
+    expect(image.legendInk.top).toBeLessThanOrEqual(IMAGE_EDGE_ROOM);
+    expect(image.height - image.chart.bottom).toBeLessThanOrEqual(IMAGE_EDGE_ROOM);
+    expect(image.yTicks.length).toBeGreaterThan(0);
+    for (const tick of image.yTicks) {
+      expect(tick.left).toBeGreaterThanOrEqual(plotArea.right);
+    }
+  });
+
+  test(`Export image's SVG at ${size} with three compared slots and the Input summary stands its parts one under another, none overlapping`, async ({ page }) => {
+    await openStandard(page, 1440);
+    await page.getByRole("switch", { name: "Compare", exact: true }).click();
+    await page.getByRole("button", { name: "Input 3", exact: true }).click();
+    await expect(page.getByRole("row", { name: /^Input 3/ })).toBeVisible();
+    const image = await downloadedImageOf(page, size, true);
+
+    // The title, then the summary and the footer.
+    expect(image.textBlocks).toHaveLength(3);
+    const [title, summary, footer] = image.textBlocks;
+    const parts = [title, image.legendInk, image.chart, summary, footer];
+    for (const [upper, lower] of parts.slice(1).map((lower, index) => [parts[index], lower])) {
+      expect(isAbove(upper, lower), JSON.stringify({ upper, lower })).toBe(true);
+    }
+    expect(title.top).toBeLessThanOrEqual(IMAGE_EDGE_ROOM);
+    expect(footer.bottom).toBeLessThanOrEqual(image.height);
+    expect(image.height - footer.bottom).toBeLessThanOrEqual(IMAGE_EDGE_ROOM);
+  });
+}
 
 /**
  * A phone, a window under 768 px, stands the input, result and chart cards
@@ -334,18 +568,6 @@ test.describe("the input card's width", () => {
     } finally {
       await browser.close();
     }
-  });
-
-  test("just narrower than the legend's room beside the plot, the legend goes under it, the result card stays beside the input card, and the input card is as wide and where it was", async ({ page }) => {
-    await openStandard(page, LEGEND_BESIDE_FROM);
-    const above = await boxOf(card(page, "Inputs"));
-
-    await openStandard(page, LEGEND_BESIDE_FROM - 1);
-    const inputs = await boxOf(card(page, "Inputs"));
-
-    expect(isLegendBesidePlot(await boxes(page))).toBe(false);
-    expect(await isResultBesideInputs(page)).toBe(true);
-    expect({ x: inputs.x, width: inputs.width }).toEqual({ x: above.x, width: above.width });
   });
 
   test("with Compare on and three slots, every Presets reads Presets and no four-character value beside it is cut off", async ({ page }) => {
@@ -409,7 +631,7 @@ async function frame(page: Page) {
     inside: {
       width: frameEnd - frameStart,
       markFromStart: await fromStart(banner.getByRole("link", { name: "Center for the Built Environment" })),
-      documentationToEnd: await toEnd(banner.getByRole("link", { name: "Documentation" })),
+      documentationToEnd: await toEnd(banner.getByRole("link", { name: DOCUMENTATION, exact: true })),
       footerTextFromStart: await fromStart(footer.locator("p").first()),
       footerMarksToEnd: await toEnd(footer.getByRole("link", { name: "University of California, Berkeley" })),
     },
@@ -417,7 +639,7 @@ async function frame(page: Page) {
 }
 
 for (const width of [1920, 2560]) {
-  test(`at ${width} px, the sidebar, the main grid and the bands' contents are the 1440 px page's frame centred in the page, the legend beside the plot`, async ({ page }) => {
+  test(`at ${width} px, the sidebar, the main grid and the bands' contents are the 1440 px page's frame centred in the page, the legend above the plot`, async ({ page }) => {
     await openStandard(page, 1440 + SCROLLBAR_GUTTER);
     const at1440 = await frame(page);
 
@@ -426,7 +648,7 @@ for (const width of [1920, 2560]) {
 
     expect(inside).toEqual(at1440.inside);
     expect(margins.start).toBe(margins.end);
-    expect(isLegendBesidePlot(await boxes(page))).toBe(true);
+    expect(isLegendAbovePlot(await boxes(page))).toBe(true);
   });
 }
 
@@ -529,7 +751,7 @@ test.describe("the header and the footer on a phone and on a desktop", () => {
       const title = banner.getByRole("heading", { level: 1 });
       const inWindow = await pageWidth(page);
 
-      await expect(banner.getByRole("link", { name: "Documentation" })).toHaveCount(0);
+      await expect(banner.getByRole("link", { name: DOCUMENTATION, exact: true })).toHaveCount(0);
       for (const item of [sidebarToggle(page), banner.getByRole("link", { name: "Center for the Built Environment" }), title]) {
         const box = await boxOf(item);
         expect(box.x + box.width).toBeLessThanOrEqual(inWindow);
@@ -543,7 +765,7 @@ test.describe("the header and the footer on a phone and on a desktop", () => {
 
       await sidebarToggle(page).click();
       const tools = page.getByRole("dialog", { name: "Sidebar" }).getByRole("group", { name: "Tools" }).getByRole("link");
-      await expect(tools).toHaveText(["Explore", "Documentation"]);
+      await expect(tools).toHaveText(["Explore", DOCUMENTATION]);
       await expect(tools.last()).toHaveAttribute("href", /\/docs\/user-guide\.md$/);
       await expect(tools.last()).not.toHaveAttribute("aria-current");
     });
@@ -572,16 +794,115 @@ test.describe("the header and the footer on a phone and on a desktop", () => {
     test(`at ${width} px, Documentation ends the header and is not in the sidebar, and the footer is one row`, async ({ page }) => {
       await openStandard(page, width);
       const banner = await boxOf(page.getByRole("banner"));
-      const documentation = await boxOf(page.getByRole("banner").getByRole("link", { name: "Documentation" }));
+      const documentation = await boxOf(page.getByRole("banner").getByRole("link", { name: DOCUMENTATION, exact: true }));
 
       // The row's end, inside the gutter.
       expect(documentation.x + documentation.width).toBe(banner.x + banner.width - 0.75 * 16);
-      await expect(page.getByRole("navigation").getByRole("link", { name: "Documentation" })).toHaveCount(0);
+      await expect(page.getByRole("navigation").getByRole("link", { name: DOCUMENTATION, exact: true })).toHaveCount(0);
       const { text, marks } = await footerParts(page);
       expect(marks.x).toBeGreaterThanOrEqual(text.x + text.width);
       expect(marks.y).toBeLessThan(text.y + text.height);
     });
   }
+});
+
+/**
+ * A link to another site opens a new tab, and its name ends in words that
+ * say so to a screen reader and take no room on the page; the app's own
+ * links and the model select stay in the tab (ADR-0002 decision 89, rules 1
+ * and 2). Each link is found by its whole name, which is the name check.
+ */
+test.describe("links to other sites", () => {
+  /** The user guide's address while the rewrite is on its branch (the rewrite plan's Phase 6 item 6 moves it). */
+  const USER_GUIDE = "https://github.com/FedericoTartarini/comfort-tool/blob/rewrite/v1/docs/user-guide.md";
+
+  /** Where the link's visible content, its text or its image without the words, starts and ends. */
+  function visibleEdges(link: Locator) {
+    return link.evaluate((anchor, words) => {
+      const boxes: DOMRect[] = [];
+      const walker = document.createTreeWalker(anchor, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        if (node instanceof HTMLImageElement) {
+          boxes.push(node.getBoundingClientRect());
+        } else if (node.nodeType === Node.TEXT_NODE) {
+          const text = node.textContent ?? "";
+          const shown = text.trim();
+          if (shown !== "" && shown !== words) {
+            const range = document.createRange();
+            range.setStart(node, text.indexOf(shown));
+            range.setEnd(node, text.indexOf(shown) + shown.length);
+            boxes.push(range.getBoundingClientRect());
+          }
+        }
+      }
+      return { start: Math.min(...boxes.map((box) => box.left)), end: Math.max(...boxes.map((box) => box.right)) };
+    }, NEW_TAB);
+  }
+
+  /** Opens a new tab, its words in a box of a pixel. */
+  async function expectNewTab(link: Locator) {
+    await expect(link).toHaveAttribute("target", "_blank");
+    const words = await boxOf(link.getByText(NEW_TAB, { exact: true }));
+    expect(words.width).toBeLessThanOrEqual(1);
+    expect(words.height).toBeLessThanOrEqual(1);
+  }
+
+  /** A link whose box hugs its content, as the header's and the footer's do, is as wide as before: no space underlined after it. */
+  async function expectNoRoomTaken(link: Locator) {
+    const box = await boxOf(link);
+    const content = await visibleEdges(link);
+    expect(Math.abs(box.x - content.start)).toBeLessThan(0.5);
+    expect(Math.abs(box.x + box.width - content.end)).toBeLessThan(0.5);
+  }
+
+  test("at 1440 px, Documentation in the header and the footer's five links open a new tab and say so", async ({ page }) => {
+    await openStandard(page, 1440);
+    const documentation = page.getByRole("banner").getByRole("link", { name: DOCUMENTATION, exact: true });
+    await expect(documentation).toHaveAttribute("href", USER_GUIDE);
+    await expectNewTab(documentation);
+    await expectNoRoomTaken(documentation);
+
+    const footer = page.getByRole("contentinfo");
+    const names = ["Licence", "Code", "https://doi.org/10.1016/j.softx.2020.100563", "Center for the Built Environment", "University of California, Berkeley"];
+    for (const name of names) {
+      const link = footer.getByRole("link", { name: `${name} ${NEW_TAB}`, exact: true });
+      await expectNewTab(link);
+      await expectNoRoomTaken(link);
+    }
+  });
+
+  test("at 375 px, Documentation in the sheet opens a new tab and says so, and the sheet's page links do not", async ({ page }) => {
+    await openStandard(page, 375);
+    await sidebarToggle(page).click();
+    const sheet = page.getByRole("dialog", { name: "Sidebar" });
+    const documentation = sheet.getByRole("link", { name: DOCUMENTATION, exact: true });
+
+    await expect(documentation).toHaveAttribute("href", USER_GUIDE);
+    await expectNewTab(documentation);
+    const pageLinks = sheet.getByRole("navigation").getByRole("link").filter({ hasNot: page.getByText(NEW_TAB, { exact: true }) });
+    await expect(pageLinks).not.toHaveCount(0);
+    for (const link of await pageLinks.all()) {
+      await expect(link).not.toHaveAttribute("target");
+    }
+  });
+
+  test("at 1440 px, the model select and the sidebar's page links open in the same tab", async ({ page, context }) => {
+    await openStandard(page, 1440, ISO_EXPLORE_ADDRESS);
+    const navigation = page.getByRole("navigation");
+
+    await page.getByRole("button", { name: "Model", exact: true }).click();
+    await page.getByRole("option", { name: /^PMV \/ PPD \(ASHRAE 55/ }).click();
+    await expect(page).toHaveURL((url) => url.pathname === EXPLORE_ADDRESS);
+    await navigation.getByRole("link", { name: "ISO 7730:2025", exact: true }).click();
+    await expect(page).toHaveURL((url) => url.pathname === ISO_ADDRESS);
+    await navigation.getByRole("link", { name: "Explore", exact: true }).click();
+    await expect(page).toHaveURL((url) => url.pathname === ISO_EXPLORE_ADDRESS);
+
+    expect(context.pages()).toEqual([page]);
+    for (const link of await navigation.getByRole("link").all()) {
+      await expect(link).not.toHaveAttribute("target");
+    }
+  });
 });
 
 /**
@@ -854,11 +1175,7 @@ test.describe("controls by their question", () => {
       // The label after its switch, at the row's end, the title at its start.
       expect(switchBox.x).toBeGreaterThan(title.x + title.width);
       expect(labelBox.x).toBeGreaterThan(switchBox.x);
-      const contentEnd = await header.evaluate((element) => {
-        const { right } = element.getBoundingClientRect();
-        return right - parseFloat(getComputedStyle(element).paddingRight);
-      });
-      expect(labelBox.x + labelBox.width).toBeCloseTo(contentEnd, 0);
+      expect(labelBox.x + labelBox.width).toBeCloseTo((await contentEdgesOf(header)).right, 0);
       places.push({ switchBox, labelBox });
 
       for (const row of await page.locator('[data-slot="card-header"]').all()) {
@@ -911,32 +1228,83 @@ test.describe("controls by their question", () => {
     }
   });
 
-  test("at 1440 px, the chart type is a select named Chart type, first in the view row and as tall as the axis selects, that draws the type it chooses, on Standard and Explore; the Model select keeps its own height", async ({ page }) => {
-    for (const address of [PMV_ADDRESS, EXPLORE_ADDRESS]) {
+  test("at 1440 px, the chart card's heading row reads Chart, the select named Chart type, then Bands on Explore and Export image at its right end; the psychrometric chart has no view row, Dynamic's axis selects stand under the heading row, and Tab follows that order, on Standard and Explore; the Model select keeps its own height", async ({ page }) => {
+    for (const [address, actions] of [
+      [PMV_ADDRESS, ["Export image"]],
+      [EXPLORE_ADDRESS, ["Bands", "Export image"]],
+    ] as const) {
       await openStandard(page, 1440, address);
       const chart = card(page, "Chart");
-      const chartType = chart.getByRole("button", { name: "Chart type", exact: true });
+      const header = chart.locator('[data-slot="card-header"]');
+      const chartType = header.getByRole("button", { name: "Chart type", exact: true });
       await expect(chartType).toHaveText("Psychrometric");
+      const headerBox = await boxOf(header);
+      const row = [
+        await boxOf(header.getByRole("heading", { name: "Chart", exact: true })),
+        await boxOf(chartType),
+        ...(await Promise.all(actions.map((name) => boxOf(header.getByRole("button", { name, exact: true }))))),
+      ];
+
+      // One line, left to right, each control after the last; the last at the row's content end.
+      for (const [index, box] of row.entries()) {
+        expect(box.y + box.height / 2).toBeCloseTo(headerBox.y + headerBox.height / 2, 0);
+        if (index > 0) expect(box.x).toBeGreaterThan(row[index - 1].x + row[index - 1].width);
+      }
+      const last = row[row.length - 1];
+      expect(last.x + last.width).toBeCloseTo((await contentEdgesOf(header)).right, 0);
+      expect((await boxOf(card(page, "Inputs").getByRole("button", { name: "Model", exact: true }))).height).toBeGreaterThan(row[1].height);
+
+      // The psychrometric chart has no view row: the chart's area is the card's content's first line.
       await expect(chart.getByLabel("X axis")).toHaveCount(0);
+      const content = chart.locator('[data-slot="card-content"]');
+      expect((await boxOf(chart.locator(".chart-area"))).y).toBeCloseTo((await boxOf(content)).y, 0);
 
       await chooseChartType(page, "Dynamic");
       await expect(chartType).toHaveText("Dynamic");
-      const typeBox = await boxOf(chartType);
       const xAxis = await boxOf(chart.getByLabel("X axis"));
       const yAxis = await boxOf(chart.getByLabel("Y axis"));
-      // First in the row, at the card's leading edge where the plot starts; one height with the axis selects.
-      expect(typeBox.x).toBeCloseTo((await boxOf(page.locator(".chart-plot"))).x, 0);
-      expect(typeBox.x + typeBox.width).toBeLessThan(xAxis.x);
-      expect(typeBox.y).toBe(xAxis.y);
-      expect(typeBox.height).toBe(xAxis.height);
-      expect(typeBox.height).toBe(yAxis.height);
-      expect((await boxOf(card(page, "Inputs").getByRole("button", { name: "Model", exact: true }))).height).toBeGreaterThan(typeBox.height);
+      const plot = await boxOf(chart.locator(".chart-plot"));
+      for (const axis of [xAxis, yAxis]) {
+        expect(axis.y).toBeGreaterThanOrEqual(headerBox.y + headerBox.height);
+        expect(axis.y + axis.height).toBeLessThanOrEqual(plot.y);
+      }
+      expect(xAxis.x + xAxis.width).toBeLessThan(yAxis.x);
+
+      // Tab: the chart type, the actions, then the axis selects.
+      await chartType.focus();
+      for (const name of actions) {
+        await page.keyboard.press("Tab");
+        await expect(header.getByRole("button", { name, exact: true })).toBeFocused();
+      }
+      for (const label of ["X axis", "Y axis"]) {
+        await page.keyboard.press("Tab");
+        await expect(chart.getByLabel(label)).toBeFocused();
+      }
 
       await chooseChartType(page, "Psychrometric");
       await expect(chartType).toHaveText("Psychrometric");
       await expect(chart.getByLabel("X axis")).toHaveCount(0);
     }
   });
+
+  // 768 px is the narrowest desktop (decision 87, rule 2), where the chart card is at its least width, the result
+  // column's 33.5rem; at 375 px Explore's heading row no longer fits one line.
+  for (const width of [768, 375]) {
+    test(`at ${width} px, every control of the chart card's heading row lies inside the card's content, wrapping where it must, on Standard and Explore`, async ({ page }) => {
+      for (const address of [PMV_ADDRESS, EXPLORE_ADDRESS]) {
+        await openStandard(page, width, address);
+        const header = card(page, "Chart").locator('[data-slot="card-header"]');
+        const { left, right } = await contentEdgesOf(header);
+        const controls = [header.getByRole("heading"), ...(await header.getByRole("button").all())];
+        expect(controls.length).toBe(address === EXPLORE_ADDRESS ? 4 : 3);
+        for (const control of controls) {
+          const box = await boxOf(control);
+          expect(box.x).toBeGreaterThanOrEqual(left);
+          expect(box.x + box.width).toBeLessThanOrEqual(right);
+        }
+      }
+    });
+  }
 
   test("at 1440 px, Heat Index on Explore, with one chart type, shows a chart type select of that one option", async ({ page }) => {
     await openStandard(page, 1440, "/explore/heat-index-rothfusz");
@@ -1204,45 +1572,56 @@ test.describe("the header's mark", () => {
   });
 });
 
+/** A filled path's points, as Plotly was handed them: rings separated by `null`. */
+interface FillPoints {
+  x: (number | null)[];
+  y: (number | null)[];
+}
+
+/**
+ * Every Comfort zone fill the chart draws, read off its own traces as Plotly was handed them: each named filled
+ * scatter (`ui/charts/plotlyFigure.ts`). The cover above saturation is unnamed, so it is not among them.
+ */
+function zoneFills(page: Page): Promise<FillPoints[]> {
+  return page.locator(".chart-plot.js-plotly-plot").evaluate((node) => {
+    interface PathData extends FillPoints {
+      type: string;
+      fill?: string;
+      name?: string;
+    }
+    const traces = (node as unknown as { data: PathData[] }).data;
+    return traces.filter((trace) => trace.type === "scatter" && trace.fill === "toself" && trace.name).map(({ x, y }) => ({ x, y }));
+  });
+}
+
 /**
  * A Comfort zone is what the standard accepts (ADR-0002 decision 77, rule 1): on PMV (ASHRAE 55)'s air-speed chart,
  * switching local control of the air speed off caps the zone where the library's air-speed rule breaks, and switching
- * it on lifts the cap. The zone is read off the chart's own traces, as Plotly was handed them.
+ * it on lifts the cap.
  */
 test.describe("the air-speed chart's Comfort zone", () => {
   const OPTION = "Occupants have local control of the air speed";
 
   /**
-   * The area the drawn zone fills, in the axes' units: each named filled scatter's rings, separated by `null`
-   * (`ui/charts/plotlyFigure.ts`), by the shoelace formula, a hole wound opposite counting against its outer ring. The
-   * cover above saturation is unnamed, and this chart draws none.
+   * The area the drawn zone fills, in the axes' units: each fill's rings by the shoelace formula, a hole wound
+   * opposite counting against its outer ring.
    */
-  function zoneArea(page: Page): Promise<number> {
-    return page.locator(".chart-plot.js-plotly-plot").evaluate((node) => {
-      interface PathData {
-        type: string;
-        fill?: string;
-        name?: string;
-        x: (number | null)[];
-        y: (number | null)[];
-      }
-      const fills = (node as unknown as { data: PathData[] }).data.filter((trace) => trace.type === "scatter" && trace.fill === "toself" && trace.name);
-      let area = 0;
-      for (const { x, y } of fills) {
-        let start = 0;
-        for (let end = 0; end <= x.length; end += 1) {
-          if (end < x.length && x[end] !== null) {
-            continue;
-          }
-          for (let index = start; index < end; index += 1) {
-            const next = index + 1 < end ? index + 1 : start;
-            area += (Number(x[index]) * Number(y[next]) - Number(x[next]) * Number(y[index])) / 2;
-          }
-          start = end + 1;
+  async function zoneArea(page: Page): Promise<number> {
+    let area = 0;
+    for (const { x, y } of await zoneFills(page)) {
+      let start = 0;
+      for (let end = 0; end <= x.length; end += 1) {
+        if (end < x.length && x[end] !== null) {
+          continue;
         }
+        for (let index = start; index < end; index += 1) {
+          const next = index + 1 < end ? index + 1 : start;
+          area += (Number(x[index]) * Number(y[next]) - Number(x[next]) * Number(y[index])) / 2;
+        }
+        start = end + 1;
       }
-      return area;
-    });
+    }
+    return area;
   }
 
   test("at PMV (ASHRAE 55)'s defaults, follows local control of the air speed off, on and off again", async ({ page }) => {
@@ -1259,6 +1638,63 @@ test.describe("the air-speed chart's Comfort zone", () => {
 
     await option.click();
     await expect.poll(() => zoneArea(page)).toBe(capped);
+  });
+});
+
+/**
+ * Every slot marker the chart draws, in drawing order, read off its own traces as Plotly was handed them: each
+ * markers-only scatter (`ui/charts/plotlyFigure.ts`).
+ */
+function markerPoints(page: Page): Promise<{ x: number; y: number }[]> {
+  return page.locator(".chart-plot.js-plotly-plot").evaluate((node) => {
+    interface PointData {
+      type: string;
+      mode?: string;
+      x: number[];
+      y: number[];
+    }
+    const traces = (node as unknown as { data: PointData[] }).data;
+    return traces.filter((trace) => trace.type === "scatter" && trace.mode === "markers").map(({ x, y }) => ({ x: x[0], y: y[0] }));
+  });
+}
+
+/**
+ * A slot first enabled starts from slot 1's values, each moved up by a share of its axis range, so its marker and its
+ * Comfort zone do not lie on slot 1's, and a value the move carries past its bound is cut to it with no toast
+ * (GLOSSARY.md, **Slot offset**; ADR-0002 decision 89's revision of rule 8).
+ */
+test.describe("compared slots that start apart", () => {
+  const metabolicRate = (page: Page, slot: string) => page.getByRole("spinbutton", { name: new RegExp(`^Metabolic rate.*, ${slot}$`) });
+  const toasts = (page: Page) => page.getByRole("region", { name: /^Notifications/ }).locator('li[data-sonner-toast]:not([data-removed="true"])');
+
+  test("at 1440 px on PMV (ASHRAE 55), turning Compare on shows Input 2's metabolic rate as 1.25, two Comfort zones that are not the same, and two markers at different places on the psychrometric chart", async ({ page }) => {
+    await openStandard(page, 1440);
+    await expect.poll(() => zoneFills(page)).toHaveLength(1);
+
+    await page.getByRole("switch", { name: "Compare", exact: true }).click();
+
+    await expect(metabolicRate(page, "Input 1")).toHaveValue("1.1");
+    await expect(metabolicRate(page, "Input 2")).toHaveValue("1.25");
+    await expect.poll(() => zoneFills(page)).toHaveLength(2);
+    const [first, second] = await zoneFills(page);
+    expect(second).not.toEqual(first);
+    await expect.poll(() => markerPoints(page)).toHaveLength(2);
+    const [firstMarker, secondMarker] = await markerPoints(page);
+    expect(secondMarker).not.toEqual(firstMarker);
+  });
+
+  test("at 1440 px on PMV (ASHRAE 55), Input 3 enabled with Input 1's metabolic rate at its upper end holds that end, and no toast appears", async ({ page }) => {
+    await openStandard(page, 1440);
+    await page.getByRole("switch", { name: "Compare", exact: true }).click();
+    await metabolicRate(page, "Input 1").fill("4");
+    await metabolicRate(page, "Input 1").press("Enter");
+    await expect(metabolicRate(page, "Input 1")).toHaveValue("4");
+    await expect(toasts(page)).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Input 3", exact: true }).click();
+
+    await expect(metabolicRate(page, "Input 3")).toHaveValue("4");
+    await expect(toasts(page)).toHaveCount(0);
   });
 });
 

@@ -11,6 +11,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { chartInk } from "$lib/core/bandPalette";
+import { customEnsemble, shownRow } from "$lib/core/calculators";
 import type { ChartSpec, PathTrace, PointTrace } from "$lib/core/charts/chartSpec";
 import { dynamicScanFrameFor } from "$lib/core/charts/dynamicChart";
 import { psychrometricScanFrameFor } from "$lib/core/charts/psychrometricChart";
@@ -30,11 +31,15 @@ import { pmvPpdIso } from "$lib/models/pmvPpdIso";
 import { Outputs } from "./compute.svelte";
 import { Session, slotPositions, type SlotPosition } from "./session.svelte";
 import {
+  differenceFromSlot1,
+  enterSlot1ValuesInOthers,
   expectEverySlotInSessionEntryModes,
   heldSlot,
   outOfRangeQuantitiesAt,
   sessionComparingThreeSlots,
   shapeOf,
+  sharesAtDefaults,
+  shownDifferences,
   withBounds,
 } from "./sessionTestReaders";
 
@@ -79,7 +84,7 @@ describe("Compare in the session", () => {
     expect(outputs.slots[0].result).not.toBeNull();
   });
 
-  it("enables slots 1 and 2 at the first switch-on, slot 2 holding what slot 1 holds, entry modes and options included", () => {
+  it("enables slots 1 and 2 at the first switch-on, slot 2 holding what slot 1 holds, entry modes and options included, moved by its Slot offset", () => {
     const session = new Session(pmvPpdAshrae);
     const [option] = optionsOf(pmvPpdAshrae);
     session.slots[0].setOption(option, !option.default);
@@ -91,7 +96,9 @@ describe("Compare in the session", () => {
 
     expect(session.compare).toBe(true);
     expect(slotPositions.map((position) => session.isSlotEnabled(position))).toEqual([true, true, false]);
-    expect(shapeOf(heldSlot(session, 1))).toEqual(shapeOf(session.slots[0]));
+    expect(differenceFromSlot1(session, 1)).toEqual(
+      shownDifferences([q.operative_tmp, 1.5], [q.v, 0.1], [q.met, 0.15], [q.clo, 0.11]),
+    );
     expect(session.slots[2]).toBeNull();
     expect(positionsAskedAbout(new Outputs(session))).toEqual([0, 1]);
   });
@@ -139,21 +146,144 @@ describe("Compare in the session", () => {
     expect(heldSlot(session, 1).values.get(q.tdb)).toBe(22);
   });
 
-  it("gives slot 3, first enabled after slot 1 has changed, what slot 1 holds then", () => {
+  it("starts slot 3, first enabled after slot 1 has changed, from what slot 1 holds then", () => {
     const session = new Session(pmvPpdIso);
     session.setCompare(true);
     session.slots[0].setEntered(q.tdb, 27);
 
     session.setSlotEnabled(2, true);
 
-    expect(shapeOf(heldSlot(session, 2))).toEqual(shapeOf(session.slots[0]));
-    expect(heldSlot(session, 1).values.get(q.tdb)).not.toBe(27);
+    // 27 °C moved by two shares of the 10–30 °C axis.
+    expect(heldSlot(session, 2).values.get(q.tdb)).toBeCloseTo(29, 9);
+    expect(heldSlot(session, 1).values.get(q.tdb)).not.toBe(28);
   });
+});
+
+// A slot first enabled starts from slot 1's values, each moved up by a share
+// of its quantity's axis range: one share for slot 2, two for slot 3
+// (GLOSSARY.md, **Slot offset**; ADR-0002 decision 89's revision of rule 8).
+// The shares are written by hand from each model file's axis ranges.
+describe("the Slot offsets of a slot first enabled", () => {
+  for (const model of [pmvPpdAshrae, pmvPpdIso, adaptiveAshrae]) {
+    it(`give slot 2, at the first switch-on, slot 1's values each moved by one share, the humidity, options and entry modes unchanged, on ${model.info.label}`, () => {
+      const session = new Session(model);
+
+      session.setCompare(true);
+
+      expect(differenceFromSlot1(session, 1)).toEqual(sharesAtDefaults(model, 1));
+    });
+
+    it(`give slot 3, enabled first, two shares, on ${model.info.label}`, () => {
+      const session = new Session(model);
+
+      session.setSlotEnabled(2, true);
+
+      expect(session.slots[1]).toBeNull();
+      expect(differenceFromSlot1(session, 2)).toEqual(sharesAtDefaults(model, 2));
+    });
+
+    it(`give slot 3 two shares whatever slot 2 holds, on ${model.info.label}`, () => {
+      const session = new Session(model);
+      session.setCompare(true);
+      heldSlot(session, 1).setEntered(q.tdb, 12);
+
+      session.setSlotEnabled(2, true);
+
+      expect(differenceFromSlot1(session, 2)).toEqual(sharesAtDefaults(model, 2));
+    });
+
+    it(`add nothing to a slot disabled and enabled again, which holds what it held, on ${model.info.label}`, () => {
+      const session = new Session(model);
+      session.setCompare(true);
+      heldSlot(session, 1).setEntered(q.tdb, 22);
+      const held = shapeOf(heldSlot(session, 1));
+      session.setSlotEnabled(1, false);
+
+      session.setSlotEnabled(1, true);
+
+      expect(shapeOf(heldSlot(session, 1))).toEqual(held);
+    });
+  }
+
+  // One share of each mode's quantity, from the model file's axis range for it.
+  it.each([
+    { model: pmvPpdAshrae, mode: "operative", set: (session: Session) => session.setTemperatureMode(temperatureMode.operative), quantity: q.operative_tmp, share: 1.5 },
+    { model: pmvPpdIso, mode: "operative", set: (session: Session) => session.setTemperatureMode(temperatureMode.operative), quantity: q.operative_tmp, share: 1 },
+    { model: adaptiveAshrae, mode: "operative", set: (session: Session) => session.setTemperatureMode(temperatureMode.operative), quantity: q.operative_tmp, share: 1.5 },
+    { model: pmvPpdAshrae, mode: "dynamic clothing", set: (session: Session) => session.setClothingMode(clothingMode.corrected), quantity: q.clo_dynamic, share: 0.11 },
+    { model: pmvPpdIso, mode: "dynamic clothing", set: (session: Session) => session.setClothingMode(clothingMode.corrected), quantity: q.clo_dynamic, share: 0.2 },
+    { model: pmvPpdAshrae, mode: "relative air speed", set: (session: Session) => session.setAirSpeedMode(airSpeedMode.corrected), quantity: q.vr, share: 0.1 },
+    { model: pmvPpdIso, mode: "relative air speed", set: (session: Session) => session.setAirSpeedMode(airSpeedMode.corrected), quantity: q.vr, share: 0.05 },
+  ])("move the $mode entry mode's quantity of slot 3 by two shares, on $model.info.label", ({ model, set, quantity, share }) => {
+    const session = new Session(model);
+    set(session);
+
+    session.setSlotEnabled(2, true);
+
+    expect(differenceFromSlot1(session, 2).get(quantity)).toBeCloseTo(2 * share, 2);
+  });
+
+  // That the cut raises no toast is the browser's to show: no notice is
+  // raised from here (layout.behaviour.ts, "compared slots that start apart").
+  for (const model of [pmvPpdAshrae, pmvPpdIso]) {
+    it(`cut slot 3's metabolic rate to its bound where slot 1's stands at it, the other values moved, on ${model.info.label}`, () => {
+      const max = model.info.inputs.met?.applicability?.max;
+      if (max === undefined) {
+        throw new Error(`${model.info.label} bounds no metabolic rate from above`);
+      }
+      const session = new Session(model);
+      session.slots[0].setEntered(q.met, max);
+
+      session.setSlotEnabled(2, true);
+
+      expect(heldSlot(session, 2).values.get(q.met)).toBe(max);
+      expect(differenceFromSlot1(session, 2)).toEqual(sharesAtDefaults(model, 2, [q.met]));
+    });
+
+    // A humidity entry's bound is relative humidity's converted at the dry
+    // bulb, whose upper end rises with it: the move only widens it.
+    it(`keep slot 3's humidity as slot 1's near saturation in the dew-point entry mode, on ${model.info.label}`, () => {
+      const session = new Session(model);
+      session.slots[0].setEntered(q.rh, 99);
+      session.setHumidityMode(humidityMode.dewPoint);
+
+      session.setSlotEnabled(2, true);
+
+      expect(outOfRangeQuantitiesAt(session, 0)).toEqual([]);
+      expect(differenceFromSlot1(session, 2)).toEqual(sharesAtDefaults(model, 2));
+    });
+
+    it(`add nothing at a model switch with Compare on: each slot keeps its own values, on ${model.info.label}`, () => {
+      const other = model === pmvPpdAshrae ? pmvPpdIso : pmvPpdAshrae;
+      const session = sessionComparingThreeSlots(model);
+      const before = session.slots.map((slot) => (slot ? [...slot.values] : null));
+
+      session.requestModel(other);
+
+      expect(session.model).toBe(other);
+      expect(session.slots.map((slot) => (slot ? [...slot.values] : null))).toEqual(before);
+    });
+
+    // An entry-mode switch converts each slot as a session holding it alone
+    // does ("the session's entry modes", below), so it moves nothing either.
+    it(`add nothing at a change of unit system or an Apply, which writes its own row alone, on ${model.info.label}`, () => {
+      const session = sessionComparingThreeSlots(model);
+      const before = session.slots.map((slot) => (slot ? shapeOf(slot) : null));
+      const result = customEnsemble.compute(["Men's underwear", "Long-sleeve dress shirt", "Thick trousers"]);
+      const row = shownRow(heldSlot(session, 1), customEnsemble, result, model, session.atmosphericPressure);
+
+      session.unitSystem = unitSystem.ip;
+      session.applyCalculator(1, customEnsemble, result);
+
+      const applied = new Map(before[1]!.values).set(row.quantity, row.after);
+      expect(session.slots.map((slot) => (slot ? shapeOf(slot) : null))).toEqual([before[0], { ...before[1], values: applied }, before[2]]);
+    });
+  }
 });
 
 describe("the outputs of the compared slots", () => {
   it("give each compared slot its own result, the one a session holding that slot alone gives", () => {
-    const session = sessionComparingThreeSlots(pmvPpdIso);
+    const session = enterSlot1ValuesInOthers(sessionComparingThreeSlots(pmvPpdIso));
     const outputs = new Outputs(session);
     heldSlot(session, 1).setEntered(q.tdb, 22);
     heldSlot(session, 2).setEntered(q.clo, 1);
@@ -185,6 +315,7 @@ describe("the outputs of the compared slots", () => {
     const session = new Session(pmvPpdIso);
     const outputs = new Outputs(session);
     session.setCompare(true);
+    enterSlot1ValuesInOthers(session);
 
     // 35 °C is past ISO 7730's 30 °C, written past the commit's judgement.
     heldSlot(session, 1).setEntered(q.tdb, 35);
@@ -221,6 +352,7 @@ describe("the outputs of the compared slots", () => {
     const session = new Session(pmvPpdIso);
     const outputs = new Outputs(session);
     session.setCompare(true);
+    enterSlot1ValuesInOthers(session);
 
     session.setModel(pmvPpdAshrae);
 
@@ -319,6 +451,7 @@ describe("the charts of the compared slots", () => {
     const session = new Session(pmvPpdIso);
     const outputs = new Outputs(session);
     session.setCompare(true);
+    enterSlot1ValuesInOthers(session);
     heldSlot(session, 1).setEntered(q.clo, 1);
 
     const alone = chartAlone(moreClothing);
@@ -372,17 +505,17 @@ describe("the charts of the compared slots", () => {
 
     function twoSlotsOnTheDynamicChart() {
       const { model, runs } = modelCountingRuns();
-      const onePass = onePassOf(model, runs);
       const session = new Session(model);
       session.chart.type = chartType.dynamic;
       session.setCompare(true);
+      enterSlot1ValuesInOthers(session);
       const outputs = new Outputs(session);
       const readEverything = () => {
         void outputs.slots.map((slot) => slot.result);
         void outputs.chart;
       };
       readEverything();
-      return { model, session, outputs, runs, onePass, readEverything };
+      return { model, session, outputs, runs, readEverything };
     }
 
     it("scan once for an edit to one slot", () => {
@@ -400,13 +533,21 @@ describe("the charts of the compared slots", () => {
     });
 
     it("scan once for a slot first enabled, the slot enabled", () => {
-      const { session, runs, onePass, readEverything } = twoSlotsOnTheDynamicChart();
+      const { model, session, runs, readEverything } = twoSlotsOnTheDynamicChart();
       const before = runs();
 
       session.setSlotEnabled(2, true);
       readEverything();
+      const used = runs() - before;
 
-      expect(runs()).toBe(before + onePass);
+      const third = heldSlot(session, 2).values;
+      expect(used).toBe(
+        onePassOf(model, runs, (alone) => {
+          for (const [quantity, value] of third) {
+            alone.slots[0].setEntered(quantity, value);
+          }
+        }),
+      );
     });
 
     it("scan once per compared slot for an edit to the atmospheric pressure", () => {
@@ -467,7 +608,7 @@ describe("the session's entry modes", () => {
   ];
 
   function threeDifferentSlots(model: RegisteredModel): Session {
-    const session = sessionComparingThreeSlots(model);
+    const session = enterSlot1ValuesInOthers(sessionComparingThreeSlots(model));
     slotPositions.forEach((position) => {
       for (const [quantity, value] of entriesOfSlot[position]) {
         heldSlot(session, position).setEntered(quantity, value);
@@ -596,6 +737,7 @@ describe("the session's entry modes", () => {
   ])("converts slot 2 after a switch from $from.info.label, as a session holding it alone does", ({ from, change }) => {
     const session = new Session(from);
     session.setCompare(true);
+    enterSlot1ValuesInOthers(session);
     session.setModel(pmvPpdIso);
     const alone = new Session(from);
     alone.setModel(pmvPpdIso);

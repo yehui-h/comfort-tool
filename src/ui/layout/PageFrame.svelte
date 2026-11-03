@@ -35,6 +35,7 @@
   import * as Sidebar from "$lib/ui/primitives/sidebar";
   import { SIDEBAR_KEYBOARD_SHORTCUT } from "$lib/ui/primitives/sidebar/constants";
   import AppSidebar from "./AppSidebar.svelte";
+  import ExternalLink from "./ExternalLink.svelte";
   import { marks } from "./marks";
   import type { InAppLink } from "./NavGroup.svelte";
   import SiteHeader from "./SiteHeader.svelte";
@@ -49,13 +50,16 @@
     inputsActions?: Snippet;
     /** The Results card's content, given the heading's id, which names the result table's scroll region. */
     results: Snippet<[headingId: string]>;
+    /** The chart card's chart type, after its title in the heading row (decision 89, rule 6). */
+    chartType: Snippet;
     /** The chart card's actions, at the right of its heading row (decision 73, rule 8 as revised 2026-10-12). */
     chartActions: Snippet;
-    /** The chart card's content: the view row, then the plot and the legend. */
+    /** The chart card's content: the view row where the chart has one, then the legend and the plot. */
     chart: Snippet;
   }
 
-  let { mark, navigation, sessionControls, inputs, inputsActions, results, chartActions, chart }: Props = $props();
+  let { mark, navigation, sessionControls, inputs, inputsActions, results, chartType, chartActions, chart }: Props =
+    $props();
 
   const id = $props.id();
 
@@ -143,10 +147,15 @@
             </Card.Content>
           </Card.Root>
           <Card.Root>
-            <!-- One row: the heading, and the actions on the title's line rather than the primitive's two rows. -->
-            <Card.Header class="items-center">
+            <!--
+              One row, not the primitive's grid (decision 89, rule 6): the heading, the chart type beside it, and the
+              actions pushed to the right end; where they do not fit, the row wraps. Its items the page's spacing apart,
+              as the view row's axis pickers are (decision 73, rule 2).
+            -->
+            <Card.Header class="flex flex-wrap items-center gap-(--space-page)">
               <Card.Title><h2>{copy.chart}</h2></Card.Title>
-              <Card.Action class="row-span-1 self-center">
+              {@render chartType()}
+              <Card.Action class="ms-auto self-center">
                 {@render chartActions()}
               </Card.Action>
             </Card.Header>
@@ -166,7 +175,8 @@
     right, each a link to its institution; the two sides in the frame. The
     text narrows first, from no width of its own; where its longest word and
     the marks no longer fit side by side, the row wraps and the marks stand
-    under it (decision 87, rule 8).
+    under it (decision 87, rule 8). Each link leaves the app, in a new tab
+    (decision 89, rule 2).
   -->
   <footer
     class="bg-(--brand) text-(length:--font-size-caption) text-background [&_a]:text-background [&_a]:underline [&_a]:underline-offset-2 [&_a]:[--ring:var(--background)]"
@@ -178,20 +188,20 @@
           {@render separator()}
           {copy.footerTool(copy.libraryName, __LIBRARY_VERSION__)}
           {@render separator()}
-          <a href={copy.licenceAddress}>{copy.licence}</a>
+          <ExternalLink href={copy.licenceAddress}>{copy.licence}</ExternalLink>
           {@render separator()}
-          <a href={copy.codeAddress}>{copy.code}</a>
+          <ExternalLink href={copy.codeAddress}>{copy.code}</ExternalLink>
         </p>
         <p>
           {copy.citation}
-          <a href={copy.citationAddress}>{copy.citationAddress}</a>
+          <ExternalLink href={copy.citationAddress}>{copy.citationAddress}</ExternalLink>
         </p>
       </div>
       <div class="flex shrink-0 items-center gap-(--space-page)">
-        <a href={copy.cbeAddress}>
+        <ExternalLink href={copy.cbeAddress}>
           <img src={marks.cbe.src} alt={copy.cbeName} width={marks.cbe.width} height={marks.cbe.height} class="h-9 w-auto" />
-        </a>
-        <a href={copy.berkeleyAddress}>
+        </ExternalLink>
+        <ExternalLink href={copy.berkeleyAddress}>
           <img
             src={marks.berkeley.src}
             alt={copy.berkeleyName}
@@ -199,7 +209,7 @@
             height={marks.berkeley.height}
             class="h-7 w-auto"
           />
-        </a>
+        </ExternalLink>
       </div>
     </div>
   </footer>

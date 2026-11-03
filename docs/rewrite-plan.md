@@ -503,6 +503,32 @@ Calculation logic moves out into the forked `jsthermalcomfort` (`typescript` bra
 > and where the code says more or other than the rules; ADR-0001's Links row, its decision-84 note and §4.8 are noted;
 > GLOSSARY.md's **Applicability** names the refused link. Review item O7 is done, for the Linear reply. `npx vitest run
 > src tests` passes at 1174 and `npm run test:browser` at 148. **Next: I9.**
+>
+> **2026-11-02 — position, round 2's first items done**: `.scratch/frontend-review-round-2/` landed on `rewrite/v1`,
+> tickets 01 to 07, ADR-0002 decision 89: links to other sites open a new tab and say so, Documentation on
+> `rewrite/v1`'s guide until the merge (`911a4dc`); PMV (ISO 7730)'s temperatures drawn to 30 °C (`5700fcf`); compared
+> slots start apart by their model's Slot offsets (`3d1d0dd`); the chart type in the chart card's heading row
+> (`09f314f`, `db548ce`); the legend above a plot that fills the card (`2fbab59`); the humidity ratio on the right
+> (`b60e0a4`); the Image's legend above a plot area of 4:3 in a single column and 16:9 in a double one (`c6000c1`).
+> Decision 89 carries a close-out note; ADR-0001's legend rules, acceptance criterion 7 and `--plot-width` are noted;
+> `docs/design.md` follows the code. Review items USYD-140, 143, 144, 146, 147 and 150 are done, for the Linear reply.
+> `npm test` passes at 1217 tests and `npm run test:browser` at 168. Open for the user: a Slot offset on the temperature
+> cuts a humidity entered as dew point, wet bulb or humidity ratio (story 47); the dry-bulb axis moving 48 px left on
+> the page (story 37); Input 1's and Input 2's markers on one point. **Next: USYD-145 by `/diagnosing-bugs`; the rest of
+> round 2 waits on the library's `feat/v2-all-models`.**
+>
+> **2026-11-03 — position, the Slot-offsets theme grilled**: decision 89 rule 8 revised (a Slot offset the app's one
+> rule; no model declares any), GLOSSARY's **Slot offset** and **Slot** with it; round 2's three open points answered.
+> **Next: the user's `/to-spec` and `/to-tickets` for it, then code review and the 0.4.0 deploy.**
+>
+> **2026-11-03 — position, the Slot-offsets theme done**: `.scratch/slot-offsets/` landed on `rewrite/v1`: a slot first
+> enabled takes slot 1's values each moved up by a twentieth of its axis range, two for slot 3, on every model, and no
+> model declares offsets (`6a60d03`); a registry-wide test keeps the three markers apart on every chart, in each entry
+> mode of each group in turn (`128fcc5`). Decision 89's revision of rule 8 carries a close-out note naming the commits;
+> its humidity cut near saturation is withdrawn, since the move only widens a humidity entry's bound. GLOSSARY.md's
+> **Slot offset** and **Slot** hold. `npm test` passes at 1249 tests and `npm run test:browser` at 174. Open for the
+> user: the registry test's distance norm (Euclidean, not per-axis). **Next: `/code-review` since `562d63e`, then the
+> 0.4.0 deploy.**
 
 and the one rule is "**adding a model = one declaration file + one registry line, zero other files change**".
 
@@ -907,6 +933,9 @@ Done: npm run typecheck / lint / test / build pass; tests/baseline.test.ts uncha
 3. `src/ui/charts/ChartLegend.svelte`: **the whole chart has exactly one legend, always below the chart**;
    Plotly's built-in legend is turned off (`layout.showlegend = false`). When exporting an image, the same `legend` data
    generates a horizontal bottom Plotly legend, so screen and export stay consistent.
+   **Noted 2026-11-02** (ADR-0002 decision 89, rule 3; ADR-0001 §4.4's note of that date): the legend stands above the
+   plot, on the page and in the Image, so "below the chart" here, in the Done criteria and in the table below, and
+   "bottom" legend, are history.
 4. `src/core/charts/psychrometricChart.ts`: calls `charts.psychrometricZone` with
    `rhStep: 5` (Decided: reproduce the old chart). The x-axis quantity is taken from
    `temperatureMode.axis`, the axis label is `Quantity.label`; operative mode passes `trFollowsDb: true`.
@@ -1483,6 +1512,9 @@ revised, in `.scratch/review-after-4b/decisions.md`): the v1 date no longer cons
    `3e1623e`, `e6cfb63`, `b2143f9`, `84d3ca3`). As built it differs from the text above where decision 64 carries
    ticket 07's note of 2026-10-07: the title is lettered at 10 pt and the rest at 8 pt; the footer is two lines,
    since as one it is cut off in a single column.
+   **Revised 2026-11-02** (ADR-0002 decision 89, rules 3 and 5; `c6000c1`): Plotly's horizontal legend stands above
+   the plot, so from the top the Image holds the title, the legend, the chart, the Input summary and the footer, and
+   its plot area is 4:3 in a single column and 16:9 in a double one.
 6. `RegisteredModel.timeSeries` lands with `workspace.ts`, which is its first consumer.
    **Revised 2026-10-01** (ADR-0002 decision 57): Time-series is in v1, with PHS, and is scheduled later as a phase of
    its own. `core/page.ts` holds `page.timeSeries` from the start, and the field is optional, `timeSeries?: true`,
@@ -1753,6 +1785,9 @@ and decision 36's panel list with its readers, the slot's, the gate's, the input
 (`e7e55cb`), changed, which the spec revised 2026-10-12 names (story 62); under `src/state/` no source changed, but
 five tests changed their read of an option, past the spec's "no change under the state layer", since decision 36's
 revision removed the field they read. The four scripts pass at 959 tests and `npm run test:browser` at 28.
+**Revised 2026-11-02** (ADR-0002 decision 89, rules 3, 4 and 6; `09f314f`, `2fbab59`): the plot is no longer the
+exported image's 4:3 with the legend beside it; it fills the card's width at `min(width × 3/4, 24rem)` with the legend
+above it, and the chart type stands in the heading row.
 
 ---
 
@@ -1814,7 +1849,8 @@ already and `v1z.` is withdrawn, so the grilling decides only what the text carr
    **Order (2026-10-07)**: the fixture needs a deployed build's text and the merge is item 6, so a preview is deployed
    before the freeze; the exact order is this phase's to settle.
 6. Merge back into `main`, remove the `git worktree`, and move the version check to `main` (Version bump and deploy,
-   "At the formal release").
+   "At the formal release"). Point the Documentation link back at `blob/main/docs/user-guide.md` (`text/copy.ts`;
+   added 2026-11-02, ADR-0002 decision 89 rule 1).
 7. Visual close-out (added 2026-10-07), before item 6: every page and dialog built after Phase 5c (the calculators,
    Time-series) is read against Phase 5c's Done criteria. Not a second design: the criteria are the stop.
 

@@ -8,6 +8,7 @@ import type { PlotlyAnnotation, PlotlyData, PlotlyLayout } from "plotly.js-carte
 import { chartInk } from "$lib/core/bandPalette";
 import type {
   Annotation,
+  AxisSide,
   AxisSpec,
   ChartSpec,
   HoverGridTrace,
@@ -15,6 +16,7 @@ import type {
   PathTrace,
   PointTrace,
   Trace,
+  YAxisSpec,
 } from "$lib/core/charts/chartSpec";
 
 /**
@@ -22,37 +24,19 @@ import type {
  * colour of the chart, which the spec resolves, but how the adapter tells
  * Plotly to leave a surface unpainted.
  */
-const TRANSPARENT = "rgba(0, 0, 0, 0)";
+export const TRANSPARENT = "rgba(0, 0, 0, 0)";
 
 /**
- * The spec's traces drawn in their order, the first at the bottom. Plotly
- * draws a subplot's traces by type, in order only within one, so a trace
- * whose type it would draw under the one before opens the next `zorder`,
- * which it draws over every lower one.
+ * The spec's traces drawn in their order, the first at the bottom, except the
+ * hover grid: plotly.js 4.0.0 draws every heatmap under every scatter,
+ * whatever their order (its `traceLayerClasses`), and the grid is drawn
+ * fully transparent, so where it lies does not show. No trace gets a
+ * `zorder`: traces of different `zorder`s break the viewport after Reset
+ * axes and Pan from the modebar (plotly.js #7320, open on 4.2.0; USYD-145).
  */
 export function toPlotlyData(source: ChartSpec): PlotlyData[] {
-  let zorder = 0;
-  let layer = 0;
-  return source.traces.map((trace) => {
-    const next = plotlyLayerOf[trace.kind];
-    if (next < layer) {
-      zorder += 1;
-    }
-    layer = next;
-    return { ...dataOf(trace), zorder };
-  });
+  return source.traces.map(dataOf);
 }
-
-/**
- * Where Plotly draws each trace kind within one `zorder`: plotly.js 4.0.0
- * draws every heatmap under every scatter, whatever their order (its
- * `traceLayerClasses`).
- */
-const plotlyLayerOf = {
-  hoverGrid: 0,
-  path: 1,
-  point: 1,
-} satisfies Record<Trace["kind"], number>;
 
 function dataOf(trace: Trace): PlotlyData {
   switch (trace.kind) {
@@ -173,12 +157,41 @@ const READOUT_LABEL = {
   bordercolor: chartInk.readoutEdge,
 };
 
+/**
+ * The room beside a plot, in px: `axisRoom` for the y axis's ticks and title
+ * on its side, `halfTick` on the other for half of the x axis's end tick,
+ * which Plotly centres on the plot's edge.
+ */
+interface SideRoom {
+  readonly axisRoom: number;
+  readonly halfTick: number;
+}
+
+/** The page's room around the plot, in px: beside it, and above and under it. */
+const PAGE_MARGIN = { axisRoom: 64, halfTick: 16, top: 12, bottom: 48 };
+
+/** A plot's left and right margins, `room` laid out by the side `yAxis` stands on. */
+export function sideMarginsOf(yAxis: YAxisSpec, room: SideRoom) {
+  return sideOf(yAxis) === "right"
+    ? { l: room.halfTick, r: room.axisRoom }
+    : { l: room.axisRoom, r: room.halfTick };
+}
+
+/** The side a y axis stands on: the left unless its spec says otherwise. */
+function sideOf(axisSpec: YAxisSpec): AxisSide {
+  return axisSpec.side ?? "left";
+}
+
 export function toPlotlyLayout(source: ChartSpec): PlotlyLayout {
   return {
     autosize: true,
     uirevision: viewportRevision(source),
-    margin: { l: 64, r: 16, t: 12, b: 48 },
-    // ADR §4.4: the chart's one legend is rendered beside or under it by ChartLegend.
+    margin: {
+      ...sideMarginsOf(source.layout.y, PAGE_MARGIN),
+      t: PAGE_MARGIN.top,
+      b: PAGE_MARGIN.bottom,
+    },
+    // ADR §4.4: the chart's one legend is rendered above it by ChartLegend (ADR-0002 decision 89, rule 3).
     showlegend: false,
     hovermode: "closest",
     hoverlabel: READOUT_LABEL,
@@ -186,8 +199,13 @@ export function toPlotlyLayout(source: ChartSpec): PlotlyLayout {
     plot_bgcolor: chartInk.ground,
     paper_bgcolor: TRANSPARENT,
     xaxis: toPlotlyAxis(source.layout.x),
-    yaxis: toPlotlyAxis(source.layout.y),
+    yaxis: toPlotlyYAxis(source.layout.y),
   };
+}
+
+/** The y axis, on the side its spec names. */
+export function toPlotlyYAxis(axisSpec: YAxisSpec) {
+  return { ...toPlotlyAxis(axisSpec), side: sideOf(axisSpec) };
 }
 
 export function toPlotlyAxis(axisSpec: AxisSpec) {

@@ -13,7 +13,7 @@ import { bandListOf } from "$lib/core/bands";
 import { intervalZone } from "$lib/core/comfortZones";
 import { enteredSlotFor } from "$lib/core/declarationTestSlots";
 import { temperatureMode } from "$lib/core/entryModes";
-import { imageSize } from "$lib/core/image";
+import { imageSize, type ImageSize } from "$lib/core/image";
 import { valuesReader } from "$lib/core/libraryInputs";
 import { psychrometricChartOf, type ComfortZone, type RegisteredModel } from "$lib/core/modelDeclaration";
 import { resultNumber, runOn } from "$lib/core/modelRun";
@@ -153,20 +153,43 @@ function pmvAt(db: number, rh: number, tr: number): number {
   }).pmv;
 }
 
-/** The single-column Image's plot width, in px: the column less the figure's side margins. */
-const singleColumnPlotWidth = (imageSize.singleColumn.widthMm * 96) / 25.4 - 52 - 12;
+/**
+ * An Image's plot area at `size`, in px: the column less the figure's side
+ * margins with the humidity ratio on the right, half of the first x tick on
+ * the left and the axis on the right, and as tall as the size's ratio makes
+ * it, its labels at 8 pt (`ui/charts/plotlyImage.ts`).
+ */
+function imageFrameOf(name: string, size: ImageSize) {
+  const width = (size.widthMm * 96) / 25.4 - 12 - 52;
+  return { name, width, height: width / size.plotAspectRatio, lettering: (8 * 96) / 72 };
+}
 
 /**
  * Plots the isoline labels must keep apart at, in px, with the lettering's
- * size: the page's plot, the chart at its cap of 512 × 384 less the adapter's
- * margins, its labels at 10 px (`ui/charts/plotlyFigure.ts`), and the
- * narrower of the Image's two, the single column at 4:3, its labels at 8 pt
- * (`ui/charts/plotlyImage.ts`).
+ * size: the page's plot at 1440 × 900, 693 × 384 with the sidebar open and
+ * 905 × 384 with it collapsed (measured, `.scratch/frontend-review-round-2/`
+ * ticket 05 Comments), less the figure's margins with the humidity ratio on
+ * the right (ticket 06), its labels at 10 px (`ui/charts/plotlyFigure.ts`),
+ * and the Image's two, the single column at 4:3 and the double at 16:9
+ * (ticket 07).
  */
+const pageMargin = { l: 16, r: 64, t: 12, b: 48 };
 const labelFrames = [
-  { name: "the page's plot", width: 512 - 64 - 16, height: 384 - 12 - 48, lettering: 10 },
-  { name: "the single-column Image", width: singleColumnPlotWidth, height: singleColumnPlotWidth * 0.75, lettering: (8 * 96) / 72 },
-] as const;
+  {
+    name: "the page's plot, the sidebar open",
+    width: 693 - pageMargin.l - pageMargin.r,
+    height: 384 - pageMargin.t - pageMargin.b,
+    lettering: 10,
+  },
+  {
+    name: "the page's plot, the sidebar collapsed",
+    width: 905 - pageMargin.l - pageMargin.r,
+    height: 384 - pageMargin.t - pageMargin.b,
+    lettering: 10,
+  },
+  imageFrameOf("the single-column Image", imageSize.singleColumn),
+  imageFrameOf("the double-column Image", imageSize.doubleColumn),
+];
 
 type LabelFrame = (typeof labelFrames)[number];
 
@@ -251,6 +274,10 @@ describe("psychrometricSpec", () => {
       expect(line.pieces.every((piece) => piece.x.every((x, index) => vertices.has(`${x} ${piece.y[index]}`)))).toBe(true);
     });
     expect(lines.every((line) => line.color === chartInk.zoneLine(palette.slots[0]) && line.width === chartInk.zoneLineWidth)).toBe(true);
+  });
+
+  it("stands the humidity ratio on the plot's right (ADR-0002 decision 89, rule 7)", () => {
+    expect(spec.layout.y.side).toBe("right");
   });
 
   it("scans the drawn axes: the temperature axis and the humidity ratio, in display units", () => {
@@ -388,12 +415,18 @@ describe("psychrometricSpec", () => {
     expect(marker?.y).toBeCloseTo(hrUnit.fromSi(psy_ta_rh(26, 50).hr), 12);
   });
 
+  it("draws PMV (ISO 7730)'s temperature from 10 to 30 °C, its entry bound, in either entry mode", () => {
+    for (const mode of [temperatureMode.separate, temperatureMode.operative]) {
+      expect(psychrometricSpec(request(mode)).layout.x.range, mode.id).toEqual([10, 30]);
+    }
+  });
+
   it("converts the axes to the displayed unit", () => {
     const spec = psychrometricSpec(request(temperatureMode.separate, unitSystem.ip));
     expect(spec.layout.x.title).toContain("°F");
-    // The declared viewport is 10–35 °C.
+    // The declared viewport is 10–30 °C.
     expect(spec.layout.x.range[0]).toBeCloseTo(50, 10);
-    expect(spec.layout.x.range[1]).toBeCloseTo(95, 10);
+    expect(spec.layout.x.range[1]).toBeCloseTo(86, 10);
     const marker = spec.traces.find((trace): trace is PointTrace => trace.kind === "point");
     expect(marker?.x).toBeCloseTo(78.8, 10);
     // The zones over the same scan as in SI, every vertex the SI vertex converted.
@@ -416,10 +449,12 @@ describe("psychrometricSpec", () => {
     expect(psychrometricSpec(request(temperatureMode.separate)).layout.y).toEqual({
       title: "Humidity ratio (g/kg)",
       range: [0, 30],
+      side: "right",
     });
     expect(psychrometricSpec(request(temperatureMode.separate, unitSystem.ip)).layout.y).toEqual({
       title: "Humidity ratio (lb/klb)",
       range: [0, 30],
+      side: "right",
     });
   });
 
@@ -465,11 +500,11 @@ describe("the psychrometric chart's hover readout on the Standard page", () => {
   });
 
   it("reads the temperature, the humidity ratio and the slot's number, no relative humidity and no zone name", () => {
-    // Cell (row 10, column 30) at PMV (ISO 7730)'s defaults: 25 °C, 6 g/kg, about 30 %.
+    // Cell (row 10, column 30) at PMV (ISO 7730)'s defaults: 22 °C, 6 g/kg, about 37 %, tr 25 °C.
     expect(hoverText[10][30]).toEqual([
-      "Dry-bulb air temperature: 25 °C",
+      "Dry-bulb air temperature: 22 °C",
       "Humidity ratio: 6 g/kg",
-      "PMV: -0.56",
+      "PMV: -1.08",
     ]);
     expect(new Set(hoverText.flat().map((readout) => readout.length))).toEqual(new Set([3]));
   });
@@ -487,12 +522,12 @@ describe("the psychrometric chart's hover readout on the Standard page", () => {
 
   it("reads under operative entry the operative temperature", () => {
     const operative = hoverGridOf(psychrometricSpec(request(temperatureMode.operative)));
-    expect(operative.hoverText[10][30][0]).toBe(`${q.operative_tmp.label}: 25 °C`);
+    expect(operative.hoverText[10][30][0]).toBe(`${q.operative_tmp.label}: 22 °C`);
   });
 
   it("reads in IP units in IP", () => {
     const ip = hoverGridOf(psychrometricSpec(chartRequestFor(pmvPpdIso, startingSlot(pmvPpdIso), unitSystem.ip)));
-    expect(ip.hoverText[10][30].slice(0, 2)).toEqual(["Dry-bulb air temperature: 77 °F", "Humidity ratio: 6 lb/klb"]);
+    expect(ip.hoverText[10][30].slice(0, 2)).toEqual(["Dry-bulb air temperature: 71.6 °F", "Humidity ratio: 6 lb/klb"]);
     expect(ip.hoverText[10][30][2]).toBe(hoverText[10][30][2]);
   });
 

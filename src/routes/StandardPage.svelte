@@ -9,6 +9,7 @@ import { palette } from "$lib/core/palette";
   import ChartLegend from "$lib/ui/charts/ChartLegend.svelte";
   import PlotlyChart from "$lib/ui/charts/PlotlyChart.svelte";
   import ChartControls from "$lib/ui/inputs/ChartControls.svelte";
+  import ChartTypeSelect from "$lib/ui/inputs/ChartTypeSelect.svelte";
   import ExportImageDialog from "$lib/ui/inputs/ExportImageDialog.svelte";
   import InputCalculators from "$lib/ui/inputs/InputCalculators.svelte";
   import InputPanel, { type SlotColumn } from "$lib/ui/inputs/InputPanel.svelte";
@@ -140,6 +141,10 @@ import { palette } from "$lib/core/palette";
     />
   {/snippet}
 
+  {#snippet chartType()}
+    <ChartTypeSelect model={session.model} chart={session.chart} />
+  {/snippet}
+
   {#snippet chartActions()}
     <ExportImageDialog
       chart={outputs.chart}
@@ -153,11 +158,11 @@ import { palette } from "$lib/core/palette";
 
   {#snippet chart()}
     <Stack gap="4">
-      <ChartControls model={session.model} chart={session.chart} drawnAxes={outputs.drawnAxes} />
+      <ChartControls chart={session.chart} drawnAxes={outputs.drawnAxes} />
       {#if outputs.chart}
         <div class="chart-area">
-          <PlotlyChart spec={outputs.chart} />
           <ChartLegend entries={outputs.chart.legend} />
+          <PlotlyChart spec={outputs.chart} />
         </div>
         <!-- Under the plot, a caption per slot whose Comfort zones are all empty, its swatch while the slots are named
              (ADR-0002 decision 83, rule 1); the axes, the marker, the hover and the legend stay as they are. -->
