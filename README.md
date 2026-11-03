@@ -46,7 +46,7 @@ file plus one registry line once its model is ported to the library.
 - **npm** (ships with Node)
 
 `jsthermalcomfort` resolves to `../jsthermalcomfort`, a local checkout of the main
-repository (on the branch carrying the humidity-inverses PR until it merges). The app
+repository on `feat/v2-typescript-setup`. The app
 consumes its build output `lib/esm/`, so run `npm run build` there after changing it.
 
 ## Development
