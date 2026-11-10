@@ -6,10 +6,10 @@
  * should hold, and its Edge's line by the number interpolated at its vertices;
  * and a path drawn in one piece by that piece.
  */
-import { chartInk } from "$lib/core/bandPalette";
+import { chartColors } from "$lib/core/bandPalette";
 import type { ChartSpec, HoverGridTrace, PathPiece, PathTrace } from "./chartSpec";
 
-/** `spec`'s filled paths that carry a name, in drawing order. The cover above saturation has none. */
+/** `spec`'s filled paths that carry a label, in drawing order. The cover above saturation has none. */
 function namedFillsOf(spec: Pick<ChartSpec, "traces">): PathTrace[] {
   return spec.traces.filter((trace): trace is PathTrace => trace.kind === "path" && trace.fill !== undefined && trace.label !== undefined);
 }
@@ -26,15 +26,15 @@ export function zoneLinesOf(spec: Pick<ChartSpec, "traces">): PathTrace[] {
   return spec.traces.filter((trace): trace is PathTrace => trace.kind === "path" && trace.fill === undefined && labels.has(trace.label));
 }
 
-/** `spec`'s Band fills, in drawing order: its named fills named as one of its {@link bandLinesOf} is. */
+/** `spec`'s Band fills, in drawing order: its named fills named as one of its {@link edgeLinesOf} is. */
 export function bandFillsOf(spec: Pick<ChartSpec, "traces">): PathTrace[] {
-  const labels = new Set(bandLinesOf(spec).map((line) => line.label));
+  const labels = new Set(edgeLinesOf(spec).map((line) => line.label));
   return namedFillsOf(spec).filter((fill) => labels.has(fill.label));
 }
 
 /** `spec`'s Band Edges, in drawing order: the paths stroked in the band line. */
-export function bandLinesOf(spec: Pick<ChartSpec, "traces">): PathTrace[] {
-  return spec.traces.filter((trace): trace is PathTrace => trace.kind === "path" && trace.fill === undefined && trace.color === chartInk.bandLine);
+export function edgeLinesOf(spec: Pick<ChartSpec, "traces">): PathTrace[] {
+  return spec.traces.filter((trace): trace is PathTrace => trace.kind === "path" && trace.fill === undefined && trace.color === chartColors.bandLine);
 }
 
 /** `trace`'s one piece; throws if there is no trace, or it has any other number of pieces. */

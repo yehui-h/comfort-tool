@@ -7,34 +7,37 @@
  * `modelDeclarationRun.test.ts`'s.
  */
 import { describe, expect, it } from "vitest";
-import { PMV_CATEGORY_BINS_ISO_7730_2025, PMV_THERMAL_SENSATION_VOTE_BINS_ISO, Standard } from "jsthermalcomfort";
+import { Standard } from "jsthermalcomfort";
+import type { Bound } from "jsthermalcomfort";
 import { registeredModels } from "$lib/models";
 import { adaptiveAshrae } from "$lib/models/adaptiveAshrae";
 import { heatIndexRothfusz } from "$lib/models/heatIndexRothfusz";
 import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
 import { pmvPpdIso } from "$lib/models/pmvPpdIso";
-import { clothingFromOutdoorTemperature, customEnsemble, solarGainOnOccupants, type Calculator } from "./calculators";
+import { cloTout, customEnsemble, solarGain, type Calculator } from "./calculators";
 import { chartType } from "./chartType";
 import { clothingCorrectionFor } from "./clothingCorrection";
 import { categoryZones } from "./comfortZones";
 import {
   adaptiveChartOf,
   axisRangeFor,
+  classifierOf,
   clothingCorrectionOf,
+  declaredQuantitiesOf,
   dynamicChartOf,
+  hasAirSpeedGroup,
   hasClothingGroup,
-  inputsOf,
   optionsOf,
   psychrometricChartOf,
   requireAxisRange,
   standardOf,
-  takesRelativeAirSpeed,
   type DeclaredChart,
-  type RegisteredModel,
+  type ModelDeclaration,
   type ZoneLimits,
 } from "./modelDeclaration";
 import { quantities, type Quantity } from "./quantities";
-import { defaultEntryModes, dynamicClothingOf, startingSlot, valueEntryGroups } from "./slot";
+import { defaultEntryModes, dynamicClothingInsulationOf, defaultSlot, valueEntryGroups } from "./slot";
+import { defaultChartSettings } from "./writtenSession";
 
 const q = quantities;
 
@@ -56,9 +59,22 @@ describe("standard", () => {
 
   it("is ISO 7730:2025 for PMV (ISO 7730), whose comfort zones are its info's category classifier's, that edition's bins", () => {
     expect(standardOf(pmvPpdIso)).toBe(Standard.iso_7730_2025);
-    const classifier = pmvPpdIso.info.outputs.category.classifier;
-    expect(classifier).toBe(PMV_CATEGORY_BINS_ISO_7730_2025);
+    const classifier = classifierOf(pmvPpdIso.info, q.category);
+    // ISO 7730:2025's categories (ADR-0002 decision 80 rule 1): I to IV at
+    // |PMV| 0.2, 0.5, 0.7 and 1.0, strict at both ends, "none" beyond.
+    expect(classifier.labels).toEqual(["I", "II", "III", "IV", "none"]);
+    expect(classifier.edges.slice(0, 4)).toEqual([0.2, 0.5, 0.7, 1]);
+    expect(classifier.right).toBe(false);
     expect(pmvPpdIso.scan.comfortZones).toEqual(categoryZones(classifier));
+  });
+});
+
+describe("scan", () => {
+  it("that names an output its model info does not classify throws when the model is loaded, naming the model and the output", () => {
+    const unclassified: ModelDeclaration = { ...pmvPpdIso, scan: { ...pmvPpdIso.scan, bands: q.pmv } };
+    expect(() => defaultChartSettings(unclassified)).toThrow(
+      `${pmvPpdIso.info.label} gives its output ${q.pmv.label} no classifier`,
+    );
   });
 });
 
@@ -67,7 +83,7 @@ describe("table", () => {
     // A classified output is a column of its own, first in the table
     // (ADR-0002 decision 85, rule 1): one left out would be lost from the page.
     for (const model of registeredModels) {
-      const classifiedKeys = Object.entries(model.info.outputs).flatMap(([key, variable]) => (variable.classifier ? [key] : []));
+      const classifiedKeys = Object.entries(model.info.outputs).flatMap(([key, field]) => (field.classifier ? [key] : []));
       const leading = model.table.slice(0, classifiedKeys.length).map((column) => column.key);
       expect(leading, model.info.label).toEqual(classifiedKeys);
     }
@@ -76,10 +92,10 @@ describe("table", () => {
 
 /**
  * v1 has one chart per chart type (ADR-0002 decision 31's note): the chart
- * lookups return the first entry of a type, and the chart picker keys its
- * entries by type.
+ * lookups return the first chart of a type, and the chart picker keys its
+ * charts by type.
  */
-function expectEachChartTypeOnce(model: RegisteredModel): void {
+function expectEachChartTypeOnce(model: ModelDeclaration): void {
   const types = model.charts.map((chart) => chart.type);
   expect(new Set(types).size, model.info.label).toBe(types.length);
 }
@@ -89,7 +105,7 @@ function expectEachChartTypeOnce(model: RegisteredModel): void {
  * Standard is the model's scan's Comfort zones: a model without them would
  * draw the chart with nothing on it (ADR-0002 decision 61).
  */
-function expectZonesUnderAPsychrometricChart(model: RegisteredModel): void {
+function expectZonesUnderAPsychrometricChart(model: ModelDeclaration): void {
   if (!psychrometricChartOf(model)) return;
   expect(model.scan?.comfortZones, `${model.info.label} declares a psychrometric chart and no Comfort zones in its scan`).toBeDefined();
 }
@@ -108,10 +124,10 @@ describe("charts", () => {
   });
 
   it("that include a psychrometric chart on a model whose scan has no Comfort zones fail the check", () => {
-    const noZones: RegisteredModel = {
+    const noZones: ModelDeclaration = {
       ...pmvPpdIso,
       info: { ...pmvPpdIso.info, label: "Fixture scanning without Comfort zones" },
-      scan: { output: pmvPpdIso.scan.output, classifier: pmvPpdIso.scan.classifier },
+      scan: { output: pmvPpdIso.scan.output, bands: pmvPpdIso.scan.bands },
     };
     expect(() => expectZonesUnderAPsychrometricChart(noZones)).toThrow(noZones.info.label);
   });
@@ -119,7 +135,7 @@ describe("charts", () => {
   it("that name the dynamic chart twice fail the check", () => {
     const dynamic = dynamicChartOf(pmvPpdIso);
     if (!dynamic) throw new Error("PMV (ISO 7730) declares a dynamic chart");
-    const twoDynamicCharts: RegisteredModel = {
+    const twoDynamicCharts: ModelDeclaration = {
       ...pmvPpdIso,
       info: { ...pmvPpdIso.info, label: "Fixture with two dynamic charts" },
       charts: [...pmvPpdIso.charts, dynamic],
@@ -135,25 +151,25 @@ describe("charts", () => {
 });
 
 /** `vr` is derived as `v_relative(v, met)`, so a model that takes it must be entered both. */
-function expectVAndMetUnderRelativeAirSpeed(model: RegisteredModel): void {
-  if (!takesRelativeAirSpeed(model)) return;
-  const entered = inputsOf(model).map((entry) => entry.quantity);
+function expectAirSpeedAndMetabolicRateUnderRelativeAirSpeed(model: ModelDeclaration): void {
+  if (!hasAirSpeedGroup(model)) return;
+  const entered = declaredQuantitiesOf(model).map((input) => input.quantity);
   expect(entered, model.info.label).toEqual(expect.arrayContaining([q.v, q.met]));
 }
 
-describe("takesRelativeAirSpeed", () => {
+describe("hasAirSpeedGroup", () => {
   it("answers whether the model info's inputs name vr", () => {
     expect(pmvPpdIso.info.inputs[q.vr.key]).toBeDefined();
-    expect(takesRelativeAirSpeed(pmvPpdIso)).toBe(true);
+    expect(hasAirSpeedGroup(pmvPpdIso)).toBe(true);
 
     const inputs = Object.fromEntries(Object.entries(pmvPpdIso.info.inputs).filter(([key]) => key !== q.vr.key));
-    expect(takesRelativeAirSpeed({ ...pmvPpdIso, info: { ...pmvPpdIso.info, inputs } })).toBe(false);
+    expect(hasAirSpeedGroup({ ...pmvPpdIso, info: { ...pmvPpdIso.info, inputs } })).toBe(false);
   });
 });
 
-describe("inputsOf and optionsOf", () => {
+describe("declaredQuantitiesOf and optionsOf", () => {
   it("read PMV (ASHRAE 55)'s quantities with their defaults and its one option off its panel list", () => {
-    expect(inputsOf(pmvPpdAshrae).map((entry) => entry.quantity)).toEqual([q.tdb, q.tr, q.v, q.rh, q.met, q.clo]);
+    expect(declaredQuantitiesOf(pmvPpdAshrae).map((input) => input.quantity)).toEqual([q.tdb, q.tr, q.v, q.rh, q.met, q.clo]);
     expect(optionsOf(pmvPpdAshrae).map((option) => option.key)).toEqual(["airspeed_control"]);
   });
 
@@ -165,7 +181,7 @@ describe("inputsOf and optionsOf", () => {
 
   it("between them read every element of the list once, for every registered model", () => {
     for (const model of registeredModels) {
-      const read = [...inputsOf(model), ...optionsOf(model).map((option) => ({ option }))];
+      const read = [...declaredQuantitiesOf(model), ...optionsOf(model).map((option) => ({ option }))];
       expect(read, model.info.label).toHaveLength(model.inputs.length);
       expect(model.inputs, model.info.label).toEqual(expect.arrayContaining(read));
     }
@@ -174,16 +190,16 @@ describe("inputsOf and optionsOf", () => {
 
 describe("calculators", () => {
   /** Each row of `model` that offers a calculator, as its quantity and what it offers. */
-  const offeredBy = (model: RegisteredModel) =>
-    inputsOf(model).flatMap((entry) => (entry.calculators ? [[entry.quantity, entry.calculators]] : []));
+  const offeredBy = (model: ModelDeclaration) =>
+    declaredQuantitiesOf(model).flatMap((input) => (input.calculators ? [[input.quantity, input.calculators]] : []));
 
   it("stand on the rows decision 75 names, and on no other, for every registered model", () => {
-    const table = new Map<RegisteredModel, unknown[]>([
+    const table = new Map<ModelDeclaration, unknown[]>([
       [
         pmvPpdAshrae,
         [
-          [q.tr, [solarGainOnOccupants]],
-          [q.clo, [customEnsemble, clothingFromOutdoorTemperature]],
+          [q.tr, [solarGain]],
+          [q.clo, [customEnsemble, cloTout]],
         ],
       ],
       [pmvPpdIso, [[q.clo, [customEnsemble]]]],
@@ -200,13 +216,13 @@ describe("calculators", () => {
   it("that write a clothing insulation stand only on clo rows, and Solar gain only on tr rows, for every registered model", () => {
     const rowOf = new Map<Calculator, Quantity>([
       [customEnsemble, q.clo],
-      [clothingFromOutdoorTemperature, q.clo],
-      [solarGainOnOccupants, q.tr],
+      [cloTout, q.clo],
+      [solarGain, q.tr],
     ]);
     for (const model of registeredModels) {
-      for (const entry of inputsOf(model)) {
-        for (const calculator of entry.calculators ?? []) {
-          expect(entry.quantity, `${model.info.label}: ${calculator.label}`).toBe(rowOf.get(calculator));
+      for (const input of declaredQuantitiesOf(model)) {
+        for (const calculator of input.calculators ?? []) {
+          expect(input.quantity, `${model.info.label}: ${calculator.label}`).toBe(rowOf.get(calculator));
         }
       }
     }
@@ -216,22 +232,22 @@ describe("calculators", () => {
 describe("inputs", () => {
   it("enter v and met wherever the model takes vr, for every registered model", () => {
     for (const model of registeredModels) {
-      expectVAndMetUnderRelativeAirSpeed(model);
+      expectAirSpeedAndMetabolicRateUnderRelativeAirSpeed(model);
     }
   });
 
   it("that leave out met where the model takes vr fail the check", () => {
-    const noMet: RegisteredModel = {
+    const withoutMetabolicRate: ModelDeclaration = {
       ...pmvPpdIso,
       info: { ...pmvPpdIso.info, label: "Fixture taking vr without met" },
-      inputs: pmvPpdIso.inputs.filter((entry) => entry.quantity !== q.met),
+      inputs: pmvPpdIso.inputs.filter((input) => input.quantity !== q.met),
     };
-    expect(() => expectVAndMetUnderRelativeAirSpeed(noMet)).toThrow(noMet.info.label);
+    expect(() => expectAirSpeedAndMetabolicRateUnderRelativeAirSpeed(withoutMetabolicRate)).toThrow(withoutMetabolicRate.info.label);
   });
 });
 
 /** Whether the model's info names the clothing insulation and its standard has a clothing correction. */
-function takesClothingUnderACorrectingStandard(model: RegisteredModel): boolean {
+function takesClothingUnderACorrectingStandard(model: ModelDeclaration): boolean {
   return model.info.inputs[q.clo.key] !== undefined && clothingCorrectionFor(standardOf(model)) !== undefined;
 }
 
@@ -239,14 +255,14 @@ function takesClothingUnderACorrectingStandard(model: RegisteredModel): boolean 
  * The clothing is corrected at the slot's own values, so a model with the
  * clothing group must be entered what its standard's rule takes: the
  * metabolic rate, and the air speed where the rule reads one. Correcting the
- * model's own starting slot reads exactly those.
+ * model's own default slot reads exactly those.
  */
-function expectWhatTheClothingCorrectionTakes(model: RegisteredModel): void {
+function expectWhatTheClothingCorrectionTakes(model: ModelDeclaration): void {
   if (!hasClothingGroup(model)) return;
-  expect(inputsOf(model).map((entry) => entry.quantity), model.info.label).toContain(q.met);
+  expect(declaredQuantitiesOf(model).map((input) => input.quantity), model.info.label).toContain(q.met);
   let corrected: number;
   try {
-    corrected = dynamicClothingOf(startingSlot(model), model);
+    corrected = dynamicClothingInsulationOf(defaultSlot(model), model);
   } catch (error) {
     throw new Error(`${model.info.label}: ${String(error)}`);
   }
@@ -274,27 +290,27 @@ describe("the clothing entry group", () => {
   });
 
   it("that leaves out met fails the check", () => {
-    const noMet: RegisteredModel = {
+    const withoutMetabolicRate: ModelDeclaration = {
       ...pmvPpdAshrae,
       info: { ...pmvPpdAshrae.info, label: "Fixture correcting clothing without met" },
-      inputs: pmvPpdAshrae.inputs.filter((entry) => entry.quantity !== q.met),
+      inputs: pmvPpdAshrae.inputs.filter((input) => input.quantity !== q.met),
     };
-    expect(() => expectWhatTheClothingCorrectionTakes(noMet)).toThrow(noMet.info.label);
+    expect(() => expectWhatTheClothingCorrectionTakes(withoutMetabolicRate)).toThrow(withoutMetabolicRate.info.label);
   });
 
   it("that leaves out v under ISO 7730, whose correction takes the air speed, fails the check", () => {
-    const noAirSpeed: RegisteredModel = {
+    const noAirSpeed: ModelDeclaration = {
       ...pmvPpdIso,
       info: { ...pmvPpdIso.info, label: "Fixture correcting clothing by ISO 7730 without v" },
-      inputs: pmvPpdIso.inputs.filter((entry) => entry.quantity !== q.v),
+      inputs: pmvPpdIso.inputs.filter((input) => input.quantity !== q.v),
     };
     expect(() => expectWhatTheClothingCorrectionTakes(noAirSpeed)).toThrow(noAirSpeed.info.label);
   });
 
   it("that leaves out v under ASHRAE 55, whose correction takes none, passes the check", () => {
-    const noAirSpeed: RegisteredModel = {
+    const noAirSpeed: ModelDeclaration = {
       ...pmvPpdAshrae,
-      inputs: pmvPpdAshrae.inputs.filter((entry) => entry.quantity !== q.v),
+      inputs: pmvPpdAshrae.inputs.filter((input) => input.quantity !== q.v),
     };
     expect(() => expectWhatTheClothingCorrectionTakes(noAirSpeed)).not.toThrow();
   });
@@ -305,8 +321,8 @@ describe("axisRangeFor", () => {
     const declared = heatIndexRothfusz.axisRanges.find((range) => range.quantity === q.tdb);
     if (!declared) throw new Error("Heat Index declares a tdb range");
     // A declared range equal to the applicability bound could not tell the two sources apart.
-    const bound = heatIndexRothfusz.info.inputs.tdb?.applicability;
-    expect([declared.min, declared.max]).not.toEqual([bound?.min, bound?.max]);
+    const bound: Bound = heatIndexRothfusz.info.inputs.tdb.applicability;
+    expect([declared.min, declared.max]).not.toEqual([bound.min, bound.max]);
     expect(axisRangeFor(heatIndexRothfusz, q.tdb)).toEqual({ min: declared.min, max: declared.max });
   });
 
@@ -331,7 +347,7 @@ describe("axisRangeFor", () => {
  * (ADR-0002 decision 5). One direction only: a model may declare another
  * mode's and leave the default's to the fallback, as Adaptive (ASHRAE 55) does.
  */
-function expectEveryModeAxisRangeBesideTheDefaultModes(model: RegisteredModel): void {
+function expectEveryModeAxisRangeBesideTheDefaultModes(model: ModelDeclaration): void {
   const declared = model.axisRanges.map((range) => range.quantity);
   for (const group of valueEntryGroups) {
     if (!group.appliesTo(model) || !declared.includes(group.modeOf(defaultEntryModes).axis)) continue;
@@ -347,7 +363,7 @@ describe("axisRanges", () => {
   });
 
   it("that name the air speed and not the relative air speed fail the check", () => {
-    const noRelativeAirSpeedRange: RegisteredModel = {
+    const noRelativeAirSpeedRange: ModelDeclaration = {
       ...pmvPpdIso,
       info: { ...pmvPpdIso.info, label: "Fixture without a relative air speed range" },
       axisRanges: pmvPpdIso.axisRanges.filter((range) => range.quantity !== q.vr),
@@ -356,12 +372,12 @@ describe("axisRanges", () => {
   });
 
   it("that name the clothing insulation and not the dynamic one fail the check", () => {
-    const noDynamicClothingRange: RegisteredModel = {
+    const noDynamicClothingInsulationRange: ModelDeclaration = {
       ...pmvPpdIso,
       info: { ...pmvPpdIso.info, label: "Fixture without a dynamic clothing range" },
       axisRanges: pmvPpdIso.axisRanges.filter((range) => range.quantity !== q.clo_dynamic),
     };
-    expect(() => expectEveryModeAxisRangeBesideTheDefaultModes(noDynamicClothingRange)).toThrow(noDynamicClothingRange.info.label);
+    expect(() => expectEveryModeAxisRangeBesideTheDefaultModes(noDynamicClothingInsulationRange)).toThrow(noDynamicClothingInsulationRange.info.label);
   });
 
   // No model info names the dynamic clothing insulation, so without a declared
@@ -414,7 +430,7 @@ describe("requireAxisRange", () => {
  * Type-level proof of the declaration's shapes (ADR-0002 decisions 37, 61 and
  * 62), compiled by `npm run check` and never called: each `@ts-expect-error`
  * fails the build the day the compiler stops refusing that literal. What the
- * model scans is its own, so no chart names an output or a classifier; the
+ * model scans is its own, so no chart names an output or its Bands; the
  * psychrometric chart names nothing but its type, the dynamic chart its axes,
  * and the adaptive chart its axes and its limits source; and only the adaptive
  * chart may be declared by a model without a scan. Exported only because
@@ -422,7 +438,6 @@ describe("requireAxisRange", () => {
  */
 export function chartShapesTypeProof(limits: readonly ZoneLimits[]): DeclaredChart[] {
   const axes = { x: q.v, y: q.operative_tmp };
-  const classifier = PMV_THERMAL_SENSATION_VOTE_BINS_ISO;
   const zone = { label: "Zone", limit: 0.5, inclusive: false };
   return [
     { type: chartType.psychrometric },
@@ -430,8 +445,8 @@ export function chartShapesTypeProof(limits: readonly ZoneLimits[]): DeclaredCha
     { type: chartType.adaptive, axes, limits: () => limits },
     // @ts-expect-error an output on a chart, which is the model's scan's
     { type: chartType.dynamic, axes, output: q.pmv },
-    // @ts-expect-error a classifier on a chart, which is the model's scan's
-    { type: chartType.dynamic, axes, classifier },
+    // @ts-expect-error Bands on a chart, which are the model's scan's
+    { type: chartType.dynamic, axes, bands: q.tsv },
     // @ts-expect-error a psychrometric chart with axes, which its temperature entry mode fixes
     { type: chartType.psychrometric, axes },
     // @ts-expect-error a psychrometric chart with Comfort zones, which are the model's scan's
@@ -446,15 +461,15 @@ export function chartShapesTypeProof(limits: readonly ZoneLimits[]): DeclaredCha
     { type: chartType.adaptive, axes, limits: () => [{ label: "Zone", x: [0, 1, 1], y: [0, 0, 1] }] },
     // @ts-expect-error an adaptive chart with an output it does not scan
     { type: chartType.adaptive, axes, limits: () => limits, output: q.pmv },
-    // @ts-expect-error an adaptive chart with a classifier it does not scan
-    { type: chartType.adaptive, axes, limits: () => limits, classifier },
+    // @ts-expect-error an adaptive chart with Bands it does not scan
+    { type: chartType.adaptive, axes, limits: () => limits, bands: q.tsv },
   ];
 }
 
 /** The same, for which charts a model may declare with and without a scan. */
-export function scanShapesTypeProof(limits: readonly ZoneLimits[]): RegisteredModel[] {
+export function scanShapesTypeProof(limits: readonly ZoneLimits[]): ModelDeclaration[] {
   const { charts: _charts, ...unscanned } = adaptiveAshrae;
-  const scan = { output: q.pmv, classifier: PMV_THERMAL_SENSATION_VOTE_BINS_ISO };
+  const scan = { output: q.pmv, bands: q.tsv };
   const axes = { x: q.v, y: q.operative_tmp };
   const adaptive = { type: chartType.adaptive, axes, limits: () => limits };
   return [

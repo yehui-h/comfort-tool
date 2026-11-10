@@ -8,10 +8,11 @@
  * is on, and the texts a tab keeps and a link carries of it. Shared by the
  * state tests so that all of them compare the same way.
  */
+import type { ModelOutputs } from "jsthermalcomfort";
 import { expect } from "vitest";
 import { outOfRangeRows, type Bound, type OutOfRangeRow } from "$lib/core/applicability";
-import type { ModelResult, RegisteredModel } from "$lib/core/modelDeclaration";
-import { resultValue } from "$lib/core/modelRun";
+import type { ModelDeclaration } from "$lib/core/modelDeclaration";
+import { outputValue } from "$lib/core/modelRun";
 import type { Address } from "$lib/core/page";
 import { quantities, type Quantity } from "$lib/core/quantities";
 import { narrowedToPage, toText } from "$lib/core/shareLink";
@@ -86,31 +87,34 @@ export function shownDifferences(...differences: readonly [Quantity, number][]):
 }
 
 /**
- * One share of each value a slot holds at `model`'s defaults, in the separate,
- * air speed and clothing insulation entry modes: one twentieth of the
- * quantity's axis range, written by hand from each model file's axis ranges
- * and, where it declares none, its library applicability bound. Slot 2 first
- * enabled is moved by one share, slot 3 by two (GLOSSARY.md, **Slot offset**).
+ * The Slot offset per position of each value a slot holds at `model`'s
+ * defaults, in the separate, air speed and clothing insulation entry modes:
+ * one twentieth of the quantity's axis range, written by hand from each model
+ * file's axis ranges and, where it declares none, its library applicability
+ * bound. Slot 2 first enabled is moved by it once, slot 3 twice (GLOSSARY.md,
+ * **Slot offset**).
  */
-const oneShareAtDefaults = new Map<RegisteredModel, readonly [Quantity, number][]>([
+const slotOffsetPerPositionAtDefaults = new Map<ModelDeclaration, readonly [Quantity, number][]>([
   [pmvPpdAshrae, [[q.tdb, 1.5], [q.tr, 1.5], [q.v, 0.1], [q.met, 0.15], [q.clo, 0.11]]],
   [pmvPpdIso, [[q.tdb, 1], [q.tr, 1.5], [q.v, 0.05], [q.met, 0.16], [q.clo, 0.2]]],
   [adaptiveAshrae, [[q.tdb, 1.5], [q.tr, 1.5], [q.t_running_mean, 1.175], [q.v, 0.1]]],
 ]);
 
 /**
- * How far a slot first enabled with `shares` shares stands from slot 1 at
+ * How far the slot at `position`, first enabled, stands from slot 1 at
  * `model`'s defaults, as {@link differenceFromSlot1} is compared against;
  * `except` names the quantities the move leaves where slot 1 has them, as a
  * cut to a bound does.
  */
-export function sharesAtDefaults(model: RegisteredModel, shares: number, except: readonly Quantity[] = []): Map<Quantity, unknown> {
-  const oneShare = oneShareAtDefaults.get(model);
-  if (!oneShare) {
-    throw new Error(`no share is written for ${model.info.label}`);
+export function slotOffsetAtDefaults(model: ModelDeclaration, position: number, except: readonly Quantity[] = []): Map<Quantity, unknown> {
+  const perPosition = slotOffsetPerPositionAtDefaults.get(model);
+  if (!perPosition) {
+    throw new Error(`no Slot offset is written for ${model.info.label}`);
   }
   return shownDifferences(
-    ...oneShare.flatMap(([quantity, share]): [Quantity, number][] => (except.includes(quantity) ? [] : [[quantity, share * shares]])),
+    ...perPosition.flatMap(([quantity, offsetPerPosition]): [Quantity, number][] =>
+      except.includes(quantity) ? [] : [[quantity, offsetPerPosition * position]],
+    ),
   );
 }
 
@@ -131,7 +135,7 @@ export function enterSlot1ValuesInOthers(session: Session): Session {
 }
 
 /** A session on `model` with Compare on and all three slots enabled, each started from slot 1 moved by its Slot offset. */
-export function sessionComparingThreeSlots(model: RegisteredModel): Session {
+export function sessionComparingThreeSlots(model: ModelDeclaration): Session {
   const session = new Session(model);
   session.setCompare(true);
   session.setSlotEnabled(2, true);
@@ -155,8 +159,8 @@ export function editBands(session: Session, edit: (draft: BandListDraft) => void
 }
 
 /** A value the result table would show, read through the app's own accessor. */
-export function resultValueOf(result: ModelResult | null, quantity: Quantity) {
-  return result === null ? undefined : resultValue(result, quantity);
+export function outputValueOf(outputs: ModelOutputs | null, quantity: Quantity) {
+  return outputs === null ? undefined : outputValue(outputs, quantity);
 }
 
 /**
@@ -174,16 +178,16 @@ export function listedRowsOf(session: Session, position: SlotPosition = 0): read
  * `info.inputs` keys them. Everything else about the model is the registered
  * one's, because the bounds are the only thing the tests using it are about.
  */
-export function withBounds(bounds: Readonly<Record<string, Bound>>): RegisteredModel {
+export function withBounds(bounds: Readonly<Record<string, Bound>>): ModelDeclaration {
   return {
     ...pmvPpdIso,
     info: {
       ...pmvPpdIso.info,
       name: `fixture_bounds_${Object.keys(bounds).join("_")}`,
       inputs: Object.fromEntries(
-        Object.entries(pmvPpdIso.info.inputs).map(([key, variable]) => [
+        Object.entries(pmvPpdIso.info.inputs).map(([key, field]) => [
           key,
-          key in bounds ? { ...variable, applicability: bounds[key] } : variable,
+          key in bounds ? { ...field, applicability: bounds[key] } : field,
         ]),
       ),
     },

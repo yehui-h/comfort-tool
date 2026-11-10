@@ -1,14 +1,14 @@
 import type { BandList } from "$lib/core/bands";
-import type { RegisteredModel } from "$lib/core/modelDeclaration";
+import type { ModelDeclaration } from "$lib/core/modelDeclaration";
 import type { Slot, ValueEntryModes } from "$lib/core/slot";
-import type { SlotBadge } from "$lib/core/slotBadge";
+import type { SlotAppearance } from "$lib/core/slotAppearance";
 import type { UnitSystem } from "$lib/core/unitSystem";
 
 /**
- * One slot the chart is drawn of: its inputs, and the name and hue its
+ * One slot the chart is drawn of: its inputs, and the label and hue its
  * position gives it.
  */
-export interface ChartedSlot extends SlotBadge {
+export interface ChartedSlot extends SlotAppearance {
   readonly slot: Slot;
 }
 
@@ -19,7 +19,7 @@ export interface ChartedSlot extends SlotBadge {
  * chart component reads.
  */
 export interface ChartRequest {
-  readonly model: RegisteredModel;
+  readonly model: ModelDeclaration;
   readonly slots: readonly ChartedSlot[];
   readonly unitSystem: UnitSystem;
   /**

@@ -2,13 +2,13 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 /**
  * What is typed in a box is a draft (ADR-0002 decision 84, rules 1, 2 and 7):
- * a legal one commits 400 ms after the last keystroke, Enter and leaving the
- * box commit at once, and nothing moves before; a draft past its bound is
- * marked once the typing pauses, never while it is typed, and waits, and is
- * cut to the bound's end on leaving the box; a draft that would put a
+ * one within its bounds commits 400 ms after the last keystroke, Enter and
+ * leaving the box commit at once, and nothing moves before; a draft past its
+ * bound is marked once the typing pauses, never while it is typed, and waits,
+ * and is cut to the bound's end on leaving the box; a draft that would put a
  * humidity entry out of range is refused, and an air speed past the model's
  * row under a metabolic rate is not: the run is calculated and its broken
- * limit shown on its result row, with the toast a newly broken limit raises.
+ * bound shown on its result row, with the toast a newly broken bound raises.
  * A refusal raises a toast, a cut none (decision 84's note of 2026-10-28). The page's clock is paused once it has drawn, so a pause in
  * the typing is the time the test runs the clock for.
  */
@@ -16,7 +16,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 /** PMV (ASHRAE 55): dry-bulb 10 – 40 °C. */
 const PMV_ADDRESS = "/standard/ashrae-55-2023/pmv-ppd-ashrae";
 
-/** How long typing pauses before a legal draft commits, [ms]: the box's `COMMIT_PAUSE_MS`. */
+/** How long typing pauses before a draft within its bounds commits, [ms]: the box's `COMMIT_PAUSE_MS`. */
 const COMMIT_PAUSE = 400;
 
 async function open(page: Page) {
@@ -28,7 +28,7 @@ async function open(page: Page) {
   await page.clock.pauseAt(now + 1000);
 }
 
-const dryBulb = (page: Page) => page.getByRole("spinbutton", { name: /^Dry-bulb air temperature/ });
+const dryBulbTemperature = (page: Page) => page.getByRole("spinbutton", { name: /^Dry-bulb air temperature/ });
 
 const resultTable = (page: Page) =>
   page.locator('[data-slot="card"]').filter({ has: page.getByRole("heading", { name: "Results", exact: true }) }).getByRole("table");
@@ -84,10 +84,10 @@ async function recordTexts(table: Locator): Promise<() => Promise<(string | null
   return () => table.page().evaluate(() => (window as unknown as { recordedTexts: (string | null)[] }).recordedTexts);
 }
 
-test.describe("a legal draft", () => {
-  test("typing 16 over 19, under 400 ms between keystrokes, commits 16 once, and the result does not change before the pause ends", async ({ page }) => {
+test.describe("a draft within its bounds", () => {
+  test("typing 16 over 19, under 400 ms between keystrokes, commits 16 once, and the result table does not change before the pause ends", async ({ page }) => {
     await open(page);
-    const box = dryBulb(page);
+    const box = dryBulbTemperature(page);
     const table = resultTable(page);
     const at25 = await textOf(table);
     await commit(box, "19");
@@ -131,7 +131,7 @@ test.describe("a legal draft", () => {
     const table = resultTable(page);
     const before = await textOf(table);
 
-    await commit(dryBulb(page), "16");
+    await commit(dryBulbTemperature(page), "16");
 
     // No time has run: the pause did not commit it.
     await changedFrom(table, before);
@@ -139,7 +139,7 @@ test.describe("a legal draft", () => {
 
   test("leaving the box commits at once", async ({ page }) => {
     await open(page);
-    const box = dryBulb(page);
+    const box = dryBulbTemperature(page);
     const table = resultTable(page);
     const before = await textOf(table);
 
@@ -152,9 +152,9 @@ test.describe("a legal draft", () => {
 });
 
 test.describe("a draft past its bound", () => {
-  test("of 10 – 40 °C, 45 is not marked while it is typed and is marked once the typing pauses, the line under it and the result unchanged; a further keystroke takes the mark away until the next pause", async ({ page }) => {
+  test("of 10 – 40 °C, 45 is not marked while it is typed and is marked once the typing pauses, the line under it and the result table unchanged; a further keystroke takes the mark away until the next pause", async ({ page }) => {
     await open(page);
-    const box = dryBulb(page);
+    const box = dryBulbTemperature(page);
     const table = resultTable(page);
     const caption = captionOf(box);
     const before = await textOf(table);
@@ -181,9 +181,9 @@ test.describe("a draft past its bound", () => {
     await expectText(table, before);
   });
 
-  test("leaving the box with 45 cuts it to 40: the box shows 40 over the bound, the result is for 40, and no toast is raised", async ({ page }) => {
+  test("leaving the box with 45 cuts it to 40: the box shows 40 over the bound, the result table is for 40, and no toast is raised", async ({ page }) => {
     await open(page);
-    const box = dryBulb(page);
+    const box = dryBulbTemperature(page);
     const table = resultTable(page);
     const at25 = await textOf(table);
     await commit(box, "40");
@@ -208,7 +208,7 @@ test.describe("a draft that would put a humidity entry out of range", () => {
     await page.getByRole("button", { name: "Change humidity", exact: true }).click();
     await page.getByRole("menu").getByRole("menuitemradio", { name: /^Dew-point temperature/ }).click();
     await commit(page.getByRole("spinbutton", { name: /^Dew-point temperature/ }), "15");
-    const box = dryBulb(page);
+    const box = dryBulbTemperature(page);
     const table = resultTable(page);
     const before = await textOf(table);
 
@@ -236,7 +236,7 @@ test.describe("a draft that would put a humidity entry out of range", () => {
 });
 
 test.describe("an air speed held under a metabolic rate", () => {
-  test("on PMV (ASHRAE 55) at 1.5 m/s, 3 met is taken, the lines under the air speed and the clothing read ≥ 0 with their units, and the result row shows the relative air speed's limit broken", async ({ page }) => {
+  test("on PMV (ASHRAE 55) at 1.5 m/s, 3 met is taken, the lines under the air speed and the clothing read ≥ 0 with their units, and the result row shows the relative air speed's bound broken", async ({ page }) => {
     await open(page);
     const airSpeed = page.getByRole("spinbutton", { name: /^Air speed/ });
     await commit(airSpeed, "1.5");
@@ -252,8 +252,8 @@ test.describe("an air speed held under a metabolic rate", () => {
     await expect(captionOf(page.getByRole("spinbutton", { name: /^Clothing insulation/ }))).toHaveText("≥ 0 clo");
     // 1.5 m/s at 3 met is a relative air speed of 2.1 m/s, past the model's 2.
     await expect(table.getByRole("img", { name: "Calculated, but outside these limits:" })).toHaveAttribute("title", "Calculated, but outside these limits:\nRelative air speed must be 0 – 2 m/s");
-    // One toast, the air speed's own commit's, past the limit without local control at 1.1 met; the metabolic rate
-    // keeps the relative air speed's limit broken, so it raises none.
+    // One toast, the air speed's own commit's, past the bound without local control at 1.1 met; the metabolic rate
+    // keeps the relative air speed's bound broken, so it raises none.
     await expect(toasts(page)).toHaveCount(1);
     await expect(toasts(page)).toContainText("Relative air speed must be ≤ 0.64 m/s");
   });

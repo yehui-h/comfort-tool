@@ -5,7 +5,7 @@
  * rule 7). It reads the spec alone and touches no node.
  */
 import type { PlotlyAnnotation, PlotlyData, PlotlyLayout } from "plotly.js-cartesian-dist-min";
-import { chartInk } from "$lib/core/bandPalette";
+import { chartColors } from "$lib/core/bandPalette";
 import type {
   Annotation,
   AxisSide,
@@ -122,11 +122,11 @@ function hoverInfo(mode: HoverMode): "skip" | "text" {
   return mode === "off" ? "skip" : "text";
 }
 
-export function toPlotlyAnnotation(entry: Annotation) {
+export function toPlotlyAnnotation(annotation: Annotation) {
   return {
-    x: entry.x,
-    y: entry.y,
-    text: entry.text,
+    x: annotation.x,
+    y: annotation.y,
+    text: annotation.text,
     showarrow: false,
     xanchor: "right",
     yanchor: "top",
@@ -152,9 +152,9 @@ function viewportRevision(source: ChartSpec): string {
  * default to these.
  */
 const READOUT_LABEL = {
-  font: chartInk.readoutFont,
-  bgcolor: chartInk.readoutGround,
-  bordercolor: chartInk.readoutEdge,
+  font: chartColors.readoutFont,
+  bgcolor: chartColors.readoutBackground,
+  bordercolor: chartColors.readoutBorder,
 };
 
 /**
@@ -196,7 +196,7 @@ export function toPlotlyLayout(source: ChartSpec): PlotlyLayout {
     hovermode: "closest",
     hoverlabel: READOUT_LABEL,
     annotations: source.annotations.map(toPlotlyAnnotation),
-    plot_bgcolor: chartInk.ground,
+    plot_bgcolor: chartColors.plotBackground,
     paper_bgcolor: TRANSPARENT,
     xaxis: toPlotlyAxis(source.layout.x),
     yaxis: toPlotlyYAxis(source.layout.y),

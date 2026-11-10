@@ -1,22 +1,23 @@
 <script lang="ts">
   import TriangleAlertIcon from "@lucide/svelte/icons/triangle-alert";
-  import { limitsBrokenLines } from "$lib/core/applicability";
-  import { chartInk } from "$lib/core/bandPalette";
-  import type { RegisteredModel } from "$lib/core/modelDeclaration";
+  import { boundsBrokenLines } from "$lib/core/applicability";
+  import { chartColors } from "$lib/core/bandPalette";
+  import type { ModelDeclaration } from "$lib/core/modelDeclaration";
   import { formatResultCell, type ResultCell } from "$lib/core/resultCell";
   import type { UnitSystem } from "$lib/core/unitSystem";
-  import type { SlotOutputs } from "$lib/state/compute.svelte";
+  import type { SlotComputation } from "$lib/state/compute.svelte";
   import { copy } from "$lib/text/copy";
   import { Badge } from "$lib/ui/primitives/badge";
   import * as Table from "$lib/ui/primitives/table";
 
   interface Props {
-    model: RegisteredModel;
+    model: ModelDeclaration;
     /**
-     * One row per compared slot, in slot order. While their badges carry names, the Input column names each row beside
-     * its swatch; otherwise its heading is a screen reader's alone and its cell holds the row's limits icon alone, hidden where the row broke no limit.
+     * One row per compared slot, in slot order. While their appearances carry labels, the Input column names each row
+     * beside its swatch; otherwise its heading is a screen reader's alone and its cell holds the row's bounds icon
+     * alone, hidden where the row broke no bound.
      */
-    rows: readonly SlotOutputs[];
+    rows: readonly SlotComputation[];
     unitSystem: UnitSystem;
     /** The id of the Results heading, which names the table's scroll region (ADR-0002 decision 70, rule 2). */
     labelledby: string;
@@ -24,37 +25,37 @@
 
   let { model, rows, unitSystem, labelledby }: Props = $props();
 
-  const namesRows = $derived(rows.some((row) => row.badge.name !== undefined));
+  const namesRows = $derived(rows.some((row) => row.appearance.label !== undefined));
 </script>
 
 <!-- A slot's swatch is its chart marker's. -->
-{#snippet slotSwatch(row: SlotOutputs)}
-  <span class="swatch swatch-marker" style:--swatch-color={chartInk.marker(row.badge.hue)}></span>
+{#snippet slotSwatch(row: SlotComputation)}
+  <span class="swatch swatch-marker" style:--swatch-color={chartColors.marker(row.appearance.hue)}></span>
 {/snippet}
 
-<!-- A Band badge's fill and lettering are its band's, set here as a swatch's colour is; a band without a colour is
+<!-- A Band badge's fill and foreground are its band's, set here as a swatch's colour is; a band without a colour is
      outlined. -->
 {#snippet resultCell(cell: ResultCell)}
   {#if cell.kind === "text"}
     {cell.text}
-  {:else if cell.paint}
-    <Badge class="band-badge" style="--band-fill: {cell.paint.fill}; --band-lettering: {cell.paint.lettering}">{cell.label}</Badge>
+  {:else if cell.colors}
+    <Badge class="band-badge" style="--band-fill: {cell.colors.fill}; --band-foreground: {cell.colors.foreground}">{cell.label}</Badge>
   {:else}
     <Badge variant="outline">{cell.label}</Badge>
   {/if}
 {/snippet}
 
-<!-- A row whose run broke a limit carries an amber icon named by the limits it broke, in the bound sentence's words,
+<!-- A row whose run broke a bound carries an amber icon named by the bounds it broke, in the bound sentence's words,
      one per line: a mouse reads them on hover, a screen reader as the image's name. It is no control (ADR-0002
      decision 85, rule 5); the toast and the Image's Input summary carry the words for a keyboard and a touch. A row
      that broke none keeps it hidden, holding its room so no value column moves when it appears (decision 87,
      rule 9). -->
-{#snippet limitsIcon(row: SlotOutputs)}
+{#snippet boundsIcon(row: SlotComputation)}
   <span
-    class="limits-icon"
-    class:limits-icon-hidden={row.violations.length === 0}
+    class="bounds-icon"
+    class:bounds-icon-hidden={row.violations.length === 0}
     role="img"
-    title={limitsBrokenLines(row.violations, unitSystem).join("\n")}
+    title={boundsBrokenLines(row.violations, unitSystem).join("\n")}
   >
     <TriangleAlertIcon aria-hidden="true" />
   </span>
@@ -76,24 +77,24 @@
       </Table.Row>
     </Table.Header>
     <Table.Body>
-      <!-- A row's limits icon stands first in its Input cell, before the swatch while the rows are named. -->
+      <!-- A row's bounds icon stands first in its Input cell, before the swatch while the rows are named. -->
       {#each rows as row (row)}
         <Table.Row>
           <Table.Cell>
             {#if namesRows}
               <span class="swatch-label">
-                {@render limitsIcon(row)}
+                {@render boundsIcon(row)}
                 {@render slotSwatch(row)}
-                {row.badge.name}
+                {row.appearance.label}
               </span>
             {:else}
-              {@render limitsIcon(row)}
+              {@render boundsIcon(row)}
             {/if}
           </Table.Cell>
           {#each model.table as quantity (quantity)}
-            <!-- A dash standing for a violation carries no icon of its own: the row's limits icon explains it. -->
+            <!-- A dash standing for a violation carries no icon of its own: the row's bounds icon explains it. -->
             <Table.Cell class="value">
-              {@render resultCell(formatResultCell(model, row.result, quantity, unitSystem, row.violations))}
+              {@render resultCell(formatResultCell(model, row.outputs, quantity, unitSystem, row.violations))}
             </Table.Cell>
           {/each}
         </Table.Row>

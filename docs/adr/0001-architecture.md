@@ -332,7 +332,7 @@ Result table (`table`):
 >
 > **The dynamic chart is amended by [ADR-0002](0002-library-interface-model-info.md) decision 37** (2026-09-27): it is declared in one of two shapes, scanned (`axes`, `output`, `bands`) or polygons (`axes`, `zones`), rather than as a scan with an optional `zones` source. A polygons chart's axes are locked: never offered to the picker and never mapped to the entry mode, so an operative axis marks a slot in separate entry at the plain mean of `tdb` and `tr`.
 >
-> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 37 as amended 2026-09-28** (Phase 4b ticket 12): "the plain mean of `tdb` and `tr`" in the marker above is retracted. Under separate entry the slot is marked at the library's operative temperature, `t_o(tdb, tr, v, model.standard)`, weighed by the model's own standard, through the same function the switch into operative entry converts with (decision 39), so the marker and the switch cannot differ. *Noted 2026-10-29 ([ADR-0002](0002-library-interface-model-info.md) decision 86, rule 3): `model.standard` is `standardOf(model)`, the first standard the model info lists (`core/slot.ts:243`).*
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 37 as amended 2026-09-28** (Phase 4b ticket 12): "the plain mean of `tdb` and `tr`" in the marker above is retracted. Under separate entry the slot is marked at the library's operative temperature, `t_o(tdb, tr, v, model.standard)`, weighed by the model's own standard, through the same function the switch into operative entry converts with (decision 39), so the marker and the switch cannot differ. *Noted 2026-10-29 ([ADR-0002](0002-library-interface-model-info.md) decision 86, rule 3): `model.standard` is `standardOf(model)`, the first standard the model info lists (`core/slot.ts:245`).* *Noted 2026-11-05 ([ADR-0002](0002-library-interface-model-info.md) decision 90, rule 4): v2 has no `t_o`; the marker is the library's `operative_tmp(tdb, tr, v, method)`, `"ashrae"` for a model of an ASHRAE standard and `"ISO"` for any other or none (`core/slot.ts:245-248`), the same value for every registered model. The note of 2026-10-29 above is corrected in place: it pointed at `:243`.*
 >
 > **Amended 2026-09-28** (review after Phase 4b, Proposal 19; `S102`): in the legend rules below, `Swatch` is a string union, `"fill" | "line" | "marker"` in `core/charts/chartSpec.ts`, not an object collection read as `Swatch.fill`. Its members double as CSS classes: `ChartLegend.svelte` writes an entry's swatch into the swatch element's `class` and styles each member by that name.
 >
@@ -422,7 +422,7 @@ Legend rules:
 >
 > **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 36** (2026-09-23): `InputSlot.options` below is `SvelteMap<OptionSpec, boolean>` (there is no `OptionValue`) and PMV (ASHRAE 55) is the first model to declare one; across a model switch it is a superset bag like `values`, seeded at the new model's defaults, and the dialog never lists an option.
 >
-> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 39** (2026-09-28): in the first rule below, separate → operative weighs by the model's own standard: `withTemperatureMode` converts with the library's `t_o(tdb, tr, v, model.standard)`, not `operative_tmp(tdb, tr, v)`, and a model that declares no standard passes none, so the library's default decides. *Noted 2026-10-29 ([ADR-0002](0002-library-interface-model-info.md) decision 86, rule 3): `model.standard` is `standardOf(model)`, the first standard the model info lists, and a model that declares no standard is one whose info lists none (`core/slot.ts:243`).*
+> **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 39** (2026-09-28): in the first rule below, separate → operative weighs by the model's own standard: `withTemperatureMode` converts with the library's `t_o(tdb, tr, v, model.standard)`, not `operative_tmp(tdb, tr, v)`, and a model that declares no standard passes none, so the library's default decides. *Noted 2026-10-29 ([ADR-0002](0002-library-interface-model-info.md) decision 86, rule 3): `model.standard` is `standardOf(model)`, the first standard the model info lists, and a model that declares no standard is one whose info lists none (`core/slot.ts:245`).* *Noted 2026-11-05 ([ADR-0002](0002-library-interface-model-info.md) decision 90, rule 4): v2 has no `t_o`; `withTemperatureMode` converts with `operative_tmp(tdb, tr, v, method)`, the method `"ashrae"` for a model of an ASHRAE standard and `"ISO"`, the library's default, for any other or none (`core/slot.ts:245-248`). The note of 2026-10-29 above is corrected in place: it pointed at `:243`.*
 >
 > **Amended by [ADR-0002](0002-library-interface-model-info.md) decision 6**: `Session.standard?: StandardRef` below is dropped. The session holds no standard of its own: a model's standard is its declaration's `standard`, read through `session.model`, so there is one copy. *Corrected 2026-10-29 ([ADR-0002](0002-library-interface-model-info.md) decision 86, rule 3): a model's standard is the first its model info lists, `standardOf(model)`, not a declaration field; the one copy is the library's.*
 >
@@ -676,6 +676,16 @@ The input is a table editor of "segment N + duration in minutes" (rows added one
 > `--plot-width` is no longer read by `.chart-plot`, which takes the card's width at `aspect-ratio: 4 / 3` under
 > `max-block-size: var(--chart-cap)` (`2fbab59`); only `--result-column-min` reads it. The `app.css` line also has
 > `.opens-in-new-tab`, the words a screen reader alone hears.
+>
+> **Noted 2026-11-10** ([ADR-0002](0002-library-interface-model-info.md) decision 91's close-out; `.scratch/naming/`):
+> the rename moves the files the tree and its notes name. `ui/outputs/` is `ui/results/`, the tree's
+> `ResultTable.svelte` in it (`a1c5ac6`), and the 2026-10-28 note's `ui/outputs/notices.ts` is `ui/layout/toasts.ts`,
+> which raises every toast (`57cd535`). The 2026-10-08 note's `core/slotBadge.ts` is `core/slotAppearance.ts`, a
+> slot's label and hue (`a1c5ac6`); the 2026-10-02 and 2026-10-12 notes' `routes/inAppSwitch.ts` is
+> `routes/inAppNavigation.ts` (`49ac5b9`); the 2026-10-02 note's `BandsPanel` is `BandsTable` (`a24b6be`), the
+> 2026-10-06 note's `CopyLinkButton.svelte` is `ShareButton.svelte` (`fea9431`), and the 2026-10-07 note's
+> `browserNotice.behaviour.ts` is `unsupportedBrowser.behaviour.ts` (`57cd535`). The other names in the tree and its
+> notes are history, read through `.scratch/naming/notes.md`'s list.
 
 ```
 src/

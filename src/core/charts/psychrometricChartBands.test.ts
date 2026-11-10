@@ -10,13 +10,13 @@
 import { describe, expect, it } from "vitest";
 import { classifyFromBins, hr_to_rh, psy_ta_rh } from "jsthermalcomfort";
 import { bandListOf, moveEdge, setColor, type BandList } from "$lib/core/bands";
-import { chartInk } from "$lib/core/bandPalette";
+import { chartColors } from "$lib/core/bandPalette";
 import { enteredSlotFor } from "$lib/core/declarationTestSlots";
-import type { RegisteredModel } from "$lib/core/modelDeclaration";
-import { resultNumber, runOn } from "$lib/core/modelRun";
+import { classifierOf, type ModelDeclaration } from "$lib/core/modelDeclaration";
+import { outputNumber, runOn } from "$lib/core/modelRun";
 import { palette } from "$lib/core/palette";
 import { DEFAULT_ATMOSPHERIC_PRESSURE, quantities } from "$lib/core/quantities";
-import { startingSlot, withEnteredValues, type Slot } from "$lib/core/slot";
+import { defaultSlot, withEnteredValues, type Slot } from "$lib/core/slot";
 import { displayUnitFor } from "$lib/core/units";
 import { unitSystem } from "$lib/core/unitSystem";
 import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
@@ -26,7 +26,7 @@ import type { ChartRequest } from "./chartRequest";
 import type { ChartSpec, HoverGridTrace, PathTrace } from "./chartSpec";
 import {
   bandFillsOf as fillsOf,
-  bandLinesOf as linesOf,
+  edgeLinesOf as linesOf,
   heldBetween,
   insideAtSamples,
   numbersAlong,
@@ -40,17 +40,16 @@ import { psychrometricScanFrameFor, psychrometricSpec } from "./psychrometricCha
 import { scannedField } from "./scan";
 
 const q = quantities;
-const hrUnit = displayUnitFor(q.hr, unitSystem.si);
-const p = DEFAULT_ATMOSPHERIC_PRESSURE;
+const humidityRatioUnit = displayUnitFor(q.hr, unitSystem.si);
 
-const isoBands = bandListOf(pmvPpdIso.scan.classifier);
+const isoBands = bandListOf(classifierOf(pmvPpdIso.info, pmvPpdIso.scan.bands));
 
 /** `model`'s psychrometric chart of `slot` as slot 1, painting `bands`, with `changes` to the request. */
 function bandedSpec(
   bands: BandList,
-  slot: Slot = startingSlot(pmvPpdIso),
+  slot: Slot = defaultSlot(pmvPpdIso),
   changes: Partial<ChartRequest> = {},
-  model: RegisteredModel = pmvPpdIso,
+  model: ModelDeclaration = pmvPpdIso,
 ): ChartSpec {
   return psychrometricSpec({ ...chartRequestFor(model, slot), bands, ...changes });
 }
@@ -63,7 +62,7 @@ interface Scanned {
 }
 
 /** Slot 1's scan of `model`'s psychrometric chart of `slot`, painting `bands`, with `changes` to the request. */
-function scannedOf(bands: BandList, slot: Slot = startingSlot(pmvPpdIso), changes: Partial<ChartRequest> = {}, model: RegisteredModel = pmvPpdIso): Scanned {
+function scannedOf(bands: BandList, slot: Slot = defaultSlot(pmvPpdIso), changes: Partial<ChartRequest> = {}, model: ModelDeclaration = pmvPpdIso): Scanned {
   const drawn = { ...chartRequestFor(model, slot), bands, ...changes };
   const frame = psychrometricScanFrameFor(drawn.model, drawn.entryModes, drawn.atmosphericPressure);
   const { x, y } = hoverGridOf(psychrometricSpec(drawn));
@@ -94,7 +93,7 @@ function expectEdgesCrossed(spec: ChartSpec, list: BandList, values: Scanned["va
 }
 
 function hoverGridOf(spec: ChartSpec): HoverGridTrace {
-  const trace = spec.traces.find((entry): entry is HoverGridTrace => entry.kind === "hoverGrid");
+  const trace = spec.traces.find((candidate): candidate is HoverGridTrace => candidate.kind === "hoverGrid");
   if (!trace) {
     throw new Error("spec has no hover grid");
   }
@@ -106,33 +105,33 @@ function isolinesOf(spec: ChartSpec): PathTrace[] {
   return spec.traces.filter((trace): trace is PathTrace => trace.kind === "path" && Boolean(trace.label?.startsWith(q.rh.label)));
 }
 
-/** The cover above the saturation line: the path filled in the plot's ground. */
+/** The cover above the saturation line: the path filled in the plot background. */
 function coverOf(spec: ChartSpec): PathTrace {
-  const trace = spec.traces.find((entry): entry is PathTrace => entry.kind === "path" && entry.fill === chartInk.ground);
+  const trace = spec.traces.find((candidate): candidate is PathTrace => candidate.kind === "path" && candidate.fill === chartColors.plotBackground);
   if (!trace) {
     throw new Error("spec has no cover");
   }
   return trace;
 }
 
-/** Whether the cell of `scan` at (`xIndex`, `yIndex`) is supersaturated at `pressure`: its relative humidity above 100. */
-function isSupersaturated(scan: Scanned, xIndex: number, yIndex: number, pressure: number): boolean {
-  return hr_to_rh(hrUnit.toSi(scan.y[yIndex]), scan.x[xIndex], pressure) > 100;
+/** Whether the cell of `scan` at (`xIndex`, `yIndex`) is supersaturated at `atmosphericPressure`: its relative humidity above 100. */
+function isSupersaturated(scan: Scanned, xIndex: number, yIndex: number, atmosphericPressure: number): boolean {
+  return hr_to_rh(humidityRatioUnit.toSi(scan.y[yIndex]), scan.x[xIndex], atmosphericPressure) > 100;
 }
 
 /**
  * The model's own number at the cell whose temperature axis reads
  * `temperature` and whose humidity ratio reads `hr`, both in SI: the slot
  * with that temperature entered and the relative humidity the library gives
- * for `hr` at `pressure`.
+ * for `hr` at `atmosphericPressure`.
  */
-function numberAt(slot: Slot, temperature: number, hr: number, pressure: number): number {
+function numberAt(slot: Slot, temperature: number, hr: number, atmosphericPressure: number): number {
   const axis = slot.temperature.mode.axis;
   const cell = withEnteredValues(slot, new Map([
     [axis, temperature],
-    [q.rh, hr_to_rh(hr, temperature, pressure)],
+    [q.rh, hr_to_rh(hr, temperature, atmosphericPressure)],
   ]));
-  return resultNumber(runOn(cell, pmvPpdIso, pressure), q.pmv);
+  return outputNumber(runOn(cell, pmvPpdIso, atmosphericPressure), q.pmv);
 }
 
 describe("the psychrometric chart given a Band list", () => {
@@ -143,13 +142,13 @@ describe("the psychrometric chart given a Band list", () => {
 
   it("paints one fill per band of the list, holding the points from its lower Edge up to the last, and no Comfort zone", () => {
     expectFills(spec, isoBands, contiguous(isoBands), trace.values);
-    expect(zoneLinesOf(spec).map((line) => line.color)).not.toContain(chartInk.zoneLine(palette.slots[0]));
+    expect(zoneLinesOf(spec).map((line) => line.color)).not.toContain(chartColors.zoneLine(palette.slots[0]));
     expect(fillsOf(spec).map((fill) => fill.fill)).toEqual(isoBands.colors);
   });
 
   it("strokes every band's own upper Edge once, in the band line at 1 px, read by nothing, where the number crosses it", () => {
     expect(linesOf(spec).map(({ label, color, width, hover }) => ({ label, color, width, hover }))).toEqual(
-      isoBands.labels.map((label) => ({ label, color: chartInk.bandLine, width: chartInk.bandLineWidth, hover: "off" })),
+      isoBands.labels.map((label) => ({ label, color: chartColors.bandLine, width: chartColors.bandLineWidth, hover: "off" })),
     );
     expectEdgesCrossed(spec, isoBands, trace.values);
   });
@@ -165,12 +164,12 @@ describe("the psychrometric chart given a Band list", () => {
   it.each([1, 3])(
     "draws the fills, the isolines below saturation, the outlines, the hover grid, the cover, the saturation line, then the markers, of %i slot(s)",
     (count) => {
-      const slots = Array.from({ length: count }, () => startingSlot(pmvPpdIso));
+      const slots = Array.from({ length: count }, () => defaultSlot(pmvPpdIso));
       const drawn = psychrometricSpec({ ...chartRequestForSlots(pmvPpdIso, slots), bands: isoBands });
       const isolines = isolinesOf(drawn);
       const saturationLine = isolines[isolines.length - 1];
       const markers = drawn.traces.filter((trace) => trace.kind === "point");
-      expect(isolines.map((isoline) => isoline.color)).toEqual([...Array(9).fill(chartInk.isoline), chartInk.saturationLine]);
+      expect(isolines.map((isoline) => isoline.color)).toEqual([...Array(9).fill(chartColors.isoline), chartColors.saturationLine]);
       expect(linesOf(drawn)).toHaveLength(isoBands.edges.length);
       expect(markers).toHaveLength(count);
       expect(drawn.traces).toEqual([
@@ -185,21 +184,21 @@ describe("the psychrometric chart given a Band list", () => {
     },
   );
 
-  it("covers the chart above the saturation line in the ground colour, read by nothing and named nowhere", () => {
+  it("covers the chart above the saturation line in the plot background, read by nothing and named nowhere", () => {
     const trace = coverOf(spec);
     const cover = onlyPieceOf(trace);
     const [xMin, xMax] = spec.layout.x.range;
     const top = spec.layout.y.range[1];
-    expect(trace).toMatchObject({ fill: chartInk.ground, color: chartInk.ground, hover: "off" });
+    expect(trace).toMatchObject({ fill: chartColors.plotBackground, color: chartColors.plotBackground, hover: "off" });
     expect(trace.label).toBeUndefined();
-    expect(spec.legend.map((entry) => entry.color)).not.toContain(chartInk.ground);
+    expect(spec.legend.map((item) => item.color)).not.toContain(chartColors.plotBackground);
     // Along the saturation line from the lowest temperature to the right edge,
     // every point on it: at 30 °C saturated air holds less than the top's 30 g/kg.
     const along = cover.x.length - 2;
     expect(cover.x[0]).toBe(xMin);
     expect(cover.x[along - 1]).toBe(xMax);
     for (let index = 0; index < along; index += 1) {
-      expect(cover.y[index]).toBeCloseTo(hrUnit.fromSi(psy_ta_rh(cover.x[index], 100, p).hr), 10);
+      expect(cover.y[index]).toBeCloseTo(humidityRatioUnit.fromSi(psy_ta_rh(cover.x[index], 100, DEFAULT_ATMOSPHERIC_PRESSURE).hr), 10);
     }
     expect(cover.y[along - 1]).toBeLessThan(top);
     // Then the top-right corner, then the top-left one.
@@ -208,7 +207,7 @@ describe("the psychrometric chart given a Band list", () => {
   });
 
   it("stops the cover's saturation line where it leaves the top of the drawn range, as on PMV (ASHRAE 55)'s 10 to 40 °C", () => {
-    const ashrae = bandedSpec(bandListOf(pmvPpdAshrae.scan.classifier), startingSlot(pmvPpdAshrae), {}, pmvPpdAshrae);
+    const ashrae = bandedSpec(bandListOf(classifierOf(pmvPpdAshrae.info, pmvPpdAshrae.scan.bands)), defaultSlot(pmvPpdAshrae), {}, pmvPpdAshrae);
     const cover = onlyPieceOf(coverOf(ashrae));
     const [xMin, xMax] = ashrae.layout.x.range;
     const top = ashrae.layout.y.range[1];
@@ -216,31 +215,31 @@ describe("the psychrometric chart given a Band list", () => {
     const along = cover.x.length - 2;
     expect(cover.x[0]).toBe(xMin);
     for (let index = 0; index < along; index += 1) {
-      expect(cover.y[index]).toBeCloseTo(hrUnit.fromSi(psy_ta_rh(cover.x[index], 100, p).hr), 10);
+      expect(cover.y[index]).toBeCloseTo(humidityRatioUnit.fromSi(psy_ta_rh(cover.x[index], 100, DEFAULT_ATMOSPHERIC_PRESSURE).hr), 10);
     }
     // To where the line leaves the top of the drawn range, then the top-left corner.
     expect(cover.x[along]).toBeGreaterThan(cover.x[along - 1]);
     expect(cover.x[along]).toBeLessThan(xMax);
     expect(cover.y[along]).toBeCloseTo(top, 10);
-    expect(hrUnit.fromSi(psy_ta_rh(cover.x[along], 100, p).hr)).toBeCloseTo(top, 2);
+    expect(humidityRatioUnit.fromSi(psy_ta_rh(cover.x[along], 100, DEFAULT_ATMOSPHERIC_PRESSURE).hr)).toBeCloseTo(top, 2);
     expect([cover.x[along + 1], cover.y[along + 1]]).toEqual([xMin, top]);
   });
 
-  it("covers the taller range at a lower pressure, along that pressure's saturation line", () => {
-    const pressure = 80000;
-    const thin = bandedSpec(isoBands, startingSlot(pmvPpdIso), { atmosphericPressure: pressure });
+  it("covers the taller range at a lower atmospheric pressure, along that atmospheric pressure's saturation line", () => {
+    const atmosphericPressure = 80000;
+    const thin = bandedSpec(isoBands, defaultSlot(pmvPpdIso), { atmosphericPressure });
     const cover = onlyPieceOf(coverOf(thin));
     const top = thin.layout.y.range[1];
     expect(top).toBeGreaterThan(spec.layout.y.range[1]);
-    expect(cover.y[1]).toBeCloseTo(hrUnit.fromSi(psy_ta_rh(cover.x[1], 100, pressure).hr), 10);
+    expect(cover.y[1]).toBeCloseTo(humidityRatioUnit.fromSi(psy_ta_rh(cover.x[1], 100, atmosphericPressure).hr), 10);
     expect([cover.x[cover.x.length - 1], cover.y[cover.y.length - 1]]).toEqual([thin.layout.x.range[0], top]);
   });
 
   it("carries one legend: humidity, every band, then the slot", () => {
     expect(spec.legend).toEqual([
-      { label: q.rh.label, swatch: "line", color: chartInk.isoline },
+      { label: q.rh.label, swatch: "line", color: chartColors.isoline },
       ...isoBands.labels.map((label, index) => ({ label, swatch: "fill", color: isoBands.colors[index] })),
-      { label: "Input", swatch: "marker", color: chartInk.marker(palette.slots[0]) },
+      { label: "Input", swatch: "marker", color: chartColors.marker(palette.slots[0]) },
     ]);
   });
 
@@ -253,28 +252,28 @@ describe("the psychrometric chart given a Band list", () => {
   it("numbers every cell, the supersaturated ones too", () => {
     expect(trace.values.flat().every((value) => Number.isFinite(value))).toBe(true);
     // The top left is supersaturated, the bottom row dry.
-    expect(isSupersaturated(trace, 0, trace.values.length - 1, p)).toBe(true);
-    expect(trace.values[0].every((_, xIndex) => !isSupersaturated(trace, xIndex, 0, p))).toBe(true);
+    expect(isSupersaturated(trace, 0, trace.values.length - 1, DEFAULT_ATMOSPHERIC_PRESSURE)).toBe(true);
+    expect(trace.values[0].every((_, xIndex) => !isSupersaturated(trace, xIndex, 0, DEFAULT_ATMOSPHERIC_PRESSURE))).toBe(true);
   });
 
   it("numbers a cell with the model's own output at its temperature and the library's relative humidity", () => {
-    const slot = startingSlot(pmvPpdIso);
+    const slot = defaultSlot(pmvPpdIso);
     // The last cell is supersaturated, run at its true relative humidity above 100.
     for (const [yIndex, xIndex] of [[0, 0], [10, 25], [20, 40], [40, 50], [50, 0]]) {
       const temperature = trace.x[xIndex];
-      const hr = hrUnit.toSi(trace.y[yIndex]);
-      expect(trace.values[yIndex][xIndex]).toBe(numberAt(slot, temperature, hr, p));
+      const hr = humidityRatioUnit.toSi(trace.y[yIndex]);
+      expect(trace.values[yIndex][xIndex]).toBe(numberAt(slot, temperature, hr, DEFAULT_ATMOSPHERIC_PRESSURE));
     }
   });
 
   it("numbers a cell at the request's atmospheric pressure, on the taller axis it draws", () => {
-    const pressure = 80000;
-    const drawn = bandedSpec(isoBands, startingSlot(pmvPpdIso), { atmosphericPressure: pressure });
-    const thin = scannedOf(isoBands, startingSlot(pmvPpdIso), { atmosphericPressure: pressure });
+    const atmosphericPressure = 80000;
+    const drawn = bandedSpec(isoBands, defaultSlot(pmvPpdIso), { atmosphericPressure });
+    const thin = scannedOf(isoBands, defaultSlot(pmvPpdIso), { atmosphericPressure });
     expect(thin.y[thin.y.length - 1]).toBeGreaterThan(trace.y[trace.y.length - 1]);
     expect(thin.y[thin.y.length - 1]).toBeCloseTo(drawn.layout.y.range[1], 10);
     const [yIndex, xIndex] = [30, 30];
-    expect(thin.values[yIndex][xIndex]).toBe(numberAt(startingSlot(pmvPpdIso), thin.x[xIndex], hrUnit.toSi(thin.y[yIndex]), pressure));
+    expect(thin.values[yIndex][xIndex]).toBe(numberAt(defaultSlot(pmvPpdIso), thin.x[xIndex], humidityRatioUnit.toSi(thin.y[yIndex]), atmosphericPressure));
   });
 
   it("scans the operative temperature under operative entry, with tr following it", () => {
@@ -283,15 +282,15 @@ describe("the psychrometric chart given a Band list", () => {
     const scanned = scannedOf(isoBands, operative);
     expect(drawn.layout.x.title).toContain(q.operative_tmp.label);
     const [yIndex, xIndex] = [10, 30];
-    expect(scanned.values[yIndex][xIndex]).toBe(numberAt(operative, scanned.x[xIndex], hrUnit.toSi(scanned.y[yIndex]), p));
+    expect(scanned.values[yIndex][xIndex]).toBe(numberAt(operative, scanned.x[xIndex], humidityRatioUnit.toSi(scanned.y[yIndex]), DEFAULT_ATMOSPHERIC_PRESSURE));
   });
 
   it("reads the temperature, the humidity ratio, the number and the band in every cell below saturation, off the hover grid alone", () => {
-    expect(spec.traces.filter((entry) => entry.hover !== "off").map((entry) => entry.kind)).toEqual(["hoverGrid"]);
+    expect(spec.traces.filter((trace) => trace.hover !== "off").map((trace) => trace.kind)).toEqual(["hoverGrid"]);
     const { hoverText } = hoverGridOf(spec);
     trace.values.forEach((row, yIndex) =>
       row.forEach((value, xIndex) => {
-        const band = isSupersaturated(trace, xIndex, yIndex, p) ? Number.NaN : classifyFromBins(value, isoBands);
+        const band = isSupersaturated(trace, xIndex, yIndex, DEFAULT_ATMOSPHERIC_PRESSURE) ? Number.NaN : classifyFromBins(value, isoBands);
         expect(hoverText[yIndex][xIndex].slice(3)).toEqual(typeof band === "string" ? [band] : []);
       }),
     );
@@ -308,7 +307,7 @@ describe("the psychrometric chart given a Band list", () => {
     const { hoverText } = hoverGridOf(spec);
     trace.values.forEach((row, yIndex) =>
       row.forEach((_, xIndex) => {
-        if (isSupersaturated(trace, xIndex, yIndex, p)) {
+        if (isSupersaturated(trace, xIndex, yIndex, DEFAULT_ATMOSPHERIC_PRESSURE)) {
           expect(hoverText[yIndex][xIndex].slice(2)).toEqual(["PMV: —"]);
         }
       }),
@@ -323,9 +322,9 @@ describe("the psychrometric chart given a Band list", () => {
   });
 
   it("paints PMV (ASHRAE 55)'s list over its own scan", () => {
-    const ashraeBands = bandListOf(pmvPpdAshrae.scan.classifier);
-    const drawn = bandedSpec(ashraeBands, startingSlot(pmvPpdAshrae), {}, pmvPpdAshrae);
-    const own = scannedOf(ashraeBands, startingSlot(pmvPpdAshrae), {}, pmvPpdAshrae);
+    const ashraeBands = bandListOf(classifierOf(pmvPpdAshrae.info, pmvPpdAshrae.scan.bands));
+    const drawn = bandedSpec(ashraeBands, defaultSlot(pmvPpdAshrae), {}, pmvPpdAshrae);
+    const own = scannedOf(ashraeBands, defaultSlot(pmvPpdAshrae), {}, pmvPpdAshrae);
     expectFills(drawn, ashraeBands, ashraeBands.labels.map((_, index) => ({ index, top: ashraeBands.edges.length - 1 })), own.values);
     expectEdgesCrossed(drawn, ashraeBands, own.values);
   });
@@ -333,10 +332,10 @@ describe("the psychrometric chart given a Band list", () => {
   it("paints the scan it is handed rather than scanning again", () => {
     // Every band handed as the whole field: each fill is the plot's frame, and no Edge is crossed.
     const everywhere = <Value>(value: Value) => trace.values.map((row) => row.map(() => value));
-    const [xSi, ySi] = [trace.x, trace.y.map((hr) => hrUnit.toSi(hr))];
+    const [xSi, ySi] = [trace.x, trace.y.map((hr) => humidityRatioUnit.toSi(hr))];
     const whole = { x: xSi, y: ySi, inside: everywhere(true), across: everywhere(undefined), up: everywhere(undefined), centre: everywhere(undefined) };
     const drawn = psychrometricSpec(
-      { ...chartRequestFor(pmvPpdIso, startingSlot(pmvPpdIso)), bands: isoBands },
+      { ...chartRequestFor(pmvPpdIso, defaultSlot(pmvPpdIso)), bands: isoBands },
       [{ values: everywhere(0.1), zones: [], regionWithin: () => whole }],
     );
     const last = trace.x.length - 1;
@@ -347,12 +346,12 @@ describe("the psychrometric chart given a Band list", () => {
   });
 
   it("paints Comfort zones and no band when given nothing, under the same cover, over the same scan", () => {
-    const drawn = psychrometricSpec(chartRequestFor(pmvPpdIso, startingSlot(pmvPpdIso)));
+    const drawn = psychrometricSpec(chartRequestFor(pmvPpdIso, defaultSlot(pmvPpdIso)));
     const zoneLabels = [...pmvPpdIso.scan.comfortZones].sort((a, b) => b.limit - a.limit).map((zone) => copy.zoneLegend(zone));
     const zones = zoneFillsOf(drawn);
     expect(zones.map((zone) => zone.label)).toEqual(zoneLabels);
     expect(zoneLinesOf(drawn).map((line) => line.label)).toEqual(zoneLabels);
-    expect(zoneLinesOf(drawn).map((line) => line.color)).not.toContain(chartInk.bandLine);
+    expect(zoneLinesOf(drawn).map((line) => line.color)).not.toContain(chartColors.bandLine);
     expect(linesOf(drawn)).toEqual([]);
     // Over the same scan: every grid point the zone holds has the scan's own number within the zone's limit.
     const [outermost] = zones;

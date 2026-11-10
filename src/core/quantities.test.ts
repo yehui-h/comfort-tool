@@ -17,16 +17,16 @@ import { unitSystem } from "./unitSystem";
 /**
  * Quantities no `_INFO` key names. An entry mode or a derivation names the
  * temperature and humidity representations the app converts to the library's
- * own inputs before calling it (ADR-0002 decisions 2 and 15); `p_atm` is the
- * session's atmospheric pressure, named by the library's functions that take
- * it and by no model info (ADR-0002 decision 49); `clo_dynamic` is the
+ * own inputs before calling it (ADR-0002 decisions 2 and 15); `clo_dynamic` is the
  * clothing insulation entered already corrected, where a model info names
  * `clo` alone (ADR-0002 decision 54).
  */
-const appOwnedQuantities = new Set(["operative_tmp", "hr", "dew_point_tmp", "wet_bulb_tmp", "p_atm", "clo_dynamic"]);
+const appOwnedQuantities = new Set(["operative_tmp", "hr", "dew_point_tmp", "wet_bulb_tmp", "clo_dynamic"]);
 
-function variableKeys(info: ModelInfo): string[] {
-  return [...Object.keys(info.inputs), ...Object.keys(info.outputs), ...Object.keys(info.derived ?? {})];
+/** The keys `info` names a quantity by: its numeric inputs, its outputs and its derived checks. */
+function infoKeysOf(info: ModelInfo): string[] {
+  const numericInputs = Object.entries(info.inputs).filter(([, field]) => field.kind === "numeric");
+  return [...numericInputs.map(([key]) => key), ...Object.keys(info.outputs), ...Object.keys(info.derived ?? {})];
 }
 
 /**
@@ -43,12 +43,12 @@ const tableKeys = Object.keys(quantities);
 describe("quantities table drift", () => {
   it("direction 1: has a row for every input, output and derived key a registered model's or an input calculator's info names", () => {
     for (const model of registeredModels) {
-      for (const key of variableKeys(model.info)) {
+      for (const key of infoKeysOf(model.info)) {
         expect(tableKeys).toContain(key);
       }
     }
     for (const info of [SOLAR_GAIN_INFO, CLO_TOUT_INFO]) {
-      for (const key of variableKeys(info).filter((named) => !calculatorKeysWithoutRow.has(named))) {
+      for (const key of infoKeysOf(info).filter((named) => !calculatorKeysWithoutRow.has(named))) {
         expect(tableKeys).toContain(key);
       }
     }
@@ -58,9 +58,9 @@ describe("quantities table drift", () => {
     }
   });
 
-  it("direction 2: every table key names a package `_INFO` variable or an app-owned quantity", () => {
+  it("direction 2: every table key names a package `_INFO` field or an app-owned quantity", () => {
     const infoExports = Object.entries(jsthermalcomfort).filter(([name]) => name.endsWith("_INFO"));
-    const infoNamedKeys = new Set(infoExports.flatMap(([, info]) => variableKeys(info as ModelInfo)));
+    const infoNamedKeys = new Set(infoExports.flatMap(([, info]) => infoKeysOf(info as ModelInfo)));
     for (const key of tableKeys) {
       expect(infoNamedKeys.has(key) || appOwnedQuantities.has(key)).toBe(true);
     }
@@ -71,19 +71,19 @@ describe("quantities table drift", () => {
   });
 
   it("hi and stress_category are named by HEAT_INDEX_ROTHFUSZ_INFO", () => {
-    expect(variableKeys(HEAT_INDEX_ROTHFUSZ_INFO)).toEqual(expect.arrayContaining(["hi", "stress_category"]));
+    expect(infoKeysOf(HEAT_INDEX_ROTHFUSZ_INFO)).toEqual(expect.arrayContaining(["hi", "stress_category"]));
   });
 
   it("utci is named by UTCI_INFO, a temperature", () => {
-    expect(variableKeys(UTCI_INFO)).toContain("utci");
+    expect(infoKeysOf(UTCI_INFO)).toContain("utci");
     expect(quantities.utci.key).toBe("utci");
     expect(quantities.utci.kind).toBe("temperature");
   });
 
-  it("tr_minus_tdb is named by UTCI_INFO's derived rows, a temperature difference", () => {
-    expect(Object.keys(UTCI_INFO.derived ?? {})).toContain("tr_minus_tdb");
-    expect(quantities.tr_minus_tdb.key).toBe("tr_minus_tdb");
-    expect(quantities.tr_minus_tdb.kind).toBe("temperatureDifference");
+  it("\"tr - tdb\" is named by UTCI_INFO's derived rows, a temperature difference", () => {
+    expect(Object.keys(UTCI_INFO.derived)).toContain("tr - tdb");
+    expect(quantities["tr - tdb"].key).toBe("tr - tdb");
+    expect(quantities["tr - tdb"].kind).toBe("temperatureDifference");
   });
 
   it("Adaptive's eight keys are named by ADAPTIVE_ASHRAE_INFO", () => {
@@ -98,12 +98,12 @@ describe("quantities table drift", () => {
       "acceptability_90",
     ];
     expect(tableKeys).toEqual(expect.arrayContaining(adaptiveKeys));
-    expect(variableKeys(ADAPTIVE_ASHRAE_INFO)).toEqual(expect.arrayContaining(adaptiveKeys));
+    expect(infoKeysOf(ADAPTIVE_ASHRAE_INFO)).toEqual(expect.arrayContaining(adaptiveKeys));
   });
 
   it("compliance is named by PMV_PPD_ASHRAE_INFO", () => {
     expect(tableKeys).toContain("compliance");
-    expect(variableKeys(PMV_PPD_ASHRAE_INFO)).toContain("compliance");
+    expect(infoKeysOf(PMV_PPD_ASHRAE_INFO)).toContain("compliance");
   });
 });
 
@@ -132,14 +132,14 @@ describe("dynamic clothing insulation", () => {
 
 describe("atmospheric pressure", () => {
   it("is p_atm, of its own kind, in kPa and inHg, stepped by 0.1 kPa and 0.01 inHg, bounded 30 000 to 110 000 Pa", () => {
-    const pressure = quantities.p_atm;
-    expect(pressure.key).toBe("p_atm");
-    expect(pressure.kind).toBe("atmosphericPressure");
-    const kilopascals = displayUnitFor(pressure, unitSystem.si);
-    const inchesOfMercury = displayUnitFor(pressure, unitSystem.ip);
+    const atmosphericPressure = quantities.p_atm;
+    expect(atmosphericPressure.key).toBe("p_atm");
+    expect(atmosphericPressure.kind).toBe("atmosphericPressure");
+    const kilopascals = displayUnitFor(atmosphericPressure, unitSystem.si);
+    const inchesOfMercury = displayUnitFor(atmosphericPressure, unitSystem.ip);
     expect([kilopascals.symbol, kilopascals.step]).toEqual(["kPa", 0.1]);
     expect([inchesOfMercury.symbol, inchesOfMercury.step]).toEqual(["inHg", 0.01]);
-    expect(kindBounds[pressure.kind]).toEqual({ min: 30000, max: 110000 });
+    expect(kindBounds[atmosphericPressure.kind]).toEqual({ min: 30000, max: 110000 });
   });
 
   it("defaults to 101 325 Pa", () => {
@@ -171,7 +171,7 @@ describe("the input calculators' quantities", () => {
     }
   });
 
-  it("label the solar ones in the deployed tool's words, less their ranges and symbols", () => {
+  it("label the solar ones in the deployed tool's words, less their bounds and symbols", () => {
     expect([
       quantities.sol_altitude,
       quantities.sharp,

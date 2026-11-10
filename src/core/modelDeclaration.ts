@@ -1,4 +1,4 @@
-import type { ClassifierBins, ModelInfo, Standard } from "jsthermalcomfort";
+import type { ClassifierBins, ModelInfo, ModelOutputs, StandardId } from "jsthermalcomfort";
 import type { Calculator } from "./calculators";
 import { chartType } from "./chartType";
 import { clothingCorrectionFor, type ClothingCorrection } from "./clothingCorrection";
@@ -6,34 +6,23 @@ import { temperatureMode } from "./entryModes";
 import { quantities, quantityFor, type Quantity } from "./quantities";
 
 /**
- * The model's own result object, keyed by the same strings as its `_INFO`:
- * a number for a physical output, or the category label (or NaN) a classified
- * output returns. `run` returns this directly (ADR-0002 decision 3) — the app
- * reads it by key rather than transcribing a shape of its own.
- *
- * Deliberately widened to `object` rather than an indexed `Record`: a library
- * result declared as a plain `interface` (`HeatIndexResult`) carries no index
- * signature and TypeScript never infers one for it, so a `Record` type here
- * would reject every such model at its declaration. `core/modelRun.ts` casts
- * it in two places: `resultValue` reads it by key, `resultWarnings` reads its
- * `warnings`.
+ * How a declaration reads the library's inputs, resolved from its slot: one
+ * number per Quantity, under the quantity table's own key, so `inputs.tdb`
+ * type-checks and `inputs.tbd` does not (ADR-0002 decision 34). Reading a
+ * quantity the slot does not hold throws, naming it; there is no key that
+ * answers `undefined`.
  */
-export type ModelResult = object;
+export type LibraryInputs = { readonly [K in keyof typeof quantities]: number };
 
 /**
- * How a declaration reads its slot's values: one number per Quantity, under
- * the quantity table's own key, so `values.tdb` type-checks and `values.tbd`
- * does not (ADR-0002 decision 34). Reading a quantity the slot does not hold
- * throws, naming it; there is no key that answers `undefined`.
- */
-export type Values = { readonly [K in keyof typeof quantities]: number };
-
-/**
- * A switch a model takes beside its quantities (`airspeed_control`): no unit,
- * no range, never on an axis. Declared in the model's own file and referred to
- * by identity, as a `Quantity` is (ADR-0002 decision 36). `key` is what the
- * share link will carry, `label` what the panel shows, `default` what a slot
- * starts from. A boolean only; a kind field waits for a second kind of option.
+ * An option: an input a model takes beside its quantities that is not a
+ * number: a switch (yes or no, `airspeed_control`) or a choice among named
+ * values (GLOSSARY.md **Option**). It has no unit, no bound and is never on an
+ * axis. Declared in the model's own file and referred to by identity, as a
+ * `Quantity` is (ADR-0002 decision 36). `key` is what the share link will
+ * carry, `label` what the panel shows, `default` what a slot starts from.
+ * Switches only so far; a field telling a switch from a choice waits for the
+ * first choice.
  */
 export interface OptionSpec {
   readonly key: string;
@@ -43,7 +32,7 @@ export interface OptionSpec {
 
 /**
  * How a declaration reads its slot's options: the boolean for the option
- * asked, so it lands in the library's params where the compiler checks it
+ * asked, so it lands in the library's inputs where the compiler checks it
  * (ADR-0002 decision 36).
  */
 export type OptionsReader = (option: OptionSpec) => boolean;
@@ -109,9 +98,9 @@ export interface ZoneLimits {
   readonly upper: readonly { readonly x: number; readonly y: number }[];
 }
 
-/** What a `limits` source is given: the slot's resolved SI inputs, read as `run` reads them, and the x axis range being drawn. */
+/** What a `limits` source is given: the library's inputs resolved from the slot, in SI, read as `run` reads them, and the x axis range being drawn. */
 export interface ZoneRequest {
-  readonly values: Values;
+  readonly inputs: LibraryInputs;
   readonly xRange: Range;
 }
 
@@ -131,10 +120,10 @@ export interface ComfortZone {
 /**
  * What the model scans, declared once for every chart that scans it
  * (ADR-0002 decision 61): the dynamic chart and the psychrometric chart both
- * scan {@link output}; on Explore both paint the Band list copied from
- * {@link classifier}, on Standard both draw {@link comfortZones} (decision
- * 58). Each field is named for the GLOSSARY.md
- * term it holds, not for the page that paints it.
+ * scan {@link output}; on Explore both paint the Band list copied from the
+ * classifier of {@link bands}, on Standard both draw {@link comfortZones}
+ * (decision 58). Each field is named for the GLOSSARY.md term it holds, or,
+ * for {@link bands}, the term it gives, not for the page that paints it.
  */
 export interface DeclaredScan {
   /**
@@ -145,19 +134,16 @@ export interface DeclaredScan {
    */
   readonly output: Quantity;
   /**
-   * The library classifier that cuts {@link output}, as a reference to the
-   * library's own object. Nothing in `_INFO` says which quantity a
-   * classifier cuts and no key string pairs the two, so the pairing is the
-   * object identity itself (ADR-0002 decision 27).
-   *
-   * Written as `<MODEL>_INFO.outputs.<key>.classifier` where that types as
-   * defined, else as the library's exported bins constant — the same
-   * object either way, and never a cast or a `!`. The model's default
-   * Band list is a copy of it (`core/bands.ts`), and the library's own
-   * `classifyFromBins` against that list answers Explore's hover readout,
-   * so the app holds no Edge, no label and no inclusivity rule of its own.
+   * The classified output whose classifier cuts {@link output}: `tsv` for
+   * `pmv`, `stress_category` for `hi`. The classifier is read off the model
+   * info by {@link classifierOf}, which throws for an
+   * output the info does not classify (ADR-0002 decision 90 rule 5), so a
+   * declaration imports no classifier. The model's default Band list is a
+   * copy of it (`core/bands.ts`), and the library's own `classifyFromBins`
+   * against that list answers Explore's hover readout, so the app holds no
+   * Edge, no label and no inclusivity rule of its own.
    */
-  readonly classifier: ClassifierBins;
+  readonly bands: Quantity;
   /**
    * The Comfort zones Standard draws on {@link output}, nested, one per
    * limit: one for a standard with one interval, one per category for a
@@ -176,7 +162,7 @@ export interface DeclaredScan {
  * entry mode, the dynamic chart starts on axes the user may change, and the
  * adaptive chart is drawn from its model's geometry on axes it declares. What
  * a chart scans is the model's {@link DeclaredScan}, so no chart names an
- * output or a classifier (decision 61).
+ * output or its Bands (decision 61).
  *
  * The members' types are object identities, which discriminate nothing for
  * the compiler, and an object literal checked against a union has only the
@@ -197,7 +183,7 @@ export type DeclaredChart =
     }
   | {
       readonly type: typeof chartType.dynamic;
-      /** Starting axes; the user may pick any entered quantity that has an axis range ({@link axisRangeFor}). */
+      /** Default axes; the user may pick any entered quantity that has an axis range ({@link axisRangeFor}). */
       readonly axes: ChartAxes;
       readonly limits?: never;
     }
@@ -206,9 +192,9 @@ export type DeclaredChart =
       /**
        * The chart is drawn on these two quantities whatever the entry mode,
        * and the picker is not offered. An operative-temperature axis stays
-       * operative under separate entry, marked at the library's `t_o` of the
-       * entered temperatures and air speed by the model's standard
-       * (`slot.operativeTemperatureOf`).
+       * operative under separate entry, marked at the library's
+       * `operative_tmp` of the entered temperatures and air speed by its
+       * model's standard's method (`slot.operativeTemperatureOf`).
        */
       readonly axes: ChartAxes;
       /**
@@ -228,7 +214,7 @@ export type DeclaredDynamicChart = Extract<DeclaredChart, { type: typeof chartTy
 /** The adaptive member of {@link DeclaredChart}. */
 export type DeclaredAdaptiveChart = Extract<DeclaredChart, { type: typeof chartType.adaptive }>;
 
-/** What every registered model declares, whatever it scans: {@link RegisteredModel} adds the scan and the charts. */
+/** What every registered model declares, whatever it scans: {@link ModelDeclaration} adds the scan and the charts. */
 interface CommonDeclaration {
   /**
    * The library's own `_INFO` object: name, label, description, inputs,
@@ -249,19 +235,20 @@ interface CommonDeclaration {
   readonly timeSeries?: true;
   /**
    * The library's model function, called by the declaration itself with the
-   * library's one params object, every quantity written by name (ADR-0002
+   * library's one inputs object, every quantity written by name (ADR-0002
    * decision 34):
    *
    * ```ts
-   * run: (values) =>
-   *   pmv_ppd_iso({ tdb: values.tdb, tr: values.tr, vr: values.vr, rh: values.rh, met: values.met, clo: values.clo, … })
+   * run: (inputs) =>
+   *   pmv_ppd_iso({ tdb: inputs.tdb, tr: inputs.tr, vr: inputs.vr, rh: inputs.rh, met: inputs.met, clo: inputs.clo, … })
    * ```
    *
-   * The compiler checks every key against the library's params: a misspelt
-   * key is an excess property, a forgotten quantity a missing required one.
-   * What it cannot see is two quantities in each other's place
-   * (`tdb: values.tr`), and a registry-wide test checks that every quantity key
-   * the library receives carries that quantity's own number.
+   * The compiler checks every key against the library function's inputs
+   * type: a misspelt key is an excess property, a forgotten quantity a
+   * missing required one. What it cannot see is two quantities in each
+   * other's place (`tdb: inputs.tr`), and a registry-wide test checks that
+   * every quantity key the library receives carries that quantity's own
+   * number.
    *
    * A model that lists options reads them through the second reader, each
    * written inline under its library key:
@@ -272,17 +259,22 @@ interface CommonDeclaration {
    * key and the property agree. A model without options leaves the reader
    * unnamed (ADR-0002 decision 36).
    *
-   * The contract: the model's own result object, carrying the model's numbers
-   * unrounded (ADR-0002 decision 18), with the library's `round_output`
-   * written off in the call (decision 35). A registry-wide test samples the
-   * table's first number column and fails when it was left on (decision 38).
-   * Called by `state/compute` and by the chart spec builders.
+   * The contract: the model's own outputs, returned directly (ADR-0002
+   * decision 3) and keyed by the same strings as its `_INFO`: a number for a
+   * physical output, a band's label or a yes-or-no flag, or `null` where the
+   * library returns no value. `ModelOutputs`, which every model's outputs extend, types
+   * `warnings` and no output, so the app reads an output by key
+   * (`core/modelRun.ts`'s `outputValue`) rather than transcribing a shape of its
+   * own. The numbers are unrounded (ADR-0002 decision 18), with the library's
+   * `round_output` written off in the call (decision 35). A registry-wide test
+   * samples the table's first number column and fails when it was left on
+   * (decision 38). Called by `state/compute` and by the chart spec builders.
    */
-  readonly run: (values: Values, options: OptionsReader) => ModelResult;
+  readonly run: (inputs: LibraryInputs, options: OptionsReader) => ModelOutputs;
   /**
    * The panel's list, in panel order: each quantity with its SI default, and
    * each option where its switch stands among the rows (ADR-0002 decision
-   * 36 as revised 2026-10-12). Read through {@link inputsOf} and
+   * 36 as revised 2026-10-12). Read through {@link declaredQuantitiesOf} and
    * {@link optionsOf}.
    */
   readonly inputs: readonly DeclaredInput[];
@@ -307,7 +299,7 @@ interface CommonDeclaration {
  * {@link DeclaredScan} may offer any chart; a model without one scans nothing,
  * so it offers only adaptive charts (ADR-0002 decisions 61 and 62).
  */
-export type RegisteredModel = CommonDeclaration &
+export type ModelDeclaration = CommonDeclaration &
   (
     | {
         readonly scan: DeclaredScan;
@@ -322,36 +314,38 @@ export type RegisteredModel = CommonDeclaration &
 // The union is discriminated by an object identity, which TypeScript does not
 // narrow on `===` the way it narrows a literal, so each lookup carries its own
 // predicate. Comparing `type.id` strings instead would be the string-keyed
-// closed set ADR §4.0 rules out. `find` on {@link RegisteredModel}'s two
+// closed set ADR §4.0 rules out. `find` on {@link ModelDeclaration}'s two
 // tuple types drops the predicate's overload, so it is called on the charts
 // widened to one array type.
 
-export function psychrometricChartOf(model: RegisteredModel): DeclaredPsychrometricChart | undefined {
+export function psychrometricChartOf(model: ModelDeclaration): DeclaredPsychrometricChart | undefined {
   const charts: readonly DeclaredChart[] = model.charts;
   return charts.find((chart): chart is DeclaredPsychrometricChart => chart.type === chartType.psychrometric);
 }
 
-export function dynamicChartOf(model: RegisteredModel): DeclaredDynamicChart | undefined {
+export function dynamicChartOf(model: ModelDeclaration): DeclaredDynamicChart | undefined {
   const charts: readonly DeclaredChart[] = model.charts;
   return charts.find((chart): chart is DeclaredDynamicChart => chart.type === chartType.dynamic);
 }
 
-export function adaptiveChartOf(model: RegisteredModel): DeclaredAdaptiveChart | undefined {
+export function adaptiveChartOf(model: ModelDeclaration): DeclaredAdaptiveChart | undefined {
   const charts: readonly DeclaredChart[] = model.charts;
   return charts.find((chart): chart is DeclaredAdaptiveChart => chart.type === chartType.adaptive);
 }
 
 /**
- * The declared axis range of `quantity`, else `info.inputs`' own applicability
- * bound when it has both a `min` and a `max`, else `undefined` when `quantity`
- * may not carry an axis at all (ADR-0002 decision 5).
+ * The declared axis range of `quantity`, else the applicability bound of its
+ * numeric input in `info.inputs` when it has both a `min` and a `max`, else
+ * `undefined` when `quantity` may not carry an axis at all (ADR-0002
+ * decision 5).
  */
-export function axisRangeFor(model: RegisteredModel, quantity: Quantity): Range | undefined {
+export function axisRangeFor(model: ModelDeclaration, quantity: Quantity): Range | undefined {
   const declared = model.axisRanges.find((range) => range.quantity === quantity);
   if (declared) {
     return { min: declared.min, max: declared.max };
   }
-  const bound = model.info.inputs[quantity.key]?.applicability;
+  const input = model.info.inputs[quantity.key];
+  const bound = input?.kind === "numeric" ? input.applicability : undefined;
   if (bound?.min !== undefined && bound.max !== undefined) {
     return { min: bound.min, max: bound.max };
   }
@@ -359,7 +353,7 @@ export function axisRangeFor(model: RegisteredModel, quantity: Quantity): Range 
 }
 
 /** The same, for an axis the chart is already drawing: a missing range is a declaration bug. */
-export function requireAxisRange(model: RegisteredModel, quantity: Quantity): Range {
+export function requireAxisRange(model: ModelDeclaration, quantity: Quantity): Range {
   const range = axisRangeFor(model, quantity);
   if (!range) {
     throw new Error(`${model.info.label} declares no axis range for ${quantity.label}, so it cannot carry an axis`);
@@ -367,8 +361,24 @@ export function requireAxisRange(model: RegisteredModel, quantity: Quantity): Ra
   return range;
 }
 
+/**
+ * The classifier `info` puts on its output `output`, the library's own object
+ * (ADR-0002 decision 90 rule 5): what a scan's Bands start as, and what the
+ * band palette is keyed by. The model info types every classifier as
+ * optional; a declaration or a row of the palette table naming an output the
+ * info does not classify is a bug, so this throws, naming the model and the
+ * output, rather than leave a `!` at each reader.
+ */
+export function classifierOf(info: ModelInfo, output: Quantity): ClassifierBins {
+  const classifier = info.outputs[output.key]?.classifier;
+  if (!classifier) {
+    throw new Error(`${info.label} gives its output ${output.label} no classifier`);
+  }
+  return classifier;
+}
+
 /** What `model` scans, for a scanned chart already being drawn: a model without a scan is a declaration bug. */
-export function requireScan(model: RegisteredModel): DeclaredScan {
+export function requireScan(model: ModelDeclaration): DeclaredScan {
   if (!model.scan) {
     throw new Error(`${model.info.label} declares no scan, so it has no scanned chart`);
   }
@@ -376,16 +386,16 @@ export function requireScan(model: RegisteredModel): DeclaredScan {
 }
 
 /** The quantities `model` lists, each with its SI default, in panel order. */
-export function inputsOf(model: RegisteredModel): DeclaredQuantity[] {
-  return model.inputs.filter((entry): entry is DeclaredQuantity => !("option" in entry));
+export function declaredQuantitiesOf(model: ModelDeclaration): DeclaredQuantity[] {
+  return model.inputs.filter((input): input is DeclaredQuantity => !("option" in input));
 }
 
 /**
  * The options `model` lists, in panel order; empty for a model with none. A
  * slot holds each one's value beside the quantities' (ADR-0002 decision 36).
  */
-export function optionsOf(model: RegisteredModel): OptionSpec[] {
-  return model.inputs.flatMap((entry) => ("option" in entry ? [entry.option] : []));
+export function optionsOf(model: ModelDeclaration): OptionSpec[] {
+  return model.inputs.flatMap((input) => ("option" in input ? [input.option] : []));
 }
 
 /**
@@ -394,22 +404,22 @@ export function optionsOf(model: RegisteredModel): OptionSpec[] {
  * group when it takes every quantity the separate entry mode shows; a model
  * with only some of them has none.
  */
-export function hasHumidityGroup(model: RegisteredModel): boolean {
-  return inputsOf(model).some((entry) => entry.quantity === quantities.rh);
+export function hasHumidityGroup(model: ModelDeclaration): boolean {
+  return declaredQuantitiesOf(model).some((input) => input.quantity === quantities.rh);
 }
 
-export function hasTemperatureGroup(model: RegisteredModel): boolean {
-  const entered = inputsOf(model).map((entry) => entry.quantity);
+export function hasTemperatureGroup(model: ModelDeclaration): boolean {
+  const entered = declaredQuantitiesOf(model).map((input) => input.quantity);
   return temperatureMode.separate.panel.every((quantity) => entered.includes(quantity));
 }
 
 /**
- * Whether the model takes `vr`, and so has the air-speed entry group: the app
- * derives `vr` as `v_relative(v, met)` from the entered `v`, or is entered it
- * (ADR-0002 decision 54). Read from whether `info.inputs` names it, each key
+ * Whether the model has the air-speed entry group: it takes `vr`, which the
+ * person enters or the app derives as `v_relative(v, met)` from the entered
+ * `v` (ADR-0002 decision 54). Read from whether `info.inputs` names it, each key
  * reconciled through `quantityFor` (decision 48).
  */
-export function takesRelativeAirSpeed(model: RegisteredModel): boolean {
+export function hasAirSpeedGroup(model: ModelDeclaration): boolean {
   return Object.keys(model.info.inputs).some((key) => quantityFor(key) === quantities.vr);
 }
 
@@ -420,7 +430,7 @@ export function takesRelativeAirSpeed(model: RegisteredModel): boolean {
  * corrects none, which is given the clothing insulation as entered (ADR-0002
  * decision 54).
  */
-export function clothingCorrectionOf(model: RegisteredModel): ClothingCorrection | undefined {
+export function clothingCorrectionOf(model: ModelDeclaration): ClothingCorrection | undefined {
   const takesClothing = Object.keys(model.info.inputs).some((key) => quantityFor(key) === quantities.clo);
   return takesClothing ? clothingCorrectionFor(standardOf(model)) : undefined;
 }
@@ -431,11 +441,11 @@ export function clothingCorrectionOf(model: RegisteredModel): ClothingCorrection
  * decision 86, rule 3). `undefined` for a model whose info lists none, such as
  * Heat Index, which has no Standard page.
  */
-export function standardOf(model: RegisteredModel): Standard | undefined {
+export function standardOf(model: ModelDeclaration): StandardId | undefined {
   return model.info.standards[0];
 }
 
 /** Whether the model has the clothing entry group: it takes the clothing, and its standard corrects it. */
-export function hasClothingGroup(model: RegisteredModel): boolean {
+export function hasClothingGroup(model: ModelDeclaration): boolean {
   return clothingCorrectionOf(model) !== undefined;
 }

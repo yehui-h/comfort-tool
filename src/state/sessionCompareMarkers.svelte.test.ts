@@ -9,16 +9,17 @@
  * line. Comfort zones are not checked: Adaptive's bands coincide below
  * 0.6 m/s, as the standard gives them.
  */
+import type { InputsInfo } from "jsthermalcomfort";
 import { describe, expect, it } from "vitest";
 import type { ChartSpec, PointTrace } from "$lib/core/charts/chartSpec";
 import { chartType } from "$lib/core/chartType";
 import { humidityMode, type ValueEntryMode } from "$lib/core/entryModes";
-import { dynamicChartOf, hasHumidityGroup, type DeclaredChart, type RegisteredModel } from "$lib/core/modelDeclaration";
+import { dynamicChartOf, hasHumidityGroup, type DeclaredChart, type ModelDeclaration } from "$lib/core/modelDeclaration";
 import { quantities, type Quantity } from "$lib/core/quantities";
 import { valueEntryGroups, type ValueEntryGroup } from "$lib/core/slot";
 import { registeredModels } from "$lib/models";
 import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
-import { Outputs } from "./compute.svelte";
+import { Computation } from "./compute.svelte";
 import { Session } from "./session.svelte";
 
 const q = quantities;
@@ -33,19 +34,19 @@ interface ModeCase {
 }
 
 /** Each value entry group's mode set through the session, as the input panel's menu sets it. */
-const setModeOf: Record<ValueEntryGroup["field"], (session: Session, mode: ValueEntryMode) => void> = {
+const setModeOf: Record<ValueEntryGroup["name"], (session: Session, mode: ValueEntryMode) => void> = {
   temperature: (session, mode) => session.setTemperatureMode(mode),
   airSpeed: (session, mode) => session.setAirSpeedMode(mode),
   clothing: (session, mode) => session.setClothingMode(mode),
 };
 
 /** The defaults, then every other mode of each group `model` has, the other groups at their defaults. */
-function modeCasesOf(model: RegisteredModel): ModeCase[] {
+function modeCasesOf(model: ModelDeclaration): ModeCase[] {
   const fresh = new Session(model);
   const cases: ModeCase[] = [{ name: "the default entry modes", enter: () => {} }];
   for (const group of valueEntryGroups.filter((candidate) => candidate.appliesTo(model))) {
     for (const mode of group.modes.filter((candidate) => candidate !== group.modeOf(fresh.entryModes))) {
-      cases.push({ name: `${group.field} entered as ${mode.id}`, enter: (session) => setModeOf[group.field](session, mode) });
+      cases.push({ name: `${group.name} entered as ${mode.id}`, enter: (session) => setModeOf[group.name](session, mode) });
     }
   }
   if (hasHumidityGroup(model)) {
@@ -67,15 +68,15 @@ function distanceBetween(a: PointTrace, b: PointTrace, spec: ChartSpec): number 
 }
 
 /** `chart` drawn of the session's compared slots as the page draws it, at the chart's declared axes. */
-function drawChart(session: Session, outputs: Outputs, chart: DeclaredChart): ChartSpec {
+function drawChart(session: Session, computation: Computation, chart: DeclaredChart): ChartSpec {
   session.chart.type = chart.type;
   const dynamic = dynamicChartOf(session.model);
   if (dynamic && chart === dynamic) {
     session.chart.setAxes(dynamic.axes);
   }
-  const spec = outputs.chart;
+  const spec = computation.chart;
   if (!spec) {
-    throw new Error(`${session.model.info.label} draws no ${chart.type.title} chart`);
+    throw new Error(`${session.model.info.label} draws no ${chart.type.label} chart`);
   }
   return spec;
 }
@@ -86,17 +87,17 @@ function drawChart(session: Session, outputs: Outputs, chart: DeclaredChart): Ch
  * slot 3 enabled, each named by the model, the entry modes, the chart, the
  * pair and the distance; or a chart that draws other than three markers.
  */
-function markersTooClose(model: RegisteredModel, modeCase: ModeCase): string[] {
+function markersTooClose(model: ModelDeclaration, modeCase: ModeCase): string[] {
   const session = new Session(model);
-  const outputs = new Outputs(session);
+  const computation = new Computation(session);
   // Before Compare: a slot first enabled takes slot 1's entry modes, so the
   // move is tested in the mode, as a person who switched it first meets it.
   modeCase.enter(session);
   session.setCompare(true);
   session.setSlotEnabled(2, true);
   return model.charts.flatMap((chart) => {
-    const spec = drawChart(session, outputs, chart);
-    const where = `${model.info.label}, ${modeCase.name}, ${chart.type.title} chart`;
+    const spec = drawChart(session, computation, chart);
+    const where = `${model.info.label}, ${modeCase.name}, ${chart.type.label} chart`;
     const markers = markersOf(spec);
     if (markers.length !== 3) {
       return [`${where}: ${markers.length} markers drawn`];
@@ -120,7 +121,9 @@ describe("the check that keeps the three markers apart", () => {
   // chart's axes move: the check must see one marker on another.
   it("catches markers on one another for a model whose only moved values are off its chart's axes", () => {
     const upperEndOf = (quantity: Quantity) => {
-      const max = pmvPpdAshrae.info.inputs[quantity.key]?.applicability?.max;
+      const inputs: InputsInfo = pmvPpdAshrae.info.inputs;
+      const field = inputs[quantity.key];
+      const max = field?.kind === "numeric" ? field.applicability?.max : undefined;
       if (max === undefined) {
         throw new Error(`${pmvPpdAshrae.info.label} bounds no ${quantity.label} from above`);
       }
@@ -133,7 +136,7 @@ describe("the check that keeps the three markers apart", () => {
         "quantity" in input && (input.quantity === q.tdb || input.quantity === q.tr) ? { ...input, value: upperEndOf(input.quantity) } : input,
       ),
       charts: [{ type: chartType.psychrometric }],
-    } satisfies RegisteredModel;
+    } satisfies ModelDeclaration;
     expect(markersTooClose(fixture, modeCasesOf(fixture)[0])).toContainEqual(
       "Fixture at its temperature bound, the default entry modes, Psychrometric chart: Input 1 and Input 2 stand 0.0000 apart",
     );

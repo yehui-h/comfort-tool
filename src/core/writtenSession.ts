@@ -7,10 +7,10 @@
  */
 import { bandListOf, type BandList } from "./bands";
 import type { ChartType } from "./chartType";
-import { dynamicChartOf, type ChartAxes, type RegisteredModel } from "./modelDeclaration";
+import { classifierOf, dynamicChartOf, type ChartAxes, type ModelDeclaration } from "./modelDeclaration";
 import { page, type Page } from "./page";
 import { DEFAULT_ATMOSPHERIC_PRESSURE } from "./quantities";
-import { startingSlot, type Slot } from "./slot";
+import { defaultSlot, type Slot } from "./slot";
 import { unitSystem, type UnitSystem } from "./unitSystem";
 
 /** One model's chart settings: which chart is on screen and how it is set up. */
@@ -28,7 +28,7 @@ export interface ChartSettings {
 
 /**
  * Everything a session holds that is not derived and not a question left
- * standing: never the page, which the address names, nor a result.
+ * standing: never the page, which the address names, nor the computation.
  *
  * Every slot it holds is in slot 1's entry modes, humidity's included, as
  * every slot of a session is (ADR-0002 decision 51); a session built from one
@@ -36,7 +36,7 @@ export interface ChartSettings {
  */
 export interface WrittenSession {
   /** The model the slots were converted for. */
-  readonly model: RegisteredModel;
+  readonly model: ModelDeclaration;
   readonly unitSystem: UnitSystem;
   /** In Pa (ADR-0002 decision 49). */
   readonly atmosphericPressure: number;
@@ -46,10 +46,10 @@ export interface WrittenSession {
   /** What each slot holds, in slot order: slots 2 and 3 `null` until first enabled (ADR-0002 decision 50). */
   readonly slots: readonly [Slot, Slot | null, Slot | null];
   /** The chart settings of every model the session has been on, and of no other. */
-  readonly charts: ReadonlyMap<RegisteredModel, ChartSettings>;
+  readonly charts: ReadonlyMap<ModelDeclaration, ChartSettings>;
 }
 
-/** A slot's place in the session, from 0: its name and hue follow it (ADR-0002 decision 50). */
+/** A slot's place in the session, from 0: its label and hue follow it (ADR-0002 decision 50). */
 export type SlotPosition = 0 | 1 | 2;
 
 /** Every position, in slot order. */
@@ -59,8 +59,8 @@ export const slotPositions = [0, 1, 2] as const satisfies readonly SlotPosition[
  * The slots compared on `onPage`, in slot order: slot 1 always, and slots 2
  * and 3 while Compare is on and they are enabled, on the Standard page alone.
  * Compare is the Standard page's, and Explore compares slot 1 whatever
- * Compare holds (ADR-0002 decision 57). The session's outputs and a share
- * link both read it (decision 63, rule 5).
+ * Compare holds (ADR-0002 decision 57). The session's computation and a
+ * share link both read it (decision 63, rule 5).
  */
 export function comparedPositionsOf(session: Pick<WrittenSession, "compare" | "enabled">, onPage: Page): SlotPosition[] {
   return slotPositions.filter(
@@ -69,27 +69,27 @@ export function comparedPositionsOf(session: Pick<WrittenSession, "compare" | "e
 }
 
 /** The chart settings `model` starts on, which its declaration gives: its first chart, its declared axes, its scan's classifier. */
-export function startingChartSettings(model: RegisteredModel): ChartSettings {
+export function defaultChartSettings(model: ModelDeclaration): ChartSettings {
   return {
     type: model.charts[0].type,
     axes: dynamicChartOf(model)?.axes ?? null,
-    bands: model.scan ? bandListOf(model.scan.classifier) : null,
+    bands: model.scan ? bandListOf(classifierOf(model.info, model.scan.bands)) : null,
   };
 }
 
 /**
  * The written session `model` starts on, its defaults: slot 1 on
- * {@link startingSlot} and no other slot, SI, standard pressure, Compare off,
- * and the model's own {@link startingChartSettings}.
+ * {@link defaultSlot} and no other slot, SI, default atmospheric pressure,
+ * Compare off, and the model's own {@link defaultChartSettings}.
  */
-export function startingSession(model: RegisteredModel): WrittenSession {
+export function defaultSession(model: ModelDeclaration): WrittenSession {
   return {
     model,
     unitSystem: unitSystem.si,
     atmosphericPressure: DEFAULT_ATMOSPHERIC_PRESSURE,
     compare: false,
     enabled: [false, false],
-    slots: [startingSlot(model), null, null],
-    charts: new Map([[model, startingChartSettings(model)]]),
+    slots: [defaultSlot(model), null, null],
+    charts: new Map([[model, defaultChartSettings(model)]]),
   };
 }

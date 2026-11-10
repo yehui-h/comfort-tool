@@ -1,13 +1,13 @@
 <script lang="ts">
   import { kindBounds, quantities } from "$lib/core/quantities";
-  import { slotNames } from "$lib/core/slotBadge";
+  import { slotLabels } from "$lib/core/slotAppearance";
   import type { Session, SlotPosition } from "$lib/state/session.svelte";
   import { copy } from "$lib/text/copy";
   import Stack from "$lib/ui/layout/Stack.svelte";
+  import { raiseVerdict } from "$lib/ui/layout/toasts";
   import { Button } from "$lib/ui/primitives/button";
-  import { raiseVerdict } from "$lib/ui/outputs/notices";
   import { Separator } from "$lib/ui/primitives/separator";
-  import CopyLinkButton from "./CopyLinkButton.svelte";
+  import ShareButton from "./ShareButton.svelte";
   import QuantityInput from "./QuantityInput.svelte";
   import QuestionDialog from "./QuestionDialog.svelte";
   import UnitSystemControls from "./UnitSystemControls.svelte";
@@ -20,26 +20,26 @@
     /** The share link to the page as it is now. */
     link: () => string;
     /** The clipboard refused the link. */
-    oncopyrefused: () => void;
+    onsharerefused: () => void;
   }
 
-  let { session, onreset, link, oncopyrefused }: Props = $props();
+  let { session, onreset, link, onsharerefused }: Props = $props();
 
   /** Whether Reset's question stands: the button's own, as nothing else reads it. */
   let askingReset = $state(false);
 
   /**
-   * The slot a pressure's refusal names by its position, whether compared or
-   * not, while the session holds more than one: a slot not shown has no other
-   * name (ADR-0002 decision 84, rule 4).
+   * The slot an atmospheric pressure's refusal names by its position, whether
+   * compared or not, while the session holds more than one: a slot not shown
+   * has no other label (ADR-0002 decision 84, rule 4).
    */
-  function slotNameAt(position: SlotPosition): string | undefined {
-    return session.slots.filter((slot) => slot !== null).length > 1 ? slotNames[position] : undefined;
+  function slotLabelAt(position: SlotPosition): string | undefined {
+    return session.slots.filter((slot) => slot !== null).length > 1 ? slotLabels[position] : undefined;
   }
 
-  function commitPressure(si: number) {
+  function commitAtmosphericPressure(si: number) {
     const verdict = session.commitAtmosphericPressure(si);
-    raiseVerdict(verdict, { quantity: quantities.p_atm }, si, session.unitSystem, (row) => slotNameAt(row.position));
+    raiseVerdict(verdict, { quantity: quantities.p_atm }, si, session.unitSystem, (row) => slotLabelAt(row.position));
   }
 
   // The question is closed before the session is replaced, which builds the
@@ -60,16 +60,16 @@
 -->
 <Stack gap="4">
   <UnitSystemControls {session} />
-  <!-- The session's pressure, not the slot's: outside the slot's rows and shown on every model (decision 49). -->
+  <!-- The session's atmospheric pressure, not the slot's: outside the slot's rows and shown on every model (decision 49). -->
   <QuantityInput
     quantity={quantities.p_atm}
     unitSystem={session.unitSystem}
-    entries={[
+    boxes={[
       {
         value: session.atmosphericPressure,
         bound: kindBounds[quantities.p_atm.kind],
-        isLegal: (si) => session.judgeAtmosphericPressure(si).kind === "legal",
-        oncommit: commitPressure,
+        isWithinBounds: (si) => session.judgeAtmosphericPressure(si).kind === "written",
+        oncommit: commitAtmosphericPressure,
       },
     ]}
   />
@@ -80,7 +80,7 @@
   -->
   <Separator />
   <Stack gap="2">
-    <CopyLinkButton {link} onrefused={oncopyrefused} />
+    <ShareButton {link} onrefused={onsharerefused} />
     <Button size="sm" variant="outline" onclick={() => (askingReset = true)}>{copy.reset}</Button>
   </Stack>
 </Stack>

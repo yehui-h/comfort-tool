@@ -4,13 +4,13 @@
  * and the hover grid over the field, which the adaptive chart lays too.
  */
 import { classifyFromBins } from "jsthermalcomfort";
-import { chartInk } from "$lib/core/bandPalette";
+import { chartColors } from "$lib/core/bandPalette";
 import type { BandList } from "$lib/core/bands";
 import { displayUnitFor } from "$lib/core/units";
 import type { UnitSystem } from "$lib/core/unitSystem";
 import { copy } from "$lib/text/copy";
 import type { ChartedSlot, ChartRequest } from "./chartRequest";
-import type { ChartNote, HoverGridTrace, HoverReadout, LegendEntry, PathPiece, PathTrace } from "./chartSpec";
+import type { ChartNote, HoverGridTrace, HoverReadout, LegendItem, PathPiece, PathTrace } from "./chartSpec";
 import { traceRegion, type RegionGrid, type TracedRegion } from "./regionTracer";
 import { comfortZonesOf, GRID, scannedField, type ScanFrame, type ScannedField, type Sweep } from "./scan";
 import { labelFor, readoutLine, samples, zoneInkFor, type ZoneInk } from "./specParts";
@@ -18,7 +18,7 @@ import { labelFor, readoutLine, samples, zoneInkFor, type ZoneInk } from "./spec
 /**
  * What a chart paints of its slots' scans, written once for both scanned
  * charts (ADR-0002 decision 61): the fills, the outlines and the hover grid,
- * kept apart, and their legend entries. A builder lays them in the one
+ * kept apart, and their legend items. A builder lays them in the one
  * drawing order, its chrome between the fills and the outlines (decision 62).
  */
 export interface FieldPaint {
@@ -28,10 +28,10 @@ export interface FieldPaint {
   readonly outlines: readonly PathTrace[];
   /** The one grid that reads every slot's number for the regions, whose traces cannot. */
   readonly hoverGrid: HoverGridTrace;
-  /** The Band list's legend entries, one per painted band; none without a list. */
-  readonly bandLegend: readonly LegendEntry[];
-  /** Each slot's Comfort zones' legend entries, largest first, in the request's slot order; none with a list. */
-  readonly zoneLegendOfSlot: readonly (readonly LegendEntry[])[];
+  /** The Band list's legend items, one per painted band; none without a list. */
+  readonly bandLegend: readonly LegendItem[];
+  /** Each slot's Comfort zones' legend items, largest first, in the request's slot order; none with a list. */
+  readonly zoneLegendOfSlot: readonly (readonly LegendItem[])[];
   /** A note per slot whose Comfort zones are all empty, in the request's slot order; none with a list. */
   readonly notes: readonly ChartNote[];
 }
@@ -75,8 +75,8 @@ export function fieldPaintFor(
   const traced = tracedIn(frame, unitSystem);
   const fills: PathTrace[] = [];
   const outlines: PathTrace[] = [];
-  const bandLegend: LegendEntry[] = [];
-  const zoneLegendOfSlot = request.slots.map((): LegendEntry[] => []);
+  const bandLegend: LegendItem[] = [];
+  const zoneLegendOfSlot = request.slots.map((): LegendItem[] => []);
   const notes: ChartNote[] = [];
   const lay = ({ line, fill }: RegionPaths) => {
     if (fill) {
@@ -88,8 +88,8 @@ export function fieldPaintFor(
   if (bands) {
     for (const band of bandPathsFor(bands, fields[0], traced)) {
       lay(band);
-      if (band.legendEntry) {
-        bandLegend.push(band.legendEntry);
+      if (band.legendItem) {
+        bandLegend.push(band.legendItem);
       }
     }
   } else {
@@ -99,7 +99,7 @@ export function fieldPaintFor(
       zones.forEach((zone, index) => {
         const ink = zoneInkFor(charted, copy.zoneLegend(zone), index, zones.length);
         lay(zonePathsFor(regions[index], ink));
-        zoneLegendOfSlot[position].push(ink.legendEntry);
+        zoneLegendOfSlot[position].push(ink.legendItem);
       });
       // A model that declares no zone has none to empty.
       if (regions.length > 0 && regions.every((region) => region.rings.length === 0)) {
@@ -122,13 +122,13 @@ export function fieldPaintFor(
 /**
  * The note of `charted`, whose Comfort zones are all empty: one sentence,
  * whatever emptied them, named and with the slot's swatch while the slot has
- * a name, as a caption about one slot is (ADR-0002 decision 83 rule 1, as
- * noted 2026-10-22). The legend keeps the zones' entries.
+ * a label, as a caption about one slot is (ADR-0002 decision 83 rule 1, as
+ * noted 2026-10-22). The legend keeps the zones' items.
  */
 function emptyZoneNoteFor(charted: ChartedSlot): ChartNote {
-  return charted.name === undefined
+  return charted.label === undefined
     ? { text: copy.noComfortZone }
-    : { text: copy.slotNote(charted.name, copy.noComfortZone), color: chartInk.marker(charted.hue) };
+    : { text: copy.slotNote(charted.label, copy.noComfortZone), color: chartColors.marker(charted.hue) };
 }
 
 /** A region's line, and its fill where it is filled. */
@@ -159,7 +159,7 @@ function tracedIn(frame: ScanFrame, unitSystem: UnitSystem): (region: RegionGrid
  * path can say where the pointer is, so neither captures it.
  */
 function zonePathsFor({ rings, lines }: TracedRegion, ink: ZoneInk): Required<RegionPaths> {
-  const label = ink.legendEntry.label;
+  const label = ink.legendItem.label;
   return {
     fill: { kind: "path", pieces: rings, color: ink.fill, width: 0, fill: ink.fill, hover: "off", label },
     line: { kind: "path", pieces: lines, color: ink.line, width: ink.lineWidth, hover: "off", label },
@@ -213,9 +213,9 @@ function displayedSamplesOf(x: Sweep, y: Sweep, unitSystem: UnitSystem): { reado
   return { x: displayed(x), y: displayed(y) };
 }
 
-/** A band's line, and its fill and legend entry where it is painted. */
+/** A band's line, and its fill and legend item where it is painted. */
 interface BandPaths extends RegionPaths {
-  readonly legendEntry?: LegendEntry;
+  readonly legendItem?: LegendItem;
 }
 
 /**
@@ -244,11 +244,11 @@ function bandPathsFor(list: BandList, field: ScannedField, traced: (region: Regi
     const index = indexOf(value);
     return index !== undefined && first <= index && index <= last;
   };
-  return list.labels.map((name, index) => {
-    const label = shownBandLabel(name);
+  return list.labels.map((bandLabel, index) => {
+    const label = shownBandLabel(bandLabel);
     const color = list.colors[index];
     const { lines } = traced(field.regionWithin({ holds: inBands(0, index), upper: list.edges[index] }));
-    const line: PathTrace = { kind: "path", pieces: lines, color: chartInk.bandLine, width: chartInk.bandLineWidth, hover: "off", label };
+    const line: PathTrace = { kind: "path", pieces: lines, color: chartColors.bandLine, width: chartColors.bandLineWidth, hover: "off", label };
     if (color === undefined) {
       return { line };
     }
@@ -258,7 +258,7 @@ function bandPathsFor(list: BandList, field: ScannedField, traced: (region: Regi
     return {
       line,
       fill: { kind: "path", pieces: rings, color, width: 0, fill: color, hover: "off", label },
-      legendEntry: { label, swatch: "fill", color },
+      legendItem: { label, swatch: "fill", color },
     };
   });
 }

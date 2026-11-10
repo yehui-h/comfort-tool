@@ -7,7 +7,7 @@
  * written as a string, besides the share link that will carry it; every other
  * module holds the row itself, compared by identity, never the key.
  *
- * `kindBounds`, beside the kinds, holds the range a kind is defined over,
+ * `kindBounds`, beside the kinds, holds the bound a kind is defined over,
  * whatever the model; the pre-call gate reads it (ADR-0002 decision 46).
  * `DEFAULT_ATMOSPHERIC_PRESSURE` is `p_atm`'s value until the user enters
  * another, written once here (ADR-0002 decision 49).
@@ -18,6 +18,12 @@
  */
 import type { Bound } from "jsthermalcomfort";
 
+/**
+ * The kind of value a quantity holds, which picks its units and its kind
+ * bound. The last two are the library's `OutputField.kind` words: `label`, an
+ * output whose value is a band's label (`tsv`'s "Neutral"), and `flag`, a
+ * yes-or-no output.
+ */
 export type QuantityKind =
   | "temperature"
   | "temperatureDifference"
@@ -32,11 +38,11 @@ export type QuantityKind =
   | "angle"
   | "irradiance"
   | "fraction"
-  | "category"
-  | "yesNo";
+  | "label"
+  | "flag";
 
 /**
- * The range a kind's values are defined over, whatever the model: a
+ * The bound a kind's values are defined over, whatever the model: a
  * percentage is 0 to 100. The library publishes no applicability on relative
  * humidity, so the pre-call gate reads this bound beside the model's own row
  * (ADR-0002 decision 46). A kind with no entry here has no bound of its own.
@@ -53,9 +59,9 @@ export const kindBounds: Readonly<Partial<Record<QuantityKind, Bound>>> = {
   // alone holds, as the air speed's holds an entered `v`.
   clothingInsulation: { min: 0 },
   // Neither the library nor pythermalcomfort bounds `p_atm`; this is the
-  // deployed tool's range, one for every model (ADR-0002 decision 49).
+  // deployed tool's bound, one for every model (ADR-0002 decision 49).
   atmosphericPressure: { min: 30000, max: 110000 },
-  // A share of a whole, 0 to 1 by definition: `SOLAR_GAIN_INFO` bounds no
+  // A part of a whole, 0 to 1 by definition: `SOLAR_GAIN_INFO` bounds no
   // transmittance or view fraction, and bounds the absorptivity inside it.
   fraction: { min: 0, max: 1 },
 };
@@ -71,11 +77,11 @@ export interface Quantity {
   /**
    * The name this quantity has in a model's `ModelInfo`, e.g. `"tdb"`, or,
    * for one no model info names, in the library's functions that take it,
-   * e.g. `"p_atm"`.
+   * e.g. `"hr"`, `hr_to_rh`'s.
    */
   readonly key: string;
   readonly kind: QuantityKind;
-  /** Human-readable name, e.g. `"Dry-bulb air temperature"`. */
+  /** Its text on screen, e.g. `"Dry-bulb air temperature"`. */
   readonly label: string;
 }
 
@@ -93,8 +99,9 @@ export const quantities = {
   // entered vapour pressure is `rh / 100 × p_sat(tdb)`, the same quantity as
   // the derived one (ADR-0002 decision 16).
   pa: { key: "pa", kind: "pressure", label: "Water vapour partial pressure" },
-  // The session's pressure, not a slot's: no entry mode names it, and no
-  // model info (ADR-0002 decision 49).
+  // The session's atmospheric pressure, not a slot's: no entry mode names it
+  // (ADR-0002 decision 49). Six of the library's model infos name it, none a
+  // registered model's.
   p_atm: { key: "p_atm", kind: "atmosphericPressure", label: "Atmospheric pressure" },
   met: { key: "met", kind: "metabolicRate", label: "Metabolic rate" },
   clo: { key: "clo", kind: "clothingInsulation", label: "Clothing insulation" },
@@ -106,25 +113,25 @@ export const quantities = {
   wme: { key: "wme", kind: "metabolicRate", label: "External work" },
   pmv: { key: "pmv", kind: "thermalSensation", label: "PMV" },
   ppd: { key: "ppd", kind: "percentage", label: "PPD" },
-  tsv: { key: "tsv", kind: "category", label: "Thermal sensation" },
-  category: { key: "category", kind: "category", label: "Category" },
+  tsv: { key: "tsv", kind: "label", label: "Thermal sensation" },
+  category: { key: "category", kind: "label", label: "Category" },
   hi: { key: "hi", kind: "temperature", label: "Heat index" },
   utci: { key: "utci", kind: "temperature", label: "Universal Thermal Climate Index" },
   // UTCI's `derived` key: the library bounds `tr` by its difference from `tdb`.
-  tr_minus_tdb: { key: "tr_minus_tdb", kind: "temperatureDifference", label: "Mean radiant minus dry-bulb air temperature" },
-  stress_category: { key: "stress_category", kind: "category", label: "Thermal stress category" },
+  "tr - tdb": { key: "tr - tdb", kind: "temperatureDifference", label: "Mean radiant minus dry-bulb air temperature" },
+  stress_category: { key: "stress_category", kind: "label", label: "Thermal stress category" },
   t_running_mean: { key: "t_running_mean", kind: "temperature", label: "Prevailing mean outdoor temperature" },
   tmp_cmf: { key: "tmp_cmf", kind: "temperature", label: "Comfort temperature" },
   tmp_cmf_80_low: { key: "tmp_cmf_80_low", kind: "temperature", label: "80% acceptability lower limit" },
   tmp_cmf_80_up: { key: "tmp_cmf_80_up", kind: "temperature", label: "80% acceptability upper limit" },
   tmp_cmf_90_low: { key: "tmp_cmf_90_low", kind: "temperature", label: "90% acceptability lower limit" },
   tmp_cmf_90_up: { key: "tmp_cmf_90_up", kind: "temperature", label: "90% acceptability upper limit" },
-  acceptability_80: { key: "acceptability_80", kind: "yesNo", label: "80% acceptability" },
-  acceptability_90: { key: "acceptability_90", kind: "yesNo", label: "90% acceptability" },
-  compliance: { key: "compliance", kind: "yesNo", label: "Compliance" },
+  acceptability_80: { key: "acceptability_80", kind: "flag", label: "80% acceptability" },
+  acceptability_90: { key: "acceptability_90", kind: "flag", label: "90% acceptability" },
+  compliance: { key: "compliance", kind: "flag", label: "Compliance" },
   // The input calculators' quantities, named by `CLO_TOUT_INFO` and
   // `SOLAR_GAIN_INFO` (ADR-0002 decision 75). The labels are the deployed
-  // tool's words less their ranges and symbols, SHARP kept as the standard's
+  // tool's words less their bounds and symbols, SHARP kept as the standard's
   // acronym (decision 75's note of 2026-10-15).
   tout: { key: "tout", kind: "temperature", label: "Outdoor air temperature at 6 a.m." },
   sol_altitude: { key: "sol_altitude", kind: "angle", label: "Solar altitude above horizon" },
@@ -142,9 +149,9 @@ const byKey: Readonly<Record<string, Quantity>> = quantities;
 
 /**
  * The table's row for a key the library hands over: a model's `_INFO` keys its
- * rows, and a result its `warnings`, by plain string, so a caller reconciling
- * either with this table looks the key up here and goes back to comparing by
- * identity. `undefined` for a key the table has no row for.
+ * rows, and a run's outputs their `warnings`, by plain string, so a caller
+ * reconciling either with this table looks the key up here and goes back to
+ * comparing by identity. `undefined` for a key the table has no row for.
  */
 export function quantityFor(key: string): Quantity | undefined {
   return byKey[key];

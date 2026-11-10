@@ -1,44 +1,39 @@
-import type { ApplicabilityWarning } from "jsthermalcomfort";
+import type { ModelOutputs, ModelWarning } from "jsthermalcomfort";
 import { optionsReader, toLibraryInputs } from "./libraryInputs";
-import type { ModelResult, RegisteredModel } from "./modelDeclaration";
+import type { ModelDeclaration } from "./modelDeclaration";
 import type { Quantity } from "./quantities";
 import type { Slot } from "./slot";
 
 /**
- * `model` run on `slot` at `atmosphericPressure`: its resolved values
- * ({@link toLibraryInputs}) and the options it holds, handed to the
- * declaration's `run`. The one statement of the call.
+ * `model` run on `slot` at `atmosphericPressure`: the library's inputs
+ * resolved from it ({@link toLibraryInputs}) and the options it holds, handed
+ * to the declaration's `run`. The one statement of the call.
  */
-export function runOn(slot: Slot, model: RegisteredModel, atmosphericPressure: number): ModelResult {
+export function runOn(slot: Slot, model: ModelDeclaration, atmosphericPressure: number): ModelOutputs {
   return model.run(toLibraryInputs(slot, model, atmosphericPressure), optionsReader(slot.options));
 }
 
 /**
- * The mirror read: a quantity's value off the model's own result object, by
- * key. `undefined` for a key the result does not carry. One of the two casts
- * onto `ModelResult`'s deliberately unindexed `object`
- * (`core/modelDeclaration.ts`); {@link resultWarnings} is the other.
+ * The mirror read: a quantity's value off the model's own outputs, by key.
+ * `undefined` for a key the outputs do not carry, `null` for an output the
+ * library returns as no value. The one cast onto `ModelOutputs`, which types
+ * `warnings` alone (`core/modelDeclaration.ts`).
  */
-export function resultValue(result: ModelResult, quantity: Quantity): number | string | boolean | undefined {
-  return (result as Record<string, number | string | boolean>)[quantity.key];
+export function outputValue(outputs: ModelOutputs, quantity: Quantity): number | string | boolean | null | undefined {
+  return (outputs as unknown as Readonly<Record<string, number | string | boolean | null>>)[quantity.key];
 }
 
-/** {@link resultValue} as a number: `NaN` when the result carries no number for `quantity`. */
-export function resultNumber(result: ModelResult, quantity: Quantity): number {
-  const value = resultValue(result, quantity);
+/** {@link outputValue} as a number: `NaN` when the outputs carry no number for `quantity`, `null` included. */
+export function outputNumber(outputs: ModelOutputs, quantity: Quantity): number {
+  const value = outputValue(outputs, quantity);
   return typeof value === "number" ? value : Number.NaN;
 }
 
 /**
- * The applicability rows the library says the call broke, off the result's
- * `warnings` (ADR-0002 decision 23). Every v1 model returns them, so a result
- * without them is a declaration bug, and it throws naming the model rather
- * than reading as a run that broke nothing.
+ * The applicability rows the library says the call broke: the `range` rows of
+ * the outputs' `warnings` (ADR-0002 decision 23). A `notice` row is no bound,
+ * and is not read.
  */
-export function resultWarnings(model: RegisteredModel, result: ModelResult): readonly ApplicabilityWarning[] {
-  const warnings = (result as { warnings?: readonly ApplicabilityWarning[] }).warnings;
-  if (!warnings) {
-    throw new Error(`${model.info.label} returned no applicability rows`);
-  }
-  return warnings;
+export function rangeRowsOf(outputs: ModelOutputs): readonly Extract<ModelWarning, { kind: "range" }>[] {
+  return outputs.warnings.filter((warning) => warning.kind === "range");
 }

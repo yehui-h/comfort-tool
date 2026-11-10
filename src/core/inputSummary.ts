@@ -1,8 +1,8 @@
 import { copy } from "$lib/text/copy";
-import { limitsBrokenLines, type ViolationRow } from "./applicability";
+import { boundsBrokenLines, type ViolationRow } from "./applicability";
 import type { BandList } from "./bands";
 import { optionsReader } from "./libraryInputs";
-import { optionsOf, standardOf, type RegisteredModel } from "./modelDeclaration";
+import { optionsOf, standardOf, type ModelDeclaration } from "./modelDeclaration";
 import { formatNumber } from "./numberFormat";
 import { quantities, type Quantity } from "./quantities";
 import { enteredValue, panelQuantities, type Slot } from "./slot";
@@ -13,10 +13,10 @@ import type { UnitSystem } from "./unitSystem";
 /**
  * A slot the chart draws, as it is: the slot as it was entered, the
  * atmospheric pressure it ran at and the violation rows its run reported,
- * with its slot's name where the slot has one.
+ * with its slot's label where the slot has one.
  */
 export interface DrawnRun {
-  readonly name?: string;
+  readonly label?: string;
   readonly slot: Slot;
   readonly atmosphericPressure: number;
   readonly violations: readonly ViolationRow[];
@@ -31,40 +31,40 @@ export type InputSummary = readonly (readonly string[])[];
 
 /**
  * What the chart of `runs` is computed from, as an Image writes it under its
- * legend (ADR-0002 decision 64, rule 3): the model's name and its standard;
- * then each run's group, headed by its slot's name where the run has one:
+ * legend (ADR-0002 decision 64, rule 3): the model's label and its standard;
+ * then each run's group, headed by its slot's label where the run has one:
  * its rows as the input panel lists them for its slot, its options and its
- * pressure, and, where its run broke a limit, the limits popover's heading and
- * one line per limit in its row's sentence (decision 84, rule 8); then, given
- * the Band list the chart paints, its Edges. No line names an entry mode: a
- * run's rows are those of its own modes, and their quantities say which. It
- * holds no result.
+ * atmospheric pressure, and, where its run broke a bound, the bounds icon's
+ * heading and one line per bound in its row's sentence (decision 84, rule
+ * 8); then, given the Band list the chart paints, its Edges. No line names an
+ * entry mode: a run's rows are those of its own modes, and their quantities
+ * say which. It holds no outputs.
  */
 export function inputSummary(parts: {
-  model: RegisteredModel;
+  model: ModelDeclaration;
   runs: readonly DrawnRun[];
   unitSystem: UnitSystem;
   bands: BandList | null;
 }): InputSummary {
   const { model, runs, unitSystem, bands } = parts;
   const standard = standardOf(model);
-  const modelLine = standard === undefined ? model.info.label : copy.summaryModel(model.info.label, standardEntryFor(standard).name);
+  const modelLine = standard === undefined ? model.info.label : copy.summaryModel(model.info.label, standardEntryFor(standard).label);
   const edges = bands && model.scan ? [[edgesLine(model.scan.output, bands, unitSystem)]] : [];
   return [[modelLine], ...runs.map((run) => runLines(model, run, unitSystem)), ...edges];
 }
 
-function runLines(model: RegisteredModel, run: DrawnRun, unitSystem: UnitSystem): string[] {
+function runLines(model: ModelDeclaration, run: DrawnRun, unitSystem: UnitSystem): string[] {
   const { slot, atmosphericPressure, violations } = run;
   const options = optionsReader(slot.options);
   return [
-    ...(run.name === undefined ? [] : [run.name]),
+    ...(run.label === undefined ? [] : [run.label]),
     ...panelQuantities(model, slot).map((quantity) =>
       valueLine(quantity, enteredValue(slot, quantity, model, atmosphericPressure), unitSystem),
     ),
     ...optionsOf(model).map((option) => copy.summaryValue(option.label, options(option) ? copy.yes : copy.no)),
     valueLine(quantities.p_atm, atmosphericPressure, unitSystem),
-    // One line a limit: a line holding them all runs off the single-column Image, which wraps nothing.
-    ...limitsBrokenLines(violations, unitSystem),
+    // One line a bound: a line holding them all runs off the single-column Image, which wraps nothing.
+    ...boundsBrokenLines(violations, unitSystem),
   ];
 }
 
@@ -75,7 +75,7 @@ function valueLine(quantity: Quantity, value: number | undefined, unitSystem: Un
   return copy.summaryValue(labelWithUnit(quantity, unit), shown);
 }
 
-/** The Band list's Edges in order, in `output`'s display unit, as the Bands panel's Edge column reads them. */
+/** The Band list's Edges in order, in `output`'s display unit, as the Bands table's Edge column reads them. */
 function edgesLine(output: Quantity, bands: BandList, unitSystem: UnitSystem): string {
   const unit = displayUnitFor(output, unitSystem);
   return copy.summaryEdges(labelWithUnit(output, unit), bands.edges.map((edge) => formatNumber(unit.fromSi(edge))).join(", "));

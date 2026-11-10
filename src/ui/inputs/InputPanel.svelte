@@ -1,13 +1,13 @@
 <script module lang="ts">
   import type { Verdict } from "$lib/core/applicability";
   import type { Quantity } from "$lib/core/quantities";
-  import type { SlotOutputs } from "$lib/state/compute.svelte";
+  import type { SlotComputation } from "$lib/state/compute.svelte";
   import type { InputSlot, SlotPosition } from "$lib/state/session.svelte";
 
-  /** One slot's column: what the slot holds and what its outputs say of it. */
-  export interface SlotColumn {
+  /** One compared slot: what the slot holds and what its computation says of it. */
+  export interface ComparedSlot {
     inputSlot: InputSlot;
-    outputs: SlotOutputs;
+    computation: SlotComputation;
   }
 
   /** What judges and commits a value entered in a slot: the session's (ADR-0002 decision 84, rule 2). */
@@ -19,26 +19,26 @@
 
 <script lang="ts">
   import { enteredBound } from "$lib/core/applicability";
-  import type { OptionSpec, RegisteredModel } from "$lib/core/modelDeclaration";
+  import type { ModelDeclaration, OptionSpec } from "$lib/core/modelDeclaration";
   import { enteredValue, panelRows, rowEntryGroupOf, type PanelRow } from "$lib/core/slot";
   import type { UnitSystem } from "$lib/core/unitSystem";
   import { copy } from "$lib/text/copy";
   import Inline from "$lib/ui/layout/Inline.svelte";
   import SlotColumns from "$lib/ui/layout/SlotColumns.svelte";
   import Stack from "$lib/ui/layout/Stack.svelte";
+  import { raiseVerdict } from "$lib/ui/layout/toasts";
   import { Label } from "$lib/ui/primitives/label";
-  import { raiseVerdict } from "$lib/ui/outputs/notices";
   import { Switch } from "$lib/ui/primitives/switch";
   import EntryGroupMenuButton, { type EntryModeSetters } from "./EntryGroupMenuButton.svelte";
-  import QuantityInput, { type QuantityEntry } from "./QuantityInput.svelte";
+  import QuantityInput, { type QuantityBox } from "./QuantityInput.svelte";
 
   interface Props {
-    model: RegisteredModel;
+    model: ModelDeclaration;
     /**
      * One per slot column, in slot order: slot 1 alone, or on Compare the
      * three, `null` for a slot not compared, whose column stays empty.
      */
-    columns: readonly [SlotColumn, ...(SlotColumn | null)[]];
+    columns: readonly [ComparedSlot, ...(ComparedSlot | null)[]];
     unitSystem: UnitSystem;
     /** The session's, in Pa: a slot converts its humidity entry at it. */
     atmosphericPressure: number;
@@ -63,44 +63,44 @@
     return "option" in row ? row.option : row.quantity;
   }
 
-  function entryOf(column: SlotColumn, quantity: Quantity): QuantityEntry {
-    const { inputSlot, outputs } = column;
-    const { position } = outputs;
-    const slotName = outputs.badge.name;
+  function quantityBoxOf(slot: ComparedSlot, quantity: Quantity): QuantityBox {
+    const { inputSlot, computation } = slot;
+    const { position } = computation;
+    const slotLabel = computation.appearance.label;
     return {
       value: enteredValue(inputSlot, quantity, model, atmosphericPressure) ?? Number.NaN,
       bound: enteredBound(model, quantity, inputSlot, atmosphericPressure),
-      slotName,
-      isLegal: (si) => entryWriter.judgeEntry(position, quantity, si).kind === "legal",
-      oncommit: (si) => raiseVerdict(entryWriter.commitEntry(position, quantity, si), { quantity, slotName }, si, unitSystem),
+      slotLabel,
+      isWithinBounds: (si) => entryWriter.judgeEntry(position, quantity, si).kind === "written",
+      oncommit: (si) => raiseVerdict(entryWriter.commitEntry(position, quantity, si), { quantity, slotLabel }, si, unitSystem),
     };
   }
 
-  function entriesOf(quantity: Quantity): readonly [QuantityEntry, ...(QuantityEntry | null)[]] {
+  function quantityBoxesOf(quantity: Quantity): readonly [QuantityBox, ...(QuantityBox | null)[]] {
     const [head, ...rest] = columns;
-    return [entryOf(head, quantity), ...rest.map((column) => column && entryOf(column, quantity))];
+    return [quantityBoxOf(head, quantity), ...rest.map((slot) => slot && quantityBoxOf(slot, quantity))];
   }
 </script>
 
 <!-- Always shown and always live: whether an option applies at the entered values is the library's to say.
      Addressed by its row's position: an option's key is the library's and the share link's string, not the markup's.
-     A setting on or off at once, so a switch (ADR-0002 decision 76, rule 1); under Compare each column's says its
+     An option on or off at once, so a switch (ADR-0002 decision 76, rule 1); under Compare each column's says its
      state beside it, its name already saying it to a screen reader (rule 2). -->
 {#snippet optionRow(option: OptionSpec, index: number)}
   {#if inColumns}
     <Stack gap="1">
       <Label for="{id}-option-{index}-0">{option.label}</Label>
       <SlotColumns count={columns.length}>
-        {#each columns as column, position (position)}
+        {#each columns as slot, position (position)}
           <div>
-            {#if column}
-              {@const isOn = column.inputSlot.options.get(option)}
+            {#if slot}
+              {@const isOn = slot.inputSlot.options.get(option)}
               <Inline gap="2" align="center">
                 <Switch
                   id="{id}-option-{index}-{position}"
-                  aria-label={column.outputs.badge.name && copy.slotControl(option.label, column.outputs.badge.name)}
+                  aria-label={slot.computation.appearance.label && copy.slotControl(option.label, slot.computation.appearance.label)}
                   checked={isOn}
-                  onCheckedChange={(checked) => column.inputSlot.setOption(option, checked)}
+                  onCheckedChange={(checked) => slot.inputSlot.setOption(option, checked)}
                 />
                 <span class="caption" aria-hidden="true">{isOn ? copy.on : copy.off}</span>
               </Inline>
@@ -141,7 +141,7 @@
         quantity={row.quantity}
         {unitSystem}
         besideLabel={group ? entryGroupMenuButton : undefined}
-        entries={entriesOf(row.quantity)}
+        boxes={quantityBoxesOf(row.quantity)}
       />
     {/if}
   {/each}

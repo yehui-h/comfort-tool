@@ -4,7 +4,7 @@
   select shows the model it is given.
 -->
 <script lang="ts" module>
-  import type { RegisteredModel } from "$lib/core/modelDeclaration";
+  import type { ModelDeclaration } from "$lib/core/modelDeclaration";
   import type { StandardEntry } from "$lib/core/standard";
 
   /**
@@ -14,7 +14,7 @@
    */
   export interface ModelGroup {
     readonly standard: StandardEntry | undefined;
-    readonly models: readonly RegisteredModel[];
+    readonly models: readonly ModelDeclaration[];
   }
 </script>
 
@@ -27,13 +27,13 @@
   interface Props {
     /**
      * What the select lists, in its order: each group under its standard's
-     * name, or the copy's heading for the models with none; one group under
+     * label, or the copy's heading for the models with none; one group under
      * no heading.
      */
     choices: readonly ModelGroup[];
     /** The session's current model, which `choices` holds. */
-    model: RegisteredModel;
-    onchoose: (model: RegisteredModel) => void;
+    model: ModelDeclaration;
+    onchoose: (model: ModelDeclaration) => void;
   }
 
   let { choices, model, onchoose }: Props = $props();
@@ -45,7 +45,7 @@
 
   const groups = $derived(
     choices.map((group) => ({
-      heading: choices.length > 1 ? (group.standard?.name ?? copy.otherModels) : undefined,
+      heading: choices.length > 1 ? (group.standard?.label ?? copy.otherModels) : undefined,
       options: group.models.map((choice) => ({ key: String(models.indexOf(choice)), label: choice.info.label })),
     })),
   );

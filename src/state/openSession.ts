@@ -1,27 +1,27 @@
 import { createContext } from "svelte";
-import type { Outputs } from "./compute.svelte";
+import type { Computation } from "./compute.svelte";
 import type { Session } from "./session.svelte";
 
 /**
- * A notice the app gives, as a toast at the top right (ADR-0002 decision 84,
- * rule 7): a link that could not be read as written or held a value past its
- * bound (decision 88, rules 4 and 5), a clipboard that refused the link
- * (decision 63, rule 6); an Image that could not be made (decision 64, rule
- * 8); and an arrival that cut values to their bounds (decision 84, rule 4, as
- * noted 2026-10-28).
+ * A toast the app gives at the top right (ADR-0002 decision 84, rule 7): a
+ * link that could not be read as written or held a value past its bound
+ * (decision 88, rules 4 and 5), a clipboard that refused the link (decision
+ * 63, rule 6); an Image that could not be made (decision 64, rule 8); and an
+ * arrival that cut values to their bounds (decision 84, rule 4, as noted
+ * 2026-10-28).
  */
-export type Notice = "linkRefused" | "copyRefused" | "imageFailed" | "valuesCut";
+export type Toast = "linkRefused" | "copyRefused" | "imageFailed" | "valuesCut";
 
 /**
- * The app's one session and the outputs derived from it, created once above
- * the router and read by every page, so nothing of it is lost by a change of
- * page (ADR-0002 decision 57). Reset, or a share link the person says yes
- * to, replaces both, and the pages are built
- * again on the new ones (decision 63, rule 8).
+ * The app's one session and the computation derived from it, created once
+ * above the router and read by every page, so nothing of it is lost by a
+ * change of page (ADR-0002 decision 57). Reset, or a share link the person
+ * says yes to, replaces both, and the pages are built again on the new ones
+ * (decision 63, rule 8).
  */
 export interface OpenSession {
   readonly session: Session;
-  readonly outputs: Outputs;
+  readonly computation: Computation;
 }
 
 /**

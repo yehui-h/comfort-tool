@@ -29,7 +29,7 @@
     type ImageSize,
   } from "$lib/core/image";
   import { inputSummary, type DrawnRun } from "$lib/core/inputSummary";
-  import type { RegisteredModel } from "$lib/core/modelDeclaration";
+  import type { ModelDeclaration } from "$lib/core/modelDeclaration";
   import type { UnitSystem } from "$lib/core/unitSystem";
   import { copy } from "$lib/text/copy";
   import { downloadImage } from "$lib/ui/charts/plotlyImage";
@@ -46,7 +46,7 @@
     /** The chart the page shows, or `null` while it shows none. */
     chart: ChartSpec | null;
     /** The session's model and chart type, which name the default title. */
-    model: RegisteredModel;
+    model: ModelDeclaration;
     chartType: ChartType;
     /** What the Input summary lists: the runs {@link chart} is drawn of, read at Download. */
     runs: readonly DrawnRun[];
@@ -117,7 +117,7 @@
   by identity. A click on the chosen item asks for none (an empty value), which
   the setter ignores, so one member is always chosen.
 -->
-{#snippet choice<T extends { title: string }>(
+{#snippet choice<T extends { label: string }>(
   idSuffix: string,
   label: string,
   members: readonly T[],
@@ -141,7 +141,7 @@
       }
     >
       {#each members as member, index (member)}
-        <ToggleGroup.Item value={String(index)}>{member.title}</ToggleGroup.Item>
+        <ToggleGroup.Item value={String(index)}>{member.label}</ToggleGroup.Item>
       {/each}
     </ToggleGroup.Root>
   </Inline>

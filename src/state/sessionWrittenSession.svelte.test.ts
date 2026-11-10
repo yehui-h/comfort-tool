@@ -1,8 +1,8 @@
 /**
  * The session is built from a written session and reads itself out as one
  * (ADR-0002 decision 63, rules 1 and 10), asserted at the seam the other
- * session tests use: a session in, its state and its outputs out, with no
- * component and no router. The expected state after a round trip is the
+ * session tests use: a session in, its state and its computation out, with
+ * no component and no router. The expected state after a round trip is the
  * session's own state before it, read through its public readers, so a
  * field the read-out drops is caught even where building would drop it too.
  *
@@ -15,11 +15,11 @@ import { airSpeedMode, clothingMode, humidityMode, temperatureMode } from "$lib/
 import { optionsOf } from "$lib/core/modelDeclaration";
 import { DEFAULT_ATMOSPHERIC_PRESSURE, quantities } from "$lib/core/quantities";
 import { unitSystem } from "$lib/core/unitSystem";
-import { startingSession } from "$lib/core/writtenSession";
+import { defaultSession } from "$lib/core/writtenSession";
 import { registeredModels } from "$lib/models";
 import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
 import { pmvPpdIso } from "$lib/models/pmvPpdIso";
-import { Outputs } from "./compute.svelte";
+import { Computation } from "./compute.svelte";
 import { Session, slotPositions, type ChartState } from "./session.svelte";
 import {
   differenceFromSlot1,
@@ -29,13 +29,13 @@ import {
   outOfRangeQuantitiesAt,
   sessionComparingThreeSlots,
   shapeOf,
-  sharesAtDefaults,
+  slotOffsetAtDefaults,
 } from "./sessionTestReaders";
 
 const q = quantities;
 const [airSpeedControl] = optionsOf(pmvPpdAshrae);
-/** A pressure below the bound's 30 000 Pa (ADR-0002 decision 49). */
-const PRESSURE_OUT_OF_RANGE = 20000;
+/** An atmospheric pressure below the bound's 30 000 Pa (ADR-0002 decision 49). */
+const ATMOSPHERIC_PRESSURE_OUT_OF_RANGE = 20000;
 
 /** A new session built from what `session` reads itself out as. */
 function rebuilt(session: Session): Session {
@@ -62,23 +62,23 @@ function stateOf(session: Session) {
   };
 }
 
-/** What the page shows of the outputs: each compared slot's result and rows, and the chart. */
-function shownOf(outputs: Outputs) {
+/** What the page shows of the computation: each compared slot's outputs and rows, and the chart. */
+function shownOf(computation: Computation) {
   return {
-    slots: outputs.slots.map((slot) => ({
+    slots: computation.slots.map((slot) => ({
       position: slot.position,
-      result: slot.result,
+      outputs: slot.outputs,
       violations: slot.violations,
     })),
-    chart: outputs.chart,
+    chart: computation.chart,
   };
 }
 
 /**
  * Three slots holding different values with Compare on, every entry group off
- * its default mode, an option ticked, an entered value and the pressure out
- * of range, IP, and the chart type, the axes and an edited Band list on PMV
- * (ASHRAE 55), left for PMV (ISO 7730), and on PMV (ISO 7730).
+ * its default mode, an option ticked, an entered value and the atmospheric
+ * pressure out of range, IP, and the chart type, the axes and an edited Band
+ * list on PMV (ASHRAE 55), left for PMV (ISO 7730), and on PMV (ISO 7730).
  */
 function editedSession(): Session {
   const session = sessionComparingThreeSlots(pmvPpdAshrae);
@@ -97,27 +97,27 @@ function editedSession(): Session {
     draft.setLabel(0, "Freezing");
   });
   session.setTemperatureMode(temperatureMode.operative);
-  session.setAirSpeedMode(airSpeedMode.corrected);
-  session.setClothingMode(clothingMode.corrected);
+  session.setAirSpeedMode(airSpeedMode.relativeAirSpeed);
+  session.setClothingMode(clothingMode.dynamicClothingInsulation);
   session.setHumidityMode(humidityMode.dewPoint);
   heldSlot(session, 1).setEntered(q.operative_tmp, 27);
   heldSlot(session, 2).setEntered(q.met, 1.4);
   // Past PMV (ISO 7730)'s 30 °C, written past the commit's judgement.
   heldSlot(session, 2).setEntered(q.operative_tmp, 60);
   session.unitSystem = unitSystem.ip;
-  session.atmosphericPressure = PRESSURE_OUT_OF_RANGE;
+  session.atmosphericPressure = ATMOSPHERIC_PRESSURE_OUT_OF_RANGE;
   return session;
 }
 
 describe("a session built on a model alone", () => {
-  it("is the session built on the model's starting written session, and reads itself out as that, for every registered model", () => {
+  it("is the session built on the model's default written session, and reads itself out as that, for every registered model", () => {
     for (const model of registeredModels) {
       const onModel = new Session(model);
-      const onStart = new Session(startingSession(model));
+      const onDefaultSession = new Session(defaultSession(model));
 
-      expect(stateOf(onStart), model.info.label).toEqual(stateOf(onModel));
-      expect(shownOf(new Outputs(onStart)), model.info.label).toEqual(shownOf(new Outputs(onModel)));
-      expect(onModel.toWrittenSession(), model.info.label).toEqual(startingSession(model));
+      expect(stateOf(onDefaultSession), model.info.label).toEqual(stateOf(onModel));
+      expect(shownOf(new Computation(onDefaultSession)), model.info.label).toEqual(shownOf(new Computation(onModel)));
+      expect(onModel.toWrittenSession(), model.info.label).toEqual(defaultSession(model));
     }
   });
 });
@@ -135,20 +135,20 @@ describe("a session read out and built again", () => {
     expect(stateOf(again)).toEqual(stateOf(session));
   });
 
-  it("gives the same outputs, with the pressure out of range and back in it", () => {
+  it("gives the same outputs, with the atmospheric pressure out of range and back in it", () => {
     const session = editedSession();
     const again = rebuilt(session);
-    const outputs = new Outputs(session);
-    const againOutputs = new Outputs(again);
+    const computation = new Computation(session);
+    const againComputation = new Computation(again);
 
-    expect(shownOf(againOutputs)).toEqual(shownOf(outputs));
+    expect(shownOf(againComputation)).toEqual(shownOf(computation));
     expect(isAtmosphericPressureOutOfRange(again.atmosphericPressure)).toBe(true);
 
     session.atmosphericPressure = DEFAULT_ATMOSPHERIC_PRESSURE;
     again.atmosphericPressure = DEFAULT_ATMOSPHERIC_PRESSURE;
-    expect(shownOf(againOutputs)).toEqual(shownOf(outputs));
+    expect(shownOf(againComputation)).toEqual(shownOf(computation));
     expect(again.comparedPositions.map((position) => outOfRangeQuantitiesAt(again, position))).toEqual([[], [], [q.operative_tmp]]);
-    expect(againOutputs.chart).not.toBeNull();
+    expect(againComputation.chart).not.toBeNull();
   });
 
   it("keeps every slot that holds values in slot 1's entry modes", () => {
@@ -180,7 +180,7 @@ describe("a session read out and built again", () => {
     expect(again.slots[2]).toBeNull();
     expect(again.isSlotEnabled(2)).toBe(false);
     again.setSlotEnabled(2, true);
-    expect(differenceFromSlot1(again, 2)).toEqual(sharesAtDefaults(pmvPpdIso, 2));
+    expect(differenceFromSlot1(again, 2)).toEqual(slotOffsetAtDefaults(pmvPpdIso, 2));
   });
 
   it("with Compare never switched on enables slot 2 at the first switch-on, started from slot 1 moved by its Slot offset, as a session on the defaults does", () => {
@@ -191,7 +191,7 @@ describe("a session read out and built again", () => {
     again.setCompare(true);
 
     expect(again.isSlotEnabled(1)).toBe(true);
-    expect(differenceFromSlot1(again, 1)).toEqual(sharesAtDefaults(pmvPpdIso, 1));
+    expect(differenceFromSlot1(again, 1)).toEqual(slotOffsetAtDefaults(pmvPpdIso, 1));
   });
 });
 
@@ -215,8 +215,8 @@ describe("Session.toWrittenSession", () => {
       () => session.slots[0].setEntered(q.tdb, 28),
       () => session.slots[0].setOption(airSpeedControl, true),
       () => session.setTemperatureMode(temperatureMode.operative),
-      () => session.setAirSpeedMode(airSpeedMode.corrected),
-      () => session.setClothingMode(clothingMode.corrected),
+      () => session.setAirSpeedMode(airSpeedMode.relativeAirSpeed),
+      () => session.setClothingMode(clothingMode.dynamicClothingInsulation),
       () => session.setHumidityMode(humidityMode.dewPoint),
       () => session.setCompare(true),
       () => session.setSlotEnabled(2, true),

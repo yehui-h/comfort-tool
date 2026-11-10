@@ -1,10 +1,10 @@
 import { SvelteMap } from "svelte/reactivity";
 import type { ClassifierBins } from "jsthermalcomfort";
 import type { BandList } from "$lib/core/bands";
-import { shownRow, type Calculator, type CalculatorResult } from "$lib/core/calculators";
+import { shownRow, type Calculator, type CalculatorOutputs } from "$lib/core/calculators";
 import type { ChartType } from "$lib/core/chartType";
 import type { AirSpeedMode, ClothingMode, HumidityMode, TemperatureMode } from "$lib/core/entryModes";
-import type { ChartAxes, OptionSpec, RegisteredModel } from "$lib/core/modelDeclaration";
+import { classifierOf, type ChartAxes, type ModelDeclaration, type OptionSpec } from "$lib/core/modelDeclaration";
 import { page, type Address, type Page } from "$lib/core/page";
 import {
   atmosphericPressureRow,
@@ -15,7 +15,7 @@ import {
   type SlotOutOfRangeRow,
   type Verdict,
 } from "$lib/core/applicability";
-import { adjustToBounds, rehearseSwitch, settledOutOfRangeRows } from "$lib/core/modelSwitch";
+import { cutToBounds, rehearseSwitch, settledOutOfRangeRows } from "$lib/core/modelSwitch";
 import type { Quantity } from "$lib/core/quantities";
 import {
   defaultEntryModes,
@@ -34,8 +34,8 @@ import type { UnitSystem } from "$lib/core/unitSystem";
 import {
   comparedPositionsOf,
   slotPositions,
-  startingChartSettings,
-  startingSession,
+  defaultChartSettings,
+  defaultSession,
   type ChartSettings,
   type SlotPosition,
   type WrittenSession,
@@ -65,7 +65,8 @@ export class InputSlot implements Slot {
   readonly #options = new SvelteMap<OptionSpec, boolean>();
   // `$state.raw`, not `$state`: a deep proxy would wrap the mode objects and
   // the Quantity they reference, and identity comparisons against
-  // `humidityMode.rh` / `io.quantities.rh` would fail. Replace, don't mutate.
+  // `humidityMode.relativeHumidity` / `io.quantities.rh` would fail. Replace,
+  // don't mutate.
   #humidity = $state.raw<Slot["humidity"]>(undefined);
   #temperature = $state.raw<Slot["temperature"]>(defaultEntryModes.temperature);
   #airSpeed = $state.raw<Slot["airSpeed"]>(defaultEntryModes.airSpeed);
@@ -158,7 +159,7 @@ function replaceEntries<K, V>(target: SvelteMap<K, V>, source: ReadonlyMap<K, V>
 
 /**
  * Which chart is on screen and how it is set up (ADR §4.5). The defaults come
- * from the model's declaration ({@link startingChartSettings}).
+ * from the model's declaration ({@link defaultChartSettings}).
  */
 export class ChartState {
   // Chart types and quantities are compared by identity, so `$state.raw`.
@@ -168,16 +169,16 @@ export class ChartState {
   /** The classifier the Band list began as, which a draft's Add reads; none for a model that scans nothing. */
   readonly #classifier: ClassifierBins | null;
   /** The Band list the model starts on, which a draft's Reset returns to; none for a model that scans nothing. */
-  readonly #startingBands: BandList | null;
+  readonly #defaultBands: BandList | null;
   // Replaced whole, never mutated, so `$state.raw`.
   #bands: BandList | null;
 
   /** `model`'s chart, set up as `settings` say. */
-  constructor(model: RegisteredModel, settings: ChartSettings) {
+  constructor(model: ModelDeclaration, settings: ChartSettings) {
     this.type = $state.raw(settings.type);
     this.axes = $state.raw(settings.axes);
-    this.#classifier = model.scan?.classifier ?? null;
-    this.#startingBands = startingChartSettings(model).bands;
+    this.#classifier = model.scan ? classifierOf(model.info, model.scan.bands) : null;
+    this.#defaultBands = defaultChartSettings(model).bands;
     this.#bands = $state.raw(settings.bands);
   }
 
@@ -211,10 +212,10 @@ export class ChartState {
    * nothing.
    */
   draftBands(): BandListDraft | null {
-    if (!this.#bands || !this.#classifier || !this.#startingBands) {
+    if (!this.#bands || !this.#classifier || !this.#defaultBands) {
       return null;
     }
-    return new BandListDraft(this.#bands, this.#startingBands, this.#classifier, (list) => {
+    return new BandListDraft(this.#bands, this.#defaultBands, this.#classifier, (list) => {
       this.#bands = list;
     });
   }
@@ -240,7 +241,7 @@ export interface RehearsedSlot {
  * these is held — it is the question, not a half-done switch.
  */
 export interface PendingSwitch {
-  readonly model: RegisteredModel;
+  readonly model: ModelDeclaration;
   readonly slots: readonly RehearsedSlot[];
 }
 
@@ -255,7 +256,7 @@ export class Session {
   // All four hold objects compared by identity elsewhere, so `$state.raw`.
   /** The page the address names. Set with the model, by {@link setAddress}; no page component sets it. */
   page: Page;
-  model: RegisteredModel;
+  model: ModelDeclaration;
   unitSystem: UnitSystem;
   /** The chart settings of the current model. */
   chart: ChartState;
@@ -278,16 +279,16 @@ export class Session {
   // Each model remembers its own chart settings. A plain Map: only `chart` is
   // read reactively, and lazily filling a reactive map during a derivation
   // would be a write inside a read.
-  readonly #chartByModel = new Map<RegisteredModel, ChartState>();
+  readonly #chartByModel = new Map<ModelDeclaration, ChartState>();
 
   /**
    * A session holding what `from` holds, on the Standard page until an
    * address says otherwise (ADR-0002 decision 63). A model alone is its
-   * {@link startingSession}, so a session comes to hold its state one way;
+   * {@link defaultSession}, so a session comes to hold its state one way;
    * nothing lays a written session over a session already built.
    */
-  constructor(from: RegisteredModel | WrittenSession) {
-    const written = "slots" in from ? from : startingSession(from);
+  constructor(from: ModelDeclaration | WrittenSession) {
+    const written = "slots" in from ? from : defaultSession(from);
     for (const [model, settings] of written.charts) {
       this.#chartByModel.set(model, new ChartState(model, settings));
     }
@@ -335,18 +336,18 @@ export class Session {
     return this.#compare;
   }
 
-  /** The slots the outputs are asked about, in slot order: slot 1 always. */
+  /** The slots the computation is asked about, in slot order: slot 1 always. */
   get comparedPositions(): readonly SlotPosition[] {
     return this.#comparedPositions;
   }
 
   /**
-   * Whether each compared slot's badge carries its position name: on the
-   * Standard page while Compare is on, and nowhere else (ADR-0002 decision
-   * 50). Asked here alone; each slot's badge is given from it
-   * (`state/compute.svelte.ts`). A slot not shown has no badge, so the
-   * switch's dialog and the pressure's toast name a slot by position on their
-   * own rule (decision 84, rule 4).
+   * Whether each compared slot's appearance carries its position's label: on
+   * the Standard page while Compare is on, and nowhere else (ADR-0002
+   * decision 50). Asked here alone; each slot's appearance is given from it
+   * (`state/compute.svelte.ts`). A slot not shown has no appearance, so the
+   * switch's dialog and the atmospheric pressure's toast name a slot by
+   * position on their own rule (decision 84, rule 4).
    */
   get slotsNamed(): boolean {
     return this.page === page.standard && this.#compare;
@@ -372,9 +373,9 @@ export class Session {
   /**
    * Enable or disable the slot at `position`. A slot enabled for the first
    * time takes what slot 1 holds now, entry modes and options included, each
-   * value moved by its Slot offset, one share of its axis range per position
+   * value moved by its Slot offset, one part of its axis range per position
    * past slot 1, and is cut to its bounds as an arrival is (ADR-0002 decision
-   * 89's revision of rule 8). It raises no notice for the cut, as an entry
+   * 89's revision of rule 8). It raises no toast for the cut, as an entry
    * cut raises none. A slot enabled again holds what it held.
    */
   setSlotEnabled(position: OptionalSlotPosition, enabled: boolean): void {
@@ -496,8 +497,9 @@ export class Session {
 
   /**
    * The verdict on entering `value` for `quantity` in the slot at `position`,
-   * which must hold values, under the session's model and pressure (ADR-0002
-   * decision 84, rule 2), writing nothing: what the box asks of a draft.
+   * which must hold values, under the session's model and atmospheric
+   * pressure (ADR-0002 decision 84, rule 2), writing nothing: what the box
+   * asks of a draft.
    */
   judgeEntry(position: SlotPosition, quantity: Quantity, value: number): Verdict {
     return entryVerdict(this.#heldSlotAt(position), this.model, this.atmosphericPressure, quantity, value);
@@ -507,7 +509,7 @@ export class Session {
    * Commit `value` for `quantity` in the slot at `position`: written as it
    * is, cut to its bound's end, or not written, as {@link judgeEntry} says,
    * which is returned for the page to tell the person. The session raises no
-   * notice itself.
+   * toast itself.
    */
   commitEntry(position: SlotPosition, quantity: Quantity, value: number): Verdict {
     const verdict = this.judgeEntry(position, quantity, value);
@@ -518,14 +520,14 @@ export class Session {
   }
 
   /**
-   * An input calculator's Apply of `result` to the slot at `position`: the
-   * row the dock shows for it, the result met with the row and cut to the
+   * An input calculator's Apply of `outputs` to the slot at `position`: the
+   * row the dock shows for it, the output met with the row and cut to the
    * row's bound (`shownRow`), committed as a typed value is (ADR-0002
    * decision 84, rule 5). What the commit says is returned; the dialog
-   * raises no notice, as its dock showed the cut before the person chose.
+   * raises no toast, as its dock showed the cut before the person chose.
    */
-  applyCalculator(position: SlotPosition, calculator: Calculator, result: CalculatorResult): Verdict {
-    const row = shownRow(this.#heldSlotAt(position), calculator, result, this.model, this.atmosphericPressure);
+  applyCalculator(position: SlotPosition, calculator: Calculator, outputs: CalculatorOutputs): Verdict {
+    const row = shownRow(this.#heldSlotAt(position), calculator, outputs, this.model, this.atmosphericPressure);
     return this.commitEntry(position, row.quantity, row.after);
   }
 
@@ -557,7 +559,7 @@ export class Session {
    * model in one step, so no derivation sees a slot and the model disagree.
    * The address's path, {@link setAddress}, sets the model so and then cuts.
    */
-  setModel(model: RegisteredModel): void {
+  setModel(model: ModelDeclaration): void {
     if (model === this.model) {
       return;
     }
@@ -573,9 +575,10 @@ export class Session {
    * whatever was pending with a "No", as a landing does, even on the model
    * already current: the question was asked on a page the address has left.
    *
-   * It then cuts the pressure to its kind's bound, and every entry of every
-   * slot that holds values, compared or not, to its bound at the pressure as
-   * cut, as a switch's "Yes" cuts (decision 84, rule 4, as noted 2026-10-28).
+   * It then cuts the atmospheric pressure to its kind's bound, and every entry
+   * of every slot that holds values, compared or not, to its bound at the
+   * atmospheric pressure as cut, as a switch's "Yes" cuts (decision 84, rule
+   * 4, as noted 2026-10-28).
    * It lists nothing and holds nothing pending, and answers whether it cut
    * anything, for the page to say so.
    */
@@ -583,11 +586,11 @@ export class Session {
     this.pendingSwitch = null;
     this.page = address.page;
     this.setModel(address.model);
-    const pressureRow = atmosphericPressureRow(this.atmosphericPressure);
-    if (pressureRow) {
-      this.atmosphericPressure = nearestEnd(pressureRow.value, pressureRow.bound);
+    const outOfRangeRow = atmosphericPressureRow(this.atmosphericPressure);
+    if (outOfRangeRow) {
+      this.atmosphericPressure = nearestEnd(outOfRangeRow.value, outOfRangeRow.bound);
     }
-    let cut = pressureRow !== undefined;
+    let cut = outOfRangeRow !== undefined;
     for (const slot of this.#heldSlots()) {
       cut = this.#replaceCut(slot, slot) || cut;
     }
@@ -604,7 +607,7 @@ export class Session {
    * {@link acceptSwitch} or {@link declineSwitch} answers it (decision 84,
    * rule 4).
    */
-  requestModel(model: RegisteredModel): void {
+  requestModel(model: ModelDeclaration): void {
     // Every request supersedes the last one, so no question outlives the act
     // that asked it — asking for the model already current answers the
     // previous question with a "No" rather than leaving it standing.
@@ -620,7 +623,7 @@ export class Session {
     this.pendingSwitch = { model, slots };
   }
 
-  /** "Yes, switch and adjust": every listed value moves to its nearest bound, and every slot lands with the model. */
+  /** "Yes, cut and switch": every listed value moves to its nearest bound, and every slot lands with the model. */
   acceptSwitch(): void {
     const pending = this.pendingSwitch;
     if (!pending) {
@@ -628,7 +631,7 @@ export class Session {
     }
     this.#land(
       pending.model,
-      pending.slots.map(({ position, slot, listedRows }) => ({ position, slot: adjustToBounds(slot, listedRows) })),
+      pending.slots.map(({ position, slot, listedRows }) => ({ position, slot: cutToBounds(slot, listedRows) })),
     );
   }
 
@@ -644,7 +647,7 @@ export class Session {
    * with the rest, and is listed so that none changes unseen (ADR-0002
    * decision 84, rule 4).
    */
-  #rehearse(model: RegisteredModel): RehearsedSlot[] {
+  #rehearse(model: ModelDeclaration): RehearsedSlot[] {
     return slotPositions.flatMap((position) => {
       const held = this.#slots[position];
       if (!held) {
@@ -663,7 +666,7 @@ export class Session {
    * against a slot that has since moved is stale, and an unanswered question
    * is a "No".
    */
-  #land(model: RegisteredModel, slots: readonly Pick<RehearsedSlot, "position" | "slot">[]): void {
+  #land(model: ModelDeclaration, slots: readonly Pick<RehearsedSlot, "position" | "slot">[]): void {
     for (const { position, slot } of slots) {
       this.#slots[position]?.replaceWith(slot);
     }
@@ -674,15 +677,15 @@ export class Session {
 
   /**
    * Replace what `slot` holds with `held`, every entry out of range cut to
-   * its bound at the session's model and pressure, read at the entries as
-   * cut (ADR-0002 decision 84, rules 4 and 5), and answer whether it cut
-   * anything. An arrival lands so, and an entry-mode switch, as a conversion
-   * can carry an entry past a bound the mode it left did not hold it to, and
-   * a slot first enabled, as a Slot offset can.
+   * its bound at the session's model and atmospheric pressure, read at the
+   * entries as cut (ADR-0002 decision 84, rules 4 and 5), and answer whether
+   * it cut anything. An arrival lands so, and an entry-mode switch, as a
+   * conversion can carry an entry past a bound the mode it left did not hold
+   * it to, and a slot first enabled, as a Slot offset can.
    */
   #replaceCut(slot: InputSlot, held: Slot): boolean {
     const rows = settledOutOfRangeRows(held, this.model, this.atmosphericPressure);
-    slot.replaceWith(rows.length > 0 ? adjustToBounds(held, rows) : held);
+    slot.replaceWith(rows.length > 0 ? cutToBounds(held, rows) : held);
     return rows.length > 0;
   }
 
@@ -700,10 +703,10 @@ export class Session {
     return this.#slots.filter((slot): slot is InputSlot => slot !== null);
   }
 
-  #chartFor(model: RegisteredModel): ChartState {
+  #chartFor(model: ModelDeclaration): ChartState {
     let state = this.#chartByModel.get(model);
     if (!state) {
-      state = new ChartState(model, startingChartSettings(model));
+      state = new ChartState(model, defaultChartSettings(model));
       this.#chartByModel.set(model, state);
     }
     return state;

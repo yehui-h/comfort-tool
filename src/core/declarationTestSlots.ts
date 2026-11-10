@@ -1,5 +1,5 @@
 /**
- * The slot a test enters values over: a model's own starting slot, so every
+ * The slot a test enters values over: a model's own default slot, so every
  * test that shares it runs a declaration on the numbers the app starts it on;
  * and the entry modes a test asks a rule about.
  */
@@ -12,9 +12,9 @@ import {
   type ClothingMode,
   type TemperatureMode,
 } from "./entryModes";
-import type { RegisteredModel } from "./modelDeclaration";
+import type { ModelDeclaration } from "./modelDeclaration";
 import { quantities } from "./quantities";
-import { defaultEntryModes, startingSlot, type Slot, type ValueEntryModes } from "./slot";
+import { defaultEntryModes, defaultSlot, type Slot, type ValueEntryModes } from "./slot";
 
 /** The entry modes of a session that changed none but temperature's, to `mode`. */
 export function entryModesWithTemperature(mode: TemperatureMode): ValueEntryModes {
@@ -35,7 +35,7 @@ export function entryModesWithClothing(mode: ClothingMode): ValueEntryModes {
 type HumidityKey = (typeof humidityMode)[keyof typeof humidityMode]["quantity"]["key"];
 
 /**
- * `model`'s starting slot with `entered` over its values. Entering
+ * `model`'s default slot with `entered` over its values. Entering
  * `operative_tmp` puts the slot under operative entry, where it stands in for
  * the separate temperatures, as the input panel shows it, and entering `vr`
  * under relative air speed entry, where it stands in for the air speed, and
@@ -43,10 +43,10 @@ type HumidityKey = (typeof humidityMode)[keyof typeof humidityMode]["quantity"][
  * humidity entry is not among the values, so it cannot be entered here.
  */
 export function enteredSlotFor(
-  model: RegisteredModel,
+  model: ModelDeclaration,
   entered: Partial<Record<Exclude<keyof typeof quantities, HumidityKey>, number>>,
 ): Slot {
-  const slot = startingSlot(model);
+  const slot = defaultSlot(model);
   const values = new Map(slot.values);
   const mode = entered.operative_tmp === undefined ? temperatureMode.separate : temperatureMode.operative;
   if (mode === temperatureMode.operative) {
@@ -54,12 +54,12 @@ export function enteredSlotFor(
       values.delete(quantity);
     }
   }
-  const airSpeedEntry = entered.vr === undefined ? airSpeedMode.uncorrected : airSpeedMode.corrected;
-  if (airSpeedEntry === airSpeedMode.corrected) {
+  const airSpeedEntryMode = entered.vr === undefined ? airSpeedMode.airSpeed : airSpeedMode.relativeAirSpeed;
+  if (airSpeedEntryMode === airSpeedMode.relativeAirSpeed) {
     values.delete(quantities.v);
   }
-  const clothingEntry = entered.clo_dynamic === undefined ? clothingMode.uncorrected : clothingMode.corrected;
-  if (clothingEntry === clothingMode.corrected) {
+  const clothingEntryMode = entered.clo_dynamic === undefined ? clothingMode.clothingInsulation : clothingMode.dynamicClothingInsulation;
+  if (clothingEntryMode === clothingMode.dynamicClothingInsulation) {
     values.delete(quantities.clo);
   }
   for (const [key, value] of Object.entries(entered)) {
@@ -67,5 +67,5 @@ export function enteredSlotFor(
       values.set(quantities[key as keyof typeof quantities], value);
     }
   }
-  return { ...slot, values, temperature: { mode }, airSpeed: { mode: airSpeedEntry }, clothing: { mode: clothingEntry } };
+  return { ...slot, values, temperature: { mode }, airSpeed: { mode: airSpeedEntryMode }, clothing: { mode: clothingEntryMode } };
 }

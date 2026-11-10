@@ -3,10 +3,10 @@
  * model and a slot it can run on land together. The rehearsal that works the
  * slot out is a pure function in `core/`, but every rule in it is observable
  * from the session, so this is the only seam it is asserted at — a session in,
- * its state and its outputs out, with no component and no router.
+ * its state and its computation out, with no component and no router.
  *
- * Nothing flushes, for the reason `compute.svelte.test.ts` gives: the outputs
- * are a derivation, so reading one after a change is what recomputes it.
+ * Nothing flushes, for the reason `compute.svelte.test.ts` gives: the
+ * computation is a derivation, so reading it after a change recomputes it.
  *
  * Each fixture here spreads PMV (ISO 7730)'s declaration and overrides the one
  * thing it is about; the options block uses the registered PMV (ASHRAE 55)
@@ -18,14 +18,14 @@
 import { describe, expect, it } from "vitest";
 import { chartType } from "$lib/core/chartType";
 import { humidityMode, temperatureMode, type HumidityMode } from "$lib/core/entryModes";
-import { optionsOf, type RegisteredModel } from "$lib/core/modelDeclaration";
+import { optionsOf, type ModelDeclaration } from "$lib/core/modelDeclaration";
 import { DEFAULT_ATMOSPHERIC_PRESSURE, quantities } from "$lib/core/quantities";
 import { adaptiveAshrae } from "$lib/models/adaptiveAshrae";
 import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
 import { pmvPpdIso } from "$lib/models/pmvPpdIso";
-import { Outputs } from "./compute.svelte";
+import { Computation } from "./compute.svelte";
 import { Session, type InputSlot } from "./session.svelte";
-import { outOfRangeQuantitiesAt, resultValueOf, sessionComparingThreeSlots, shapeOf } from "./sessionTestReaders";
+import { outOfRangeQuantitiesAt, outputValueOf, sessionComparingThreeSlots, shapeOf } from "./sessionTestReaders";
 
 const q = quantities;
 
@@ -33,29 +33,29 @@ const q = quantities;
  * A model that takes a quantity PMV (ISO 7730) does not, so a slot built for
  * that one never holds it. `run` reads the extra input first, which is
  * what makes an unseeded slot throw rather than quietly run without it; the
- * value comes back on the result so a test can read what the slot supplied.
+ * value comes back among the outputs so a test can read what the slot supplied.
  */
 const takesExternalWork = {
   ...pmvPpdIso,
   info: { ...pmvPpdIso.info, name: "fixture_external_work" },
   inputs: [...pmvPpdIso.inputs, { quantity: q.wme, value: 0.4 }],
-  run: (values) => {
-    const wme = values.wme;
-    return { ...pmvPpdIso.run(values), wme };
+  run: (inputs) => {
+    const wme = inputs.wme;
+    return { ...pmvPpdIso.run(inputs), wme };
   },
-} satisfies RegisteredModel;
+} satisfies ModelDeclaration;
 
 /** A model with no temperature entry group: a dry-bulb temperature and no mean radiant one. */
 const withoutTemperatureGroup = {
   ...pmvPpdIso,
   info: { ...pmvPpdIso.info, name: "fixture_without_mean_radiant" },
-  inputs: pmvPpdIso.inputs.filter((entry) => entry.quantity !== q.tr),
-} satisfies RegisteredModel;
+  inputs: pmvPpdIso.inputs.filter((input) => input.quantity !== q.tr),
+} satisfies ModelDeclaration;
 
 /**
  * The option PMV (ASHRAE 55) reads through `run`'s second reader. With it off,
  * an air speed above what the standard allows the room comes back as a broken
- * row on the result, which is how a test sees the option reach the call.
+ * row among the outputs, which is how a test sees the option reach the call.
  */
 const [airSpeedControl] = optionsOf(pmvPpdAshrae);
 
@@ -63,8 +63,8 @@ const [airSpeedControl] = optionsOf(pmvPpdAshrae);
 const declaresDrierAir = {
   ...pmvPpdIso,
   info: { ...pmvPpdIso.info, name: "fixture_declares_drier_air" },
-  inputs: pmvPpdIso.inputs.map((entry) => (entry.quantity === q.rh ? { ...entry, value: 40 } : entry)),
-} satisfies RegisteredModel;
+  inputs: pmvPpdIso.inputs.map((input) => (input.quantity === q.rh ? { ...input, value: 40 } : input)),
+} satisfies ModelDeclaration;
 
 /**
  * A slot holds a humidity only once a declaration's default or the person
@@ -83,7 +83,7 @@ describe("the humidity entry", () => {
   it("starts at the declared relative humidity, with temperatures in separate entry", () => {
     const session = new Session(declaresDrierAir);
 
-    expect(session.slots[0].humidity).toEqual({ mode: humidityMode.rh, value: 40 });
+    expect(session.slots[0].humidity).toEqual({ mode: humidityMode.relativeHumidity, value: 40 });
     expect(session.slots[0].temperature.mode).toBe(temperatureMode.separate);
   });
 
@@ -94,7 +94,7 @@ describe("the humidity entry", () => {
       session[act](declaresDrierAir);
 
       expect(session.model).toBe(declaresDrierAir);
-      expect(session.slots[0].humidity).toEqual({ mode: humidityMode.rh, value: 40 });
+      expect(session.slots[0].humidity).toEqual({ mode: humidityMode.relativeHumidity, value: 40 });
     });
   }
 });
@@ -102,13 +102,13 @@ describe("the humidity entry", () => {
 describe("Session.setModel", () => {
   it("seeds a quantity the slot lacks from the new model's default, and the run then completes", () => {
     const session = new Session(pmvPpdIso);
-    const outputs = new Outputs(session);
+    const computation = new Computation(session);
 
     session.setModel(takesExternalWork);
 
     expect(session.slots[0].values.get(q.wme)).toBe(0.4);
-    expect(resultValueOf(outputs.slots[0].result, q.wme)).toBe(0.4);
-    expect(resultValueOf(outputs.slots[0].result, q.pmv)).toBeTypeOf("number");
+    expect(outputValueOf(computation.slots[0].outputs, q.wme)).toBe(0.4);
+    expect(outputValueOf(computation.slots[0].outputs, q.pmv)).toBeTypeOf("number");
   });
 
   it("keeps the values already in the slot, whichever model put them there", () => {
@@ -159,7 +159,7 @@ describe("Session.setModel", () => {
     expect(session.slots[0].values.has(q.tr)).toBe(false);
   });
 
-  it("adjusts nothing: an out-of-range value stays as entered and is what the gate names", () => {
+  it("cuts nothing: an out-of-range value stays as entered and is what the gate names", () => {
     const session = new Session(pmvPpdIso);
     // 35 °C is past ISO 7730's 30 °C, which both fixtures inherit.
     session.slots[0].setEntered(q.tdb, 35);
@@ -236,15 +236,15 @@ describe("Session.requestModel", () => {
    * model never ran on the next one's slot, and the next model never ran on a
    * slot that was not ready for it.
    */
-  it("holds a result the model it names could have produced", () => {
+  it("holds outputs the model it names could have produced", () => {
     const session = new Session(pmvPpdIso);
-    const outputs = new Outputs(session);
-    expect(resultValueOf(outputs.slots[0].result, q.wme)).toBeUndefined();
+    const computation = new Computation(session);
+    expect(outputValueOf(computation.slots[0].outputs, q.wme)).toBeUndefined();
 
     session.requestModel(takesExternalWork);
 
-    expect(resultValueOf(outputs.slots[0].result, q.wme)).toBe(0.4);
-    expect(resultValueOf(outputs.slots[0].result, q.pmv)).toBeTypeOf("number");
+    expect(outputValueOf(computation.slots[0].outputs, q.wme)).toBe(0.4);
+    expect(outputValueOf(computation.slots[0].outputs, q.pmv)).toBeTypeOf("number");
   });
 
   it("does nothing when the model is already the current one", () => {
@@ -263,7 +263,7 @@ describe("Session.requestModel", () => {
 /**
  * What a slot does with a model's options (ADR-0002 decision 36). They are a
  * superset bag like the values: a switch seeds what the new model declares
- * and the slot lacks, and removes nothing. An option has no range, so no
+ * and the slot lacks, and removes nothing. An option has no bound, so no
  * switch ever asks about one.
  */
 describe("options", () => {
@@ -275,14 +275,14 @@ describe("options", () => {
 
   it("are set on the slot like a value, and the outputs follow", () => {
     const session = new Session(pmvPpdAshrae);
-    const outputs = new Outputs(session);
+    const computation = new Computation(session);
     // 0.8 m/s at 25 °C is past what ASHRAE 55 allows occupants without control.
     session.slots[0].setEntered(q.v, 0.8);
-    expect(outputs.slots[0].violations.map((violation) => violation.quantity)).toContain(q.v);
+    expect(computation.slots[0].violations.map((violation) => violation.quantity)).toContain(q.v);
 
     session.slots[0].setOption(airSpeedControl, true);
 
-    expect(outputs.slots[0].violations).toEqual([]);
+    expect(computation.slots[0].violations).toEqual([]);
   });
 
   it("seed an option the slot lacks at its default on a switch", () => {
@@ -325,23 +325,23 @@ describe("options", () => {
 describe("the axes of a model without a dynamic chart", () => {
   it("are none, and stay none when an axis is set", () => {
     const session = new Session(adaptiveAshrae);
-    const outputs = new Outputs(session);
+    const computation = new Computation(session);
 
     expect(session.chart.type).toBe(chartType.adaptive);
     expect(session.chart.axes).toBeNull();
     session.chart.setAxes({ x: q.clo, y: q.met });
 
     expect(session.chart.axes).toBeNull();
-    expect(outputs.chart?.layout.x.title).toContain(q.t_running_mean.label);
-    expect(outputs.chart?.layout.y.title).toContain(q.operative_tmp.label);
+    expect(computation.chart?.layout.x.title).toContain(q.t_running_mean.label);
+    expect(computation.chart?.layout.y.title).toContain(q.operative_tmp.label);
   });
 
   it("leave the adaptive chart operative under separate entry", () => {
     const session = new Session(adaptiveAshrae);
-    const outputs = new Outputs(session);
+    const computation = new Computation(session);
 
     expect(session.slots[0].temperature.mode).toBe(temperatureMode.separate);
-    expect(outputs.chart?.layout.y.title).toContain(q.operative_tmp.label);
+    expect(computation.chart?.layout.y.title).toContain(q.operative_tmp.label);
   });
 });
 
@@ -352,16 +352,16 @@ describe("the axes of a model without a dynamic chart", () => {
 describe("InputSlot.setEntered", () => {
   it("enters the humidity entry's quantity as the entry, in its own mode, and the outputs follow", () => {
     const session = new Session(pmvPpdIso);
-    const outputs = new Outputs(session);
+    const computation = new Computation(session);
     session.setHumidityMode(humidityMode.dewPoint);
-    const before = resultValueOf(outputs.slots[0].result, q.pmv);
+    const before = outputValueOf(computation.slots[0].outputs, q.pmv);
 
     session.slots[0].setEntered(q.dew_point_tmp, 12);
 
     expect(session.slots[0].humidity).toEqual({ mode: humidityMode.dewPoint, value: 12 });
     expect(session.slots[0].values.has(q.dew_point_tmp)).toBe(false);
     expect(outOfRangeQuantitiesAt(session, 0)).toEqual([]);
-    expect(resultValueOf(outputs.slots[0].result, q.pmv)).not.toBe(before);
+    expect(outputValueOf(computation.slots[0].outputs, q.pmv)).not.toBe(before);
   });
 });
 
@@ -377,7 +377,7 @@ export function slotWritesTypeProof(slot: InputSlot): void {
   // @ts-expect-error an option written past `setOption`
   slot.options.set(airSpeedControl, true);
   // @ts-expect-error a humidity entry written past `setEntered` and the session's `setHumidityMode`
-  slot.humidity = { mode: humidityMode.rh, value: 50 };
+  slot.humidity = { mode: humidityMode.relativeHumidity, value: 50 };
   // @ts-expect-error a temperature entry written past the session's `setTemperatureMode`
   slot.temperature = { mode: temperatureMode.operative };
 }
@@ -389,11 +389,11 @@ export function slotWritesTypeProof(slot: InputSlot): void {
  * each conversion runs on a value the one before it produced.
  */
 describe("Session.setHumidityMode", () => {
-  const walk = [...Object.values(humidityMode).filter((mode) => mode !== humidityMode.rh), humidityMode.rh];
+  const walk = [...Object.values(humidityMode).filter((mode) => mode !== humidityMode.relativeHumidity), humidityMode.relativeHumidity];
 
   /** The values the walk should enter, each mode's own conversions composed at `tdb`. */
   function expectedWalk(rh: number, tdb: number): number[] {
-    let mode: HumidityMode = humidityMode.rh;
+    let mode: HumidityMode = humidityMode.relativeHumidity;
     let value = rh;
     return walk.map((next) => {
       value = next.fromRelativeHumidity(mode.toRelativeHumidity(value, tdb, DEFAULT_ATMOSPHERIC_PRESSURE), tdb, DEFAULT_ATMOSPHERIC_PRESSURE);
@@ -416,7 +416,7 @@ describe("Session.setHumidityMode", () => {
     session.slots[0].setEntered(q.rh, 35);
 
     expect(walkedValues(session)).toEqual(expectedWalk(35, 27));
-    expect(session.slots[0].humidity?.mode).toBe(humidityMode.rh);
+    expect(session.slots[0].humidity?.mode).toBe(humidityMode.relativeHumidity);
   });
 
   it("converts at the operative temperature under operative entry", () => {

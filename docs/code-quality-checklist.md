@@ -28,15 +28,15 @@ checklist line below turns out to be mechanisable, it should move up into the ma
 |---|---|---|
 | `core/` imports no `svelte` / `state` / `ui` / `routes` | eslint `coreBoundary` | ADR §5 |
 | `ui/charts/` imports no model, state or `jsthermalcomfort` | eslint `chartBoundary` | ADR §4.4 |
-| Library model functions imported only in `models/` and `temporary-library/`, and `clo_tout` and `solar_gain` also in `core/calculators.ts` | eslint `libraryModelImports` | ADR §3, ADR-0002 decision 75 |
-| No quantity wire string outside `shareLink.ts` | eslint `wireStringSyntax` | ADR §4.0, DRY |
+| Library model functions imported only in `models/` and `temporary-library/`, and `clo_tout` and `solar_gain` also in `core/calculators.ts` | eslint `libraryModelImports` | ADR §3, ADR-0002 decision 75. *Noted 2026-11-05 (ADR-0002 decision 90's close-out): the rule bars imports from the package root only; since the lock moved to `v2-typescript` the package also exports `./models` and other subpaths, and an import from `jsthermalcomfort/models` passes it; left for the Vite+ migration (open point D22).* |
+| No quantity wire string outside `shareLink.ts` and `src/temporary-library/`, which writes the library's keys itself | eslint `wireStringSyntax` | ADR §4.0, DRY, ADR-0002 decision 90 rule 12 |
 | Tailwind utilities only in `ui/primitives/` and `ui/layout/` | eslint `tailwindSyntax` | ADR §2 |
 | No `<style>` block outside `ui/primitives/` and `ui/layout/` | eslint `styleBlockSyntax` | ADR-0002 decision 65 |
 | No `export let` / `$:` / `on:` / `<slot>` / `<svelte:component>` | eslint `legacySvelteSyntax` | Svelte Best practices |
 | No `any` | eslint `no-explicit-any` | TS Do's and Don'ts |
 | No `enum` / `namespace` / parameter properties | `erasableSyntaxOnly` | ADR §6 |
 | **No assignment to state inside `$effect`; no `untrack`** | eslint `effectPurity` | Svelte Best practices |
-| **Scalar module constants are `CONSTANT_CASE`** | eslint `constantCase` | ADR §6, Google TS Style Guide |
+| **Scalar module constants are `CONSTANT_CASE`**, in `src/temporary-library/` too, as the library names a constant it adds | eslint `constantCase` | ADR §6, Google TS Style Guide, jsthermalcomfort ADR 0021 |
 | Every Playwright call in a browser test is awaited, and every promise in a repository script | eslint `no-floating-promises` | Playwright Best Practices |
 | Types check (`src/`, `tests/`, `scripts/`, the Playwright config), tests pass, build succeeds | `npm run check` / `test` / `build`; `test:browser` where AGENTS.md's done line says | — |
 
@@ -51,7 +51,14 @@ Read the diff once against each of these. They are judgement calls; none of them
   library's vocabulary, not ours. *(Google TS Style Guide: "Do not use abbreviations that are ambiguous or unfamiliar to
   readers outside your project, and do not abbreviate by deleting letters within a word.")*
 - A function that acts or answers a question starts with a verb; one that only returns a value is named for what it returns, a noun phrase (`violationRows`), with a preposition where the name must say what it is read from or made of (`…For`, `…Of`, `with…` or any other, as in `modelBySegment`); a conversion is `to…`, a callback `on…` after its event (ADR-0002 decision 41). No `engine` / `manager` / `helper` / `utils` as a file name.
-- Quantity display names come from `Quantity.label` — never written in the app. The one exception is the zone legend's `|PMV|` (ADR-0002 decision 44).
+- GLOSSARY.md's _Avoid_ lists bind the app's names, not prose alone: a type, function, file, CSS class, copy key, test
+  title or persisted string uses the GLOSSARY's word for its concept (ADR-0002 decision 91, rule 7).
+- A name another package or standard defines (WAI-ARIA, HTML, Bits UI and shadcn, Plotly, Sonner) is kept as it is;
+  then jsthermalcomfort's word; then the plainest conventional word, before one the app coins (decision 91, rule 8).
+- A name that is a quantity itself is its library key (`tdb`, `rh`); a compound name spells the quantity as its label
+  does (`relativeHumidityOf`, `humidityRatioUnit`), the acronym where the label is one (`pmvAt`), never the key (`pAtm`,
+  `hrUnit`) (decision 91, rule 9).
+- A quantity's label comes from `Quantity.label` — never written in the app. The one exception is the zone legend's `|PMV|` (ADR-0002 decision 44).
 
 **Single source of truth**
 
@@ -65,15 +72,15 @@ Read the diff once against each of these. They are judgement calls; none of them
 
 - Is a type annotation adding meaning, or restating what inference already knows? *(Google TS Style Guide: rely on
   inference; annotate where it aids readability.)*
-- Do mapped and conditional types still read plainly? `Omit<RegisteredModel, "run">` in `defineModel`, the three
-  `Extract<DeclaredChart, …>` aliases and `RegisteredModel`'s union over the scan are the current ones. *("A little bit of repetition or verbosity is often much
+- Do mapped and conditional types still read plainly? The three `Extract<DeclaredChart, …>` aliases and
+  `ModelDeclaration`'s union over the scan are the current ones. *("A little bit of repetition or verbosity is often much
   cheaper than the long term cost of complex type expressions.")*
 - Callbacks whose return value is ignored are typed `void`, not `any`.
 
 **Precision**
 
 - Does a test of a number a person can see assert at the shown precision in SI (`toBeCloseTo(x, 2)`, or `formatNumber` equality)? Only a test of the app's own arithmetic (`core/units.ts`, `src/temporary-library/`) pins tighter, because it verifies a formula, not a precision (ADR-0002 decision 56).
-- Is anything rounded on its way into a slot, or compared against a bound exactly? A slot holds full-precision SI; the gate and the range text judge and read at the formatter's constant, through `isShownBeyond`, and nowhere else is a precision written. An exact comparison that picks a direction for a row the gate already listed, as a "Yes" picks its end, is not a verdict and stands.
+- Is anything rounded on its way into a slot, or compared against a bound exactly? A slot holds full-precision SI; the gate and the bound's text judge and read at the formatter's constant, through `isShownBeyond`, and nowhere else is a precision written. An exact comparison that picks a direction for a row the gate already listed, as a "Yes" picks its end, is not a verdict and stands.
 
 **Svelte**
 

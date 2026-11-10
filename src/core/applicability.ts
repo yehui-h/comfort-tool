@@ -1,28 +1,28 @@
 /**
  * What is inside and outside a model's applicability. Reads `applicability`
  * off a model's `info.inputs` for the bound an entered quantity must satisfy
- * (the pre-call gate, and the range shown beside the input; ADR-0002
+ * (the pre-call gate, and the bound shown beside the input; ADR-0002
  * decision 4), intersected with its kind's bound from `kindBounds` when the
  * model takes the quantity (decision 46); `axisRangeFor` reads the same
  * applicability bounds only as an axis range's fallback (decision 5). The
- * rows a completed run still breaks are the library's, read off the result's
+ * rows a completed run still breaks are the library's, read off the outputs'
  * `warnings` (ADR-0002 decision 23) and mapped to quantities here.
  *
- * A violation is `{ quantity, bounded, role, value, bound }`, and its warning
- * sentence is assembled here from the bounded quantity's label, the bound and
- * the display unit, in the copy dictionary's words.
+ * A violation is `{ quantity, bounded, role, value, bound }`, and its
+ * violation sentence is assembled here from the bounded quantity's label, the
+ * bound and the display unit, in the copy dictionary's words.
  */
-import type { Bound, VariableInfo } from "jsthermalcomfort";
+import type { Bound, InputsInfo, ModelOutputs } from "jsthermalcomfort";
 import { copy } from "$lib/text/copy";
 import type { CalculatorInputs, FormCalculator } from "./calculators";
 import { temperatureMode, type HumidityMode } from "./entryModes";
-import { inputsOf, type ModelResult, type RegisteredModel } from "./modelDeclaration";
-import { resultWarnings } from "./modelRun";
+import { declaredQuantitiesOf, type ModelDeclaration } from "./modelDeclaration";
+import { rangeRowsOf } from "./modelRun";
 import { formatBoundEnd, isShownBeyond } from "./numberFormat";
 import { kindBounds, quantities, quantityFor, type Quantity } from "./quantities";
 import {
+  dryBulbTemperatureOf,
   isHumidityQuantity,
-  resolvedTdb,
   valueEntryGroups,
   withEnteredValues,
   type EntryCorrection,
@@ -37,12 +37,15 @@ export type { Bound };
 
 const q = quantities;
 
-/** One entered value the pre-call gate stops, with the bound it was tested against. */
-export interface OutOfRangeRow {
+/** A bound a value broke: the quantity whose row it is shown on, the value, and the bound. */
+export interface BrokenBound {
   readonly quantity: Quantity;
   readonly value: number;
   readonly bound: Bound;
 }
+
+/** One entered value the pre-call gate stops, with the bound it was tested against. */
+export type OutOfRangeRow = BrokenBound;
 
 /**
  * One applicability row a value broke, and where it appeared in the model's
@@ -51,19 +54,23 @@ export interface OutOfRangeRow {
  * differ for `vr` under air speed entry, reported on the entered `v`
  * (ADR-0002 decision 4).
  */
-export interface ViolationRow extends OutOfRangeRow {
+export interface ViolationRow extends BrokenBound {
   readonly bounded: Quantity;
   readonly role: "input" | "derived" | "output";
 }
 
-/** The applicability bound of `table`'s row for `quantity`, reconciled by key through `quantityFor` (ADR-0002 decision 2). */
-function boundFor(table: Readonly<Record<string, VariableInfo>> | undefined, quantity: Quantity): Bound | undefined {
-  if (!table) {
+/**
+ * The applicability bound of the numeric input of `inputs` for `quantity`,
+ * reconciled by key through `quantityFor` (ADR-0002 decision 2). A switch, a
+ * choice or an instance carries no bound.
+ */
+function boundFor(inputs: InputsInfo | undefined, quantity: Quantity): Bound | undefined {
+  if (!inputs) {
     return undefined;
   }
-  for (const [key, variable] of Object.entries(table)) {
-    if (quantityFor(key) === quantity) {
-      return variable.applicability;
+  for (const [key, field] of Object.entries(inputs)) {
+    if (field.kind === "numeric" && quantityFor(key) === quantity) {
+      return field.applicability;
     }
   }
   return undefined;
@@ -81,8 +88,8 @@ function breaksBound(quantity: Quantity, bound: Bound, value: number): boolean {
 
 /**
  * The unit the gate judges a value of `quantity` in, whatever the session
- * shows: g/kg for the humidity ratio, not kg/kg. The range text asks the same
- * unit, so an end it writes is one the gate accepts.
+ * shows: g/kg for the humidity ratio, not kg/kg. The bound's text asks the
+ * same unit, so an end it writes is one the gate accepts.
  */
 function gateUnitFor(quantity: Quantity): DisplayUnit {
   return displayUnitFor(quantity, unitSystem.si);
@@ -90,14 +97,14 @@ function gateUnitFor(quantity: Quantity): DisplayUnit {
 
 /** The bound between `min` and `max`, keeping only an end that is a finite number. */
 function boundOf(min: number | undefined, max: number | undefined): Bound {
-  const result: { min?: number; max?: number } = {};
+  const bound: { min?: number; max?: number } = {};
   if (min !== undefined && Number.isFinite(min)) {
-    result.min = min;
+    bound.min = min;
   }
   if (max !== undefined && Number.isFinite(max)) {
-    result.max = max;
+    bound.max = max;
   }
-  return result;
+  return bound;
 }
 
 /** The narrowest bound that satisfies every bound in `bounds`, or `undefined` for none. */
@@ -117,8 +124,8 @@ function intersect(bounds: readonly Bound[]): Bound | undefined {
  * model takes the quantity, the bound of the quantity's kind (ADR-0002
  * decision 46). The two hold at once, so a caller intersects them.
  */
-function everyBoundFor(model: RegisteredModel, quantity: Quantity): Bound[] {
-  const takes = inputsOf(model).some((entry) => entry.quantity === quantity);
+function everyBoundFor(model: ModelDeclaration, quantity: Quantity): Bound[] {
+  const takes = declaredQuantitiesOf(model).some((input) => input.quantity === quantity);
   return [boundFor(model.info.inputs, quantity), takes ? kindBounds[quantity.kind] : undefined].filter(
     (bound): bound is Bound => bound !== undefined,
   );
@@ -158,12 +165,12 @@ function isInverted(bound: Bound): boolean {
  * humidity ratio turns negative from 100 °C — so the converted ends come
  * out inverted there, and the entry has no bound at that temperature. The
  * mode says of itself which ends it is bounded at, both or the upper only,
- * and whether its bound reads the pressure, in which case it has none while
- * the pressure is out of range (decision 53).
+ * and whether its bound reads the atmospheric pressure, in which case it has
+ * none while the atmospheric pressure is out of range (decision 53).
  * `undefined` for a model without the humidity entry group.
  */
-function humidityEntryBoundFor(model: RegisteredModel, mode: HumidityMode, slot: Slot, atmosphericPressure: number): Bound | undefined {
-  if (mode.readsPressure && isAtmosphericPressureOutOfRange(atmosphericPressure)) {
+function humidityEntryBoundFor(model: ModelDeclaration, mode: HumidityMode, slot: Slot, atmosphericPressure: number): Bound | undefined {
+  if (mode.readsAtmosphericPressure && isAtmosphericPressureOutOfRange(atmosphericPressure)) {
     return undefined;
   }
   const relativeHumidity = intersect(everyBoundFor(model, q.rh));
@@ -171,7 +178,7 @@ function humidityEntryBoundFor(model: RegisteredModel, mode: HumidityMode, slot:
     return undefined;
   }
   const ends = mode.bounded === "upper" ? boundOf(undefined, relativeHumidity.max) : relativeHumidity;
-  const tdb = resolvedTdb(slot);
+  const tdb = dryBulbTemperatureOf(slot);
   return convertedBound(ends, (end) => mode.fromRelativeHumidity(end, tdb, atmosphericPressure));
 }
 
@@ -179,15 +186,15 @@ function humidityEntryBoundFor(model: RegisteredModel, mode: HumidityMode, slot:
  * The bound an entry of an activity-adjusted group must satisfy under `model`
  * (ADR-0002 decision 84's note of 2026-10-28, rule 2, and decision 54's note
  * of that day). The model's info bounds the quantity the model takes,
- * `correction.taken`: an entry of the corrected mode is held to that row as
- * it is, and an entry of the other mode to its kind's bound alone, so no
- * other entry moves it. A run that takes the corrected value past the row is
- * calculated, and its violation is reported on the entered row
+ * `correction.takenByModel`: an entry of the corrected mode is held to that
+ * row as it is, and an entry of the other mode to its kind's bound alone, so
+ * no other entry moves it. A run that takes the corrected value past the row
+ * is calculated, and its violation is reported on the entered row
  * ({@link violationRows}).
  */
-function correctedEntryBoundFor(model: RegisteredModel, quantity: Quantity, correction: EntryCorrection): Bound | undefined {
+function correctedEntryBoundFor(model: ModelDeclaration, quantity: Quantity, correction: EntryCorrection): Bound | undefined {
   if (correction.corrected.panel.includes(quantity)) {
-    return boundFor(model.info.inputs, correction.taken);
+    return boundFor(model.info.inputs, correction.takenByModel);
   }
   return kindBounds[quantity.kind];
 }
@@ -205,7 +212,7 @@ export function calculatorBound(calculator: FormCalculator, quantity: Quantity):
 /**
  * The quantities of `inputs` outside {@link calculatorBound}, judged as the
  * gate judges an entry: the dialog's boxes marked out of range, while its
- * result is cleared and its Apply disabled (decision 75 rule 5).
+ * outputs are cleared and its Apply disabled (decision 75 rule 5).
  */
 export function outOfRangeCalculatorInputs(calculator: FormCalculator, inputs: CalculatorInputs): Quantity[] {
   return [...inputs.values].flatMap(([quantity, value]) => {
@@ -221,17 +228,17 @@ export function outOfRangeCalculatorInputs(calculator: FormCalculator, inputs: C
  * humidity's bound converted into its mode at the slot's dry-bulb
  * temperature and `atmosphericPressure`, so the bound moves with both, at
  * its upper end only in wet-bulb entry, and not at all in humidity-ratio entry
- * while the pressure is out of range ({@link humidityEntryBoundFor}); a slot that
- * holds no humidity has no humidity entry to bound. An entry of an
- * activity-adjusted group the model has is held to the model's row for what
- * it takes, `vr` or the dynamic clothing insulation the library calls `clo`,
- * when it is that quantity, and to its kind's bound alone when it is an
- * entered `v` or clothing insulation ({@link correctedEntryBoundFor}). In a
- * model without the group an entered `v` or `clo` is held to the model's own
- * row for it.
+ * while the atmospheric pressure is out of range
+ * ({@link humidityEntryBoundFor}); a slot that holds no humidity has no
+ * humidity entry to bound. An entry of an activity-adjusted group the model
+ * has is held to the model's row for what it takes, `vr` or the dynamic
+ * clothing insulation the library calls `clo`, when it is that quantity, and
+ * to its kind's bound alone when it is an entered `v` or clothing insulation
+ * ({@link correctedEntryBoundFor}). In a model without the group an entered
+ * `v` or `clo` is held to the model's own row for it.
  */
 export function enteredBound(
-  model: RegisteredModel,
+  model: ModelDeclaration,
   quantity: Quantity,
   slot: Slot,
   atmosphericPressure: number,
@@ -248,7 +255,7 @@ export function enteredBound(
       return correctedEntryBoundFor(model, quantity, correction);
     }
   }
-  return intersect(boundingQuantities(quantity, slot).flatMap((entry) => everyBoundFor(model, entry)));
+  return intersect(boundingQuantities(quantity, slot).flatMap((boundingQuantity) => everyBoundFor(model, boundingQuantity)));
 }
 
 /** The quantities whose bounds an entry of `quantity` must satisfy, under the slot's entry modes. */
@@ -266,11 +273,11 @@ function boundingQuantities(quantity: Quantity, slot: Slot): readonly Quantity[]
  * typed, not a derived value: a humidity entry is tested in its own mode,
  * against relative humidity's bound converted into it. It says nothing about
  * a quantity {@link enteredBound} leaves unbounded, as a humidity-ratio entry
- * while the pressure is out of range, nor about an end it leaves open, as a
- * wet-bulb entry's lower end. An entered `v` or clothing insulation is tested
- * against its kind's bound alone, so a run may give the model a relative air
- * speed or dynamic clothing insulation past its row, which
- * {@link violationRows} reports on the entered row.
+ * while the atmospheric pressure is out of range, nor about an end it leaves
+ * open, as a wet-bulb entry's lower end. An entered `v` or clothing
+ * insulation is tested against its kind's bound alone, so a run may give the
+ * model a relative air speed or dynamic clothing insulation past its row,
+ * which {@link violationRows} reports on the entered row.
  *
  * The bounds are read at `boundsAt`, the slot itself unless given: a bound may be
  * read at another entry, and `core/modelSwitch.ts` asks what the entries
@@ -280,7 +287,7 @@ function boundingQuantities(quantity: Quantity, slot: Slot): readonly Quantity[]
  * input panel's red boxes and the model-switch dialog's rows are both this
  * list, so the two can never disagree about a value.
  */
-export function outOfRangeRows(slot: Slot, model: RegisteredModel, atmosphericPressure: number, boundsAt: Slot = slot): OutOfRangeRow[] {
+export function outOfRangeRows(slot: Slot, model: ModelDeclaration, atmosphericPressure: number, boundsAt: Slot = slot): OutOfRangeRow[] {
   const entered: (readonly [Quantity, number])[] = [...slot.values];
   if (slot.humidity) {
     entered.push([slot.humidity.mode.quantity, slot.humidity.value]);
@@ -302,7 +309,7 @@ export interface SlotOutOfRangeRow extends OutOfRangeRow {
 
 /**
  * What the gate says of a value a person would commit (ADR-0002 decision 84,
- * rule 2), and so what a commit of it does: **legal**, written as it is;
+ * rule 2), and so what a commit of it does: **written**, as it is;
  * **cut**, past its own bound, written as the end it is beyond, the end
  * itself in SI (decision 56); or **refused**, as it would put another value
  * out of range, written not at all, with the rows of what it would break. The
@@ -310,16 +317,16 @@ export interface SlotOutOfRangeRow extends OutOfRangeRow {
  * where the value is the session's.
  */
 export type Verdict<Row extends OutOfRangeRow = OutOfRangeRow> =
-  | { readonly kind: "legal" }
+  | { readonly kind: "written" }
   | { readonly kind: "cut"; readonly value: number; readonly bound: Bound }
   | { readonly kind: "refused"; readonly rows: readonly Row[] };
 
-const legal = { kind: "legal" } as const;
+const writtenAsItIs = { kind: "written" } as const;
 
 /**
  * The {@link Verdict} on `value` past `bound` cut to its end, then checked by
  * `rowsAt` at what would be written: refused for any row there, cut where the
- * end differs from `value`, and legal otherwise.
+ * end differs from `value`, and written otherwise.
  */
 function verdictOf<Row extends OutOfRangeRow>(
   value: number,
@@ -332,7 +339,7 @@ function verdictOf<Row extends OutOfRangeRow>(
   if (rows.length > 0) {
     return { kind: "refused", rows };
   }
-  return bound && written !== value ? { kind: "cut", value: written, bound } : legal;
+  return bound && written !== value ? { kind: "cut", value: written, bound } : writtenAsItIs;
 }
 
 /**
@@ -345,7 +352,7 @@ function verdictOf<Row extends OutOfRangeRow>(
  */
 export function entryVerdict(
   slot: Slot,
-  model: RegisteredModel,
+  model: ModelDeclaration,
   atmosphericPressure: number,
   quantity: Quantity,
   value: number,
@@ -360,11 +367,11 @@ export function entryVerdict(
  * The verdict on the atmospheric pressure `value` (ADR-0002 decisions 49 and
  * 84): its kind's bound, then the humidity entry of every slot in `slots`,
  * the session's every held slot, read at it, since that entry's bound alone
- * reads the pressure. A refusal's rows name their slot.
+ * reads the atmospheric pressure. A refusal's rows name their slot.
  */
 export function atmosphericPressureVerdict(
   slots: readonly { readonly position: SlotPosition; readonly slot: Slot }[],
-  model: RegisteredModel,
+  model: ModelDeclaration,
   value: number,
 ): Verdict<SlotOutOfRangeRow> {
   return verdictOf(value, q.p_atm, kindBounds[q.p_atm.kind], (written) =>
@@ -390,10 +397,10 @@ export function nearestEnd(value: number, bound: Bound): number {
 /**
  * Whether the session's atmospheric pressure breaks its kind's bound. Judged
  * apart from {@link outOfRangeRows}: that list is what a model switch asks
- * about and adjusts in the slot, and the pressure is neither held in a slot
- * nor dependent on the model (ADR-0002 decision 49). {@link enteredBound}
- * applies a kind's bound only to a quantity the model takes, so it never
- * reaches the pressure.
+ * about and cuts in the slot, and the atmospheric pressure is neither held in
+ * a slot nor dependent on the model (ADR-0002 decision 49).
+ * {@link enteredBound} applies a kind's bound only to a quantity the model
+ * takes, so it never reaches the atmospheric pressure.
  */
 export function isAtmosphericPressureOutOfRange(atmosphericPressure: number): boolean {
   return atmosphericPressureRow(atmosphericPressure) !== undefined;
@@ -411,7 +418,7 @@ export function atmosphericPressureRow(atmosphericPressure: number): OutOfRangeR
 }
 
 /**
- * The rows a completed run broke, as the library reports them on the result's
+ * The rows a completed run broke, as the library reports them on the outputs'
  * `warnings` (ADR-0002 decision 23) — the app finds no row of its own. Each
  * row's key is reconciled to a quantity through `quantityFor`; a key the table
  * lacks is dropped. A row on what an activity-adjusted group the model has
@@ -423,15 +430,15 @@ export function atmosphericPressureRow(atmosphericPressure: number): OutOfRangeR
  * insulation. The gate holds an entered `v` or clothing insulation to its
  * kind's bound alone, so such a row arrives whenever a metabolic rate, an air
  * speed or a clothing insulation takes what the model is given past its row. A
- * quantity can break several limits in one role (PMV (ASHRAE 55)'s fixed
+ * quantity can break several bounds in one role (PMV (ASHRAE 55)'s fixed
  * air-speed row plus its no-control rows): those merge into one row over the
  * narrowest bound, so the person reads one sentence; the individual bounds
  * are not kept. A row is only a value shown outside its bound, as the gate
  * judges an entry.
  */
-export function violationRows(model: RegisteredModel, result: ModelResult, modes: ValueEntryModes): ViolationRow[] {
+export function violationRows(model: ModelDeclaration, outputs: ModelOutputs, modes: ValueEntryModes): ViolationRow[] {
   const rows: ViolationRow[] = [];
-  for (const { key, role, value, bound } of resultWarnings(model, result)) {
+  for (const { key, role, value, bound } of rangeRowsOf(outputs)) {
     const keyed = quantityFor(key);
     if (!keyed) {
       continue;
@@ -461,9 +468,9 @@ export function violationRows(model: RegisteredModel, result: ModelResult, modes
  * entry in `modes` and bounding the corrected quantity, read off the group's
  * {@link EntryCorrection}.
  */
-function reportedRow(model: RegisteredModel, keyed: Quantity, modes: ValueEntryModes): Pick<ViolationRow, "quantity" | "bounded"> {
+function reportedRow(model: ModelDeclaration, keyed: Quantity, modes: ValueEntryModes): Pick<ViolationRow, "quantity" | "bounded"> {
   for (const group of valueEntryGroups) {
-    if (group.correction?.taken === keyed && group.appliesTo(model)) {
+    if (group.correction?.takenByModel === keyed && group.appliesTo(model)) {
       return { quantity: group.modeOf(modes).axis, bounded: group.correction.corrected.axis };
     }
   }
@@ -471,16 +478,16 @@ function reportedRow(model: RegisteredModel, keyed: Quantity, modes: ValueEntryM
 }
 
 /**
- * Whether the rows `now` break a limit the rows `before` did not, what a
- * slot's toast is raised for (ADR-0002 decision 84, rule 8). A limit is the
- * quantity it bounds and its role: not the row it is reported on, which an
- * entry-mode switch moves, nor its numbers, as PMV (ASHRAE 55)'s air-speed
- * rule builds its bound per call, so the same limit moves with the
- * temperature.
+ * Whether the rows `now` break a bound the rows `before` did not, what a
+ * slot's toast is raised for (ADR-0002 decision 84, rule 8). A bound is told
+ * apart by the quantity it bounds and its role: not by the row it is
+ * reported on, which an entry-mode switch moves, nor by its numbers, as
+ * PMV (ASHRAE 55)'s air-speed rule builds its bound per call, so the same
+ * bound's ends move with the temperature.
  */
-export function breaksNewLimit(before: readonly ViolationRow[], now: readonly ViolationRow[]): boolean {
-  const isSameLimit = (a: ViolationRow, b: ViolationRow) => a.bounded === b.bounded && a.role === b.role;
-  return now.some((row) => !before.some((earlier) => isSameLimit(row, earlier)));
+export function breaksNewBound(before: readonly ViolationRow[], now: readonly ViolationRow[]): boolean {
+  const isSameBound = (a: ViolationRow, b: ViolationRow) => a.bounded === b.bounded && a.role === b.role;
+  return now.some((row) => !before.some((earlier) => isSameBound(row, earlier)));
 }
 
 /**
@@ -509,18 +516,18 @@ export function formatBound(bound: Bound, quantity: Quantity, system: UnitSystem
  */
 export function boundSentence(quantity: Quantity, bound: Bound, system: UnitSystem): string {
   const unit = displayUnitFor(quantity, system);
-  return copy.applicabilityWarning(quantity.label, valueWithUnit(formatBound(bound, quantity, system), unit));
+  return copy.boundSentence(quantity.label, valueWithUnit(formatBound(bound, quantity, system), unit));
 }
 
 /** The sentence a violation row shows the user, of the bounded quantity ({@link boundSentence}). */
-export function warningFor(row: ViolationRow, unitSystem: UnitSystem): string {
+export function violationSentence(row: ViolationRow, unitSystem: UnitSystem): string {
   return boundSentence(row.bounded, row.bound, unitSystem);
 }
 
 /**
- * The lines naming the limits a run broke, a result row's icon's and an Image's Input summary's: the heading, then
- * one sentence a limit; none for a run that broke none.
+ * The lines naming the bounds a run broke, a result row's icon's and an Image's Input summary's: the heading, then
+ * one sentence a bound; none for a run that broke none.
  */
-export function limitsBrokenLines(rows: readonly ViolationRow[], unitSystem: UnitSystem): string[] {
-  return rows.length === 0 ? [] : [copy.limitsBrokenHeading, ...rows.map((row) => warningFor(row, unitSystem))];
+export function boundsBrokenLines(rows: readonly ViolationRow[], unitSystem: UnitSystem): string[] {
+  return rows.length === 0 ? [] : [copy.boundsBrokenHeading, ...rows.map((row) => violationSentence(row, unitSystem))];
 }

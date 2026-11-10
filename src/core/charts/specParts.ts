@@ -5,30 +5,30 @@
  * psychrometric, the dynamic and the adaptive chart draw them alike; the scan
  * is `scan.ts`'s and its paint `fieldPaint.ts`'s.
  */
-import { chartInk } from "$lib/core/bandPalette";
+import { chartColors } from "$lib/core/bandPalette";
 import type { Range } from "$lib/core/modelDeclaration";
 import type { Quantity } from "$lib/core/quantities";
-import type { SlotBadge } from "$lib/core/slotBadge";
+import type { SlotAppearance } from "$lib/core/slotAppearance";
 import { labelWithUnit, numberWithUnit, type DisplayUnit } from "$lib/core/units";
 import { copy } from "$lib/text/copy";
 import type { ChartedSlot } from "./chartRequest";
-import type { AxisSpec, LegendEntry, PointTrace } from "./chartSpec";
+import type { AxisSpec, LegendItem, PointTrace } from "./chartSpec";
 
 /**
- * `label`, a legend entry's or a readout line's, as the chart names it for
- * `charted`: prefixed with the slot's name where the slot has one, and as it
+ * `label`, a legend item's or a readout line's, as the chart names it for
+ * `charted`: prefixed with the slot's label where the slot has one, and as it
  * is otherwise.
  */
 export function labelFor(charted: ChartedSlot, label: string): string {
-  return charted.name === undefined ? label : copy.slotEntry(charted.name, label);
+  return charted.label === undefined ? label : copy.withSlotLabel(charted.label, label);
 }
 
-/** A Comfort zone's paint: its fill's colour, its line's colour and width, and its legend entry. */
+/** A Comfort zone's paint: its fill's colour, its line's colour and width, and its legend item. */
 export interface ZoneInk {
   readonly fill: string;
   readonly line: string;
   readonly lineWidth: number;
-  readonly legendEntry: LegendEntry;
+  readonly legendItem: LegendItem;
 }
 
 /**
@@ -43,30 +43,30 @@ export interface ZoneInk {
  */
 export function zoneInkFor(charted: ChartedSlot, zoneLabel: string, level: number, levels: number): ZoneInk {
   const label = labelFor(charted, zoneLabel);
-  const fill = chartInk.zoneFill(charted.hue, level, levels);
+  const fill = chartColors.zoneFill(charted.hue, level, levels);
   return {
     fill,
-    line: chartInk.zoneLine(charted.hue),
-    lineWidth: chartInk.zoneLineWidth,
-    legendEntry: { label, swatch: "fill", color: fill },
+    line: chartColors.zoneLine(charted.hue),
+    lineWidth: chartColors.zoneLineWidth,
+    legendItem: { label, swatch: "fill", color: fill },
   };
 }
 
 /**
  * A slot's marker at (`x`, `y`), already in display units, in the slot's hue,
- * and the legend entry that names it by the slot, or as the one input where
- * the slot has no name. Chrome, so it never captures the pointer.
+ * and the legend item that names it by the slot, or as the one input where
+ * the slot has no label. Chrome, so it never captures the pointer.
  */
 export function markerFor(
-  badge: SlotBadge,
+  appearance: SlotAppearance,
   x: number,
   y: number,
-): { readonly trace: PointTrace; readonly legendEntry: LegendEntry } {
-  const color = chartInk.marker(badge.hue);
-  const label = badge.name ?? copy.unnamedMarker;
+): { readonly trace: PointTrace; readonly legendItem: LegendItem } {
+  const color = chartColors.marker(appearance.hue);
+  const label = appearance.label ?? copy.unnamedMarker;
   return {
     trace: { kind: "point", x, y, color, hover: "off", label },
-    legendEntry: { label, swatch: "marker", color },
+    legendItem: { label, swatch: "marker", color },
   };
 }
 

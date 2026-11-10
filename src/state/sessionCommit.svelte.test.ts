@@ -8,18 +8,18 @@
  */
 import { describe, expect, it } from "vitest";
 import { airSpeedMode, clothingMode, humidityMode } from "$lib/core/entryModes";
-import type { RegisteredModel } from "$lib/core/modelDeclaration";
+import type { ModelDeclaration } from "$lib/core/modelDeclaration";
 import { DEFAULT_ATMOSPHERIC_PRESSURE, kindBounds, quantities, type Quantity } from "$lib/core/quantities";
 import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
 import { pmvPpdIso } from "$lib/models/pmvPpdIso";
-import { Outputs } from "./compute.svelte";
+import { Computation } from "./compute.svelte";
 import { Session } from "./session.svelte";
 import { enterSlot1ValuesInOthers, heldSlot, sessionComparingThreeSlots, shapeOf } from "./sessionTestReaders";
 
 const q = quantities;
 
 /** PMV (ASHRAE 55)'s dry-bulb temperature bound, [°C]. */
-const DRY_BULB_BOUND = { min: 10, max: 40 };
+const DRY_BULB_TEMPERATURE_BOUND = { min: 10, max: 40 };
 
 /** A humidity ratio at 25 °C, [kg/kg]: below saturation at 101 325 Pa (0.0201), above it at 110 000 Pa (0.0185). */
 const NEAR_SATURATION = 0.019;
@@ -44,7 +44,7 @@ describe("a slot's entry, committed", () => {
   it("within its bound and every other's, is written as it is", () => {
     const session = new Session(pmvPpdAshrae);
 
-    expect(session.commitEntry(0, q.tdb, 16)).toEqual({ kind: "legal" });
+    expect(session.commitEntry(0, q.tdb, 16)).toEqual({ kind: "written" });
 
     expect(session.slots[0].values.get(q.tdb)).toBe(16);
   });
@@ -52,10 +52,10 @@ describe("a slot's entry, committed", () => {
   it("past its bound, is cut to the bound's end and reported as cut", () => {
     const session = new Session(pmvPpdAshrae);
 
-    expect(session.commitEntry(0, q.tdb, 45)).toEqual({ kind: "cut", value: 40, bound: DRY_BULB_BOUND });
+    expect(session.commitEntry(0, q.tdb, 45)).toEqual({ kind: "cut", value: 40, bound: DRY_BULB_TEMPERATURE_BOUND });
     expect(session.slots[0].values.get(q.tdb)).toBe(40);
 
-    expect(session.commitEntry(0, q.tdb, 5)).toEqual({ kind: "cut", value: 10, bound: DRY_BULB_BOUND });
+    expect(session.commitEntry(0, q.tdb, 5)).toEqual({ kind: "cut", value: 10, bound: DRY_BULB_TEMPERATURE_BOUND });
     expect(session.slots[0].values.get(q.tdb)).toBe(10);
   });
 
@@ -93,59 +93,59 @@ describe("a slot's entry, committed", () => {
 
 /**
  * An `entered` air speed or clothing insulation of `value`, held at
- * `startMet`, where the model is given it within its row, and the metabolic
- * rate `met` that takes it past that row: the relative air speed's, or the
- * dynamic clothing insulation's.
+ * `startMetabolicRate`, where the model is given it within its row, and the
+ * metabolic rate `met` that takes it past that row: the relative air speed's,
+ * or the dynamic clothing insulation's.
  */
 interface PastTheRow {
-  readonly model: RegisteredModel;
+  readonly model: ModelDeclaration;
   readonly entered: Quantity;
   readonly value: number;
-  readonly startMet: number;
+  readonly startMetabolicRate: number;
   readonly met: number;
 }
 
 const pastTheRow: readonly PastTheRow[] = [
   // 1.5 m/s at 3 met is a relative air speed of 2.1 m/s, over ASHRAE 55's 2.
-  { model: pmvPpdAshrae, entered: q.v, value: 1.5, startMet: 1.1, met: 3 },
+  { model: pmvPpdAshrae, entered: q.v, value: 1.5, startMetabolicRate: 1.1, met: 3 },
   // 0.8 m/s at 2 met is 1.1 m/s relative, over ISO 7730's 1.
-  { model: pmvPpdIso, entered: q.v, value: 0.8, startMet: 1.1, met: 2 },
+  { model: pmvPpdIso, entered: q.v, value: 0.8, startMetabolicRate: 1.1, met: 2 },
   // 1.8 clo is given as 1.44 at 2 met and as itself at 1.1, over ASHRAE 55's 1.5.
-  { model: pmvPpdAshrae, entered: q.clo, value: 1.8, startMet: 2, met: 1.1 },
+  { model: pmvPpdAshrae, entered: q.clo, value: 1.8, startMetabolicRate: 2, met: 1.1 },
   // 2.1 clo is given as about 1.74 at 2 met and 2.08 at 1.1, over ISO 7730's 2.
-  { model: pmvPpdIso, entered: q.clo, value: 2.1, startMet: 2, met: 1.1 },
+  { model: pmvPpdIso, entered: q.clo, value: 2.1, startMetabolicRate: 2, met: 1.1 },
 ];
 
 /** The row of `model`'s info that bounds what the model is given for an entered `entered`, and that quantity. */
-function rowOf(model: RegisteredModel, entered: Quantity) {
-  return entered === q.v
-    ? { bounded: q.vr, bound: model.info.inputs.vr?.applicability }
-    : { bounded: q.clo_dynamic, bound: model.info.inputs.clo?.applicability };
+function rowOf(model: ModelDeclaration, entered: Quantity) {
+  const [bounded, takenByModel] = entered === q.v ? [q.vr, q.vr] : [q.clo_dynamic, q.clo];
+  const field = model.info.inputs[takenByModel.key];
+  return { bounded, bound: field?.kind === "numeric" ? field.applicability : undefined };
 }
 
 describe("an air speed or a clothing insulation, committed", () => {
   it.each(pastTheRow)(
     "on $model.info.label, a metabolic rate that takes a held $entered.label past the model's row commits, and the run has a violation on the entered row",
-    ({ model, entered, value, startMet, met }) => {
+    ({ model, entered, value, startMetabolicRate, met }) => {
       const session = new Session(model);
-      const outputs = new Outputs(session);
-      session.commitEntry(0, q.met, startMet);
+      const computation = new Computation(session);
+      session.commitEntry(0, q.met, startMetabolicRate);
       session.commitEntry(0, entered, value);
 
-      expect(session.commitEntry(0, q.met, met)).toEqual({ kind: "legal" });
+      expect(session.commitEntry(0, q.met, met)).toEqual({ kind: "written" });
 
       expect(session.slots[0].values.get(q.met)).toBe(met);
       expect(session.slots[0].values.get(entered)).toBe(value);
-      expect(outputs.slots[0].result).not.toBeNull();
-      expect(outputs.slots[0].violations.find((row) => row.quantity === entered)).toMatchObject({ quantity: entered, ...rowOf(model, entered) });
+      expect(computation.slots[0].outputs).not.toBeNull();
+      expect(computation.slots[0].violations.find((row) => row.quantity === entered)).toMatchObject({ quantity: entered, ...rowOf(model, entered) });
     },
   );
 
   it.each([pmvPpdAshrae, pmvPpdIso])("on $info.label, far past the model's row, is written as it is, its bound its kind's alone", (model) => {
     const session = new Session(model);
 
-    expect(session.commitEntry(0, q.v, 5)).toEqual({ kind: "legal" });
-    expect(session.commitEntry(0, q.clo, 5)).toEqual({ kind: "legal" });
+    expect(session.commitEntry(0, q.v, 5)).toEqual({ kind: "written" });
+    expect(session.commitEntry(0, q.clo, 5)).toEqual({ kind: "written" });
 
     expect(session.slots[0].values.get(q.v)).toBe(5);
     expect(session.slots[0].values.get(q.clo)).toBe(5);
@@ -163,8 +163,8 @@ describe("an air speed or a clothing insulation, committed", () => {
 
   it("entered as the relative air speed or the dynamic clothing insulation past its row, is cut to the row's end", () => {
     const session = new Session(pmvPpdAshrae);
-    session.setAirSpeedMode(airSpeedMode.corrected);
-    session.setClothingMode(clothingMode.corrected);
+    session.setAirSpeedMode(airSpeedMode.relativeAirSpeed);
+    session.setClothingMode(clothingMode.dynamicClothingInsulation);
 
     expect(session.commitEntry(0, q.vr, 2.5)).toEqual({ kind: "cut", value: 2, bound: { min: 0, max: 2 } });
     expect(session.commitEntry(0, q.clo_dynamic, 1.8)).toEqual({ kind: "cut", value: 1.5, bound: { min: 0, max: 1.5 } });
@@ -178,7 +178,7 @@ describe("the atmospheric pressure, committed", () => {
   it("within its bound and every held humidity entry's, is written as it is", () => {
     const session = new Session(pmvPpdAshrae);
 
-    expect(session.commitAtmosphericPressure(80000)).toEqual({ kind: "legal" });
+    expect(session.commitAtmosphericPressure(80000)).toEqual({ kind: "written" });
 
     expect(session.atmosphericPressure).toBe(80000);
   });
@@ -218,8 +218,8 @@ describe("the verdict for a candidate", () => {
     const session = dewPointSession();
     const before = shapeOf(session.slots[0]);
 
-    expect(session.judgeEntry(0, q.tdb, 16)).toEqual({ kind: "legal" });
-    expect(session.judgeEntry(0, q.tdb, 45)).toEqual({ kind: "cut", value: 40, bound: DRY_BULB_BOUND });
+    expect(session.judgeEntry(0, q.tdb, 16)).toEqual({ kind: "written" });
+    expect(session.judgeEntry(0, q.tdb, 45)).toEqual({ kind: "cut", value: 40, bound: DRY_BULB_TEMPERATURE_BOUND });
     expect(session.judgeEntry(0, q.tdb, 12).kind).toBe("refused");
 
     expect(shapeOf(session.slots[0])).toEqual(before);
@@ -228,7 +228,7 @@ describe("the verdict for a candidate", () => {
   it("answers each of the three cases for the atmospheric pressure, writing nothing", () => {
     const session = nearSaturationInSecondSlot();
 
-    expect(session.judgeAtmosphericPressure(90000)).toEqual({ kind: "legal" });
+    expect(session.judgeAtmosphericPressure(90000)).toEqual({ kind: "written" });
     expect(session.judgeAtmosphericPressure(20000).kind).toBe("cut");
     expect(session.judgeAtmosphericPressure(110000).kind).toBe("refused");
 

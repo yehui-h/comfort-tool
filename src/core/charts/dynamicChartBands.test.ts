@@ -2,19 +2,19 @@
  * The scanned dynamic chart handed a Band list, as Explore asks for it
  * (ADR-0002 decisions 58, 59 and 62): a fill per coloured band over slot 1's
  * scan, up to the top of the coloured bands contiguous above it, a line at
- * every band's upper Edge, a legend entry per coloured band, and a readout
+ * every band's upper Edge, a legend item per coloured band, and a readout
  * naming the list's band. Handed none it paints Comfort zones
  * (`dynamicChart.test.ts`).
  */
 import { describe, expect, it } from "vitest";
 import { classifyFromBins } from "jsthermalcomfort";
 import { bandListOf, moveEdge, setColor, setLabel, type BandList } from "$lib/core/bands";
-import { chartInk } from "$lib/core/bandPalette";
+import { chartColors } from "$lib/core/bandPalette";
 import { enteredSlotFor } from "$lib/core/declarationTestSlots";
-import { dynamicChartOf, type AxisRange, type DeclaredDynamicChart, type RegisteredModel } from "$lib/core/modelDeclaration";
+import { classifierOf, dynamicChartOf, type AxisRange, type DeclaredDynamicChart, type ModelDeclaration } from "$lib/core/modelDeclaration";
 import { palette } from "$lib/core/palette";
 import { quantities } from "$lib/core/quantities";
-import { startingSlot } from "$lib/core/slot";
+import { defaultSlot } from "$lib/core/slot";
 import { displayUnitFor } from "$lib/core/units";
 import { unitSystem, type UnitSystem } from "$lib/core/unitSystem";
 import { copy } from "$lib/text/copy";
@@ -22,7 +22,7 @@ import { heatIndexRothfusz } from "$lib/models/heatIndexRothfusz";
 import { pmvPpdIso } from "$lib/models/pmvPpdIso";
 import type { ChartRequest } from "./chartRequest";
 import type { ChartSpec, HoverGridTrace, HoverReadout, PathTrace } from "./chartSpec";
-import { bandFillsOf as fillsOf, bandLinesOf as linesOf, heldBetween, numbersAlong, regionOf, zoneFillsOf, zoneLinesOf } from "./chartTestPaths";
+import { bandFillsOf as fillsOf, edgeLinesOf as linesOf, heldBetween, numbersAlong, regionOf, zoneFillsOf, zoneLinesOf } from "./chartTestPaths";
 import { chartRequestFor, chartRequestForSlots } from "./chartTestRequests";
 import { dynamicScanFrameFor, dynamicSpec } from "./dynamicChart";
 import { scannedField } from "./scan";
@@ -30,7 +30,7 @@ import { scannedField } from "./scan";
 const q = quantities;
 
 /** `model`'s dynamic chart. */
-function dynamicOf(model: RegisteredModel): DeclaredDynamicChart {
+function dynamicOf(model: ModelDeclaration): DeclaredDynamicChart {
   const chart = dynamicChartOf(model);
   if (!chart) {
     throw new Error(`${model.info.label} no longer declares a dynamic chart`);
@@ -39,13 +39,13 @@ function dynamicOf(model: RegisteredModel): DeclaredDynamicChart {
 }
 
 const isoChart = dynamicOf(pmvPpdIso);
-const isoBands = bandListOf(pmvPpdIso.scan.classifier);
-const isoRequest = chartRequestFor(pmvPpdIso, startingSlot(pmvPpdIso));
+const isoBands = bandListOf(classifierOf(pmvPpdIso.info, pmvPpdIso.scan.bands));
+const isoRequest = chartRequestFor(pmvPpdIso, defaultSlot(pmvPpdIso));
 
-/** `model`'s dynamic chart of its starting slot, painting `bands`. */
-function bandedSpec(bands: BandList, model: RegisteredModel = pmvPpdIso): ChartSpec {
+/** `model`'s dynamic chart of its default slot, painting `bands`. */
+function bandedSpec(bands: BandList, model: ModelDeclaration = pmvPpdIso): ChartSpec {
   const chart = dynamicOf(model);
-  return dynamicSpec({ ...chartRequestFor(model, startingSlot(model)), bands }, chart.axes);
+  return dynamicSpec({ ...chartRequestFor(model, defaultSlot(model)), bands }, chart.axes);
 }
 
 /** Slot 1's scanned number in `request`'s dynamic chart, `[yIndex][xIndex]`, in SI: what the Bands are painted over. */
@@ -60,7 +60,7 @@ function last<T>(row: readonly T[]): T {
 }
 
 function hoverGridOf(spec: ChartSpec): HoverGridTrace {
-  const trace = spec.traces.find((entry): entry is HoverGridTrace => entry.kind === "hoverGrid");
+  const trace = spec.traces.find((candidate): candidate is HoverGridTrace => candidate.kind === "hoverGrid");
   if (!trace) {
     throw new Error("spec has no hover grid");
   }
@@ -108,8 +108,8 @@ function strokesOf(spec: ChartSpec) {
 }
 
 /** Every band of `list`, painted or not, as a line in the band line. */
-function edgeLinesOf(list: BandList) {
-  return list.labels.map((label) => ({ label, color: chartInk.bandLine, width: chartInk.bandLineWidth, hover: "off" }));
+function edgeStrokesOf(list: BandList) {
+  return list.labels.map((label) => ({ label, color: chartColors.bandLine, width: chartColors.bandLineWidth, hover: "off" }));
 }
 
 /**
@@ -136,11 +136,11 @@ describe("the scanned dynamic chart given a Band list", () => {
 
   it("paints one fill per band of the list, holding the points from its lower Edge up to the last, and no Comfort zone", () => {
     expectFills(spec, contiguousFillsOf(isoBands), values, isoBands.right);
-    expect(linesOf(spec).map((line) => line.color)).not.toContain(chartInk.zoneLine(palette.slots[0]));
+    expect(linesOf(spec).map((line) => line.color)).not.toContain(chartColors.zoneLine(palette.slots[0]));
   });
 
   it("strokes every band's own upper Edge once, in the band line, read by nothing, where the number crosses it", () => {
-    expect(strokesOf(spec)).toEqual(edgeLinesOf(isoBands));
+    expect(strokesOf(spec)).toEqual(edgeStrokesOf(isoBands));
     expectEdgesCrossed(spec, isoBands, values);
     // The Edges the field reaches are drawn: Neutral's two among them.
     expect(linesOf(spec)[2].pieces.length).toBeGreaterThan(0);
@@ -153,8 +153,8 @@ describe("the scanned dynamic chart given a Band list", () => {
   });
 
   it("paints Heat Index's five bands in its own palette, over its own scan", () => {
-    const heatBands = bandListOf(heatIndexRothfusz.scan.classifier);
-    const heatValues = scannedValuesOf(chartRequestFor(heatIndexRothfusz, startingSlot(heatIndexRothfusz)));
+    const heatBands = bandListOf(classifierOf(heatIndexRothfusz.info, heatIndexRothfusz.scan.bands));
+    const heatValues = scannedValuesOf(chartRequestFor(heatIndexRothfusz, defaultSlot(heatIndexRothfusz)));
     const drawn = bandedSpec(heatBands, heatIndexRothfusz);
     expectFills(drawn, contiguousFillsOf(heatBands), heatValues, heatBands.right);
     expectEdgesCrossed(drawn, heatBands, heatValues);
@@ -164,7 +164,7 @@ describe("the scanned dynamic chart given a Band list", () => {
   it("carries one legend: every band, then the slot", () => {
     expect(spec.legend).toEqual([
       ...isoBands.labels.map((label, index) => ({ label, swatch: "fill", color: isoBands.colors[index] })),
-      { label: "Input", swatch: "marker", color: chartInk.marker(palette.slots[0]) },
+      { label: "Input", swatch: "marker", color: chartColors.marker(palette.slots[0]) },
     ]);
   });
 
@@ -190,7 +190,7 @@ describe("the scanned dynamic chart given a Band list", () => {
     const edited = setLabel(moveEdge(isoBands, 2, -0.1), 3, "Comfortable");
     const drawn = bandedSpec(edited);
     expectFills(drawn, contiguousFillsOf(edited), values, edited.right);
-    expect(strokesOf(drawn)).toEqual(edgeLinesOf(edited));
+    expect(strokesOf(drawn)).toEqual(edgeStrokesOf(edited));
     expectEdgesCrossed(drawn, edited, values);
     // -0.15 is below the moved Edge now, so in "Slightly Cool".
     expect(bandRead(hoverGridOf(drawn).hoverText[4][40])).toBe("Slightly Cool");
@@ -208,15 +208,15 @@ describe("the scanned dynamic chart given a Band list", () => {
       values,
       hidden.right,
     );
-    expect(strokesOf(drawn)).toEqual(edgeLinesOf(hidden));
+    expect(strokesOf(drawn)).toEqual(edgeStrokesOf(hidden));
     expectEdgesCrossed(drawn, hidden, values);
-    expect(drawn.legend.map((entry) => entry.label)).not.toContain("Neutral");
+    expect(drawn.legend.map((item) => item.label)).not.toContain("Neutral");
     expect(bandRead(hoverGridOf(drawn).hoverText[4][40])).toBe("Neutral");
   });
 
-  it("names a coloured band with an empty label as unlabelled in its legend entry and on hover, a labelled one unchanged", () => {
+  it("names a coloured band with an empty label as unlabelled in its legend item and on hover, a labelled one unchanged", () => {
     const drawn = bandedSpec(setLabel(isoBands, 3, ""));
-    expect(drawn.legend.slice(0, isoBands.labels.length).map((entry) => entry.label)).toEqual(
+    expect(drawn.legend.slice(0, isoBands.labels.length).map((item) => item.label)).toEqual(
       isoBands.labels.map((label, index) => (index === 3 ? "Unlabelled band" : label)),
     );
     expect(bandRead(hoverGridOf(drawn).hoverText[4][40])).toBe("Unlabelled band");
@@ -253,8 +253,8 @@ describe("a Band list whose Edges are unevenly spaced", () => {
   ];
 
   /** A model whose PMV is `pmvAt` of each point's dry-bulb temperature, on the dynamic chart's tdb × v. */
-  function modelOf(pmvAt: (tdb: number) => number): RegisteredModel {
-    return { ...pmvPpdIso, axisRanges: fixtureAxisRanges, run: (values) => ({ pmv: pmvAt(values.tdb), warnings: [] }) } satisfies RegisteredModel;
+  function modelOf(pmvAt: (tdb: number) => number): ModelDeclaration {
+    return { ...pmvPpdIso, axisRanges: fixtureAxisRanges, run: (inputs) => ({ pmv: pmvAt(inputs.tdb), warnings: [] }) } satisfies ModelDeclaration;
   }
 
   /** The spec of a model whose PMV is `value` at every point of the field, painting `bands`. */
@@ -349,8 +349,8 @@ describe("a Band list whose Edges are unevenly spaced", () => {
       ...pmvPpdIso,
       axisRanges: fixtureAxisRanges,
       scan: { ...pmvPpdIso.scan, output: q.operative_tmp },
-      run: (values) => ({ operative_tmp: values.tdb, warnings: [] }),
-    } satisfies RegisteredModel;
+      run: (inputs) => ({ operative_tmp: inputs.tdb, warnings: [] }),
+    } satisfies ModelDeclaration;
     const degrees: BandList = { ...uneven, edges: [15, 20, 30, 100] };
     const lines = linesOf(dynamicSpec({ ...isoRequest, model, unitSystem: unitSystem.ip, bands: degrees }, isoChart.axes));
     const xs = lines.map((line) => [...new Set(line.pieces.flatMap((piece) => piece.x.map((x) => x.toFixed(6))))]);
@@ -362,7 +362,7 @@ describe("a Band list over several slots", () => {
   it("paints the first slot's scan and reads each slot's number and band", () => {
     const warm = enteredSlotFor(pmvPpdIso, { tdb: 30, tr: 30 });
     const one = bandedSpec(isoBands);
-    const two = dynamicSpec({ ...chartRequestForSlots(pmvPpdIso, [startingSlot(pmvPpdIso), warm]), bands: isoBands }, isoChart.axes);
+    const two = dynamicSpec({ ...chartRequestForSlots(pmvPpdIso, [defaultSlot(pmvPpdIso), warm]), bands: isoBands }, isoChart.axes);
     expect(fillsOf(two).map((fill) => fill.pieces)).toEqual(fillsOf(one).map((fill) => fill.pieces));
     expect(linesOf(two).map((line) => line.pieces)).toEqual(linesOf(one).map((line) => line.pieces));
     expect(hoverGridOf(two).hoverText[4][40]).toHaveLength(6);

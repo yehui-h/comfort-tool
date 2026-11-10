@@ -1,7 +1,7 @@
 /**
  * A Comfort zone is what the standard accepts (ADR-0002 decisions 77 and 78):
  * on the Standard page every chart's zones leave out wherever a run breaks a
- * bound, any row of the result's `warnings`, while the cell keeps its number
+ * bound, any row of the outputs' `warnings`, while the cell keeps its number
  * on the hover grid and Explore's Bands paint over it, and a zone's boundary
  * lies on the bound to one bisection step. Each expectation is checked
  * against the library's own `warnings` on the inputs, and every region is
@@ -12,14 +12,14 @@
  */
 import { describe, expect, it } from "vitest";
 import { hr_to_rh, psy_ta_rh } from "jsthermalcomfort";
-import { chartInk } from "$lib/core/bandPalette";
+import { chartColors } from "$lib/core/bandPalette";
 import { bandListOf } from "$lib/core/bands";
 import { enteredSlotFor } from "$lib/core/declarationTestSlots";
-import { optionsOf, type RegisteredModel } from "$lib/core/modelDeclaration";
-import { resultNumber, resultWarnings, runOn } from "$lib/core/modelRun";
+import { classifierOf, optionsOf, type ModelDeclaration } from "$lib/core/modelDeclaration";
+import { outputNumber, rangeRowsOf, runOn } from "$lib/core/modelRun";
 import { palette } from "$lib/core/palette";
 import { DEFAULT_ATMOSPHERIC_PRESSURE, quantities, type Quantity } from "$lib/core/quantities";
-import { startingSlot, withEnteredValues, withEntryModes, withOption, type Slot } from "$lib/core/slot";
+import { defaultSlot, withEnteredValues, withEntryModes, withOption, type Slot } from "$lib/core/slot";
 import { displayUnitFor } from "$lib/core/units";
 import { unitSystem } from "$lib/core/unitSystem";
 import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
@@ -34,7 +34,6 @@ import { BISECTIONS, comfortZonesOf, type ScanFrame } from "./scan";
 import { readoutLine } from "./specParts";
 
 const q = quantities;
-const P = DEFAULT_ATMOSPHERIC_PRESSURE;
 const [airSpeedControl] = optionsOf(pmvPpdAshrae);
 const airSpeedAxes = { x: q.tdb, y: q.v };
 /** One bisection step, as a fraction of a cell: the last half the scan's bisection keeps (ADR-0002 decision 78). */
@@ -45,12 +44,12 @@ const BISECTION_STEP = 2 ** -BISECTIONS;
  * only to its 30 °C bound (ADR-0002 decision 89), where a zone meets the
  * plot's edge; drawn past it, the bound cuts the zones inside the plot.
  */
-const isoDrawnPastItsBound: RegisteredModel = {
+const isoDrawnPastItsBound: ModelDeclaration = {
   ...pmvPpdIso,
   axisRanges: pmvPpdIso.axisRanges.map((range) => (range.quantity === q.tdb ? { ...range, max: 35 } : range)),
 };
 
-/** PMV (ASHRAE 55)'s starting slot with `entered` over it, local control of the air speed as `control` says. */
+/** PMV (ASHRAE 55)'s default slot with `entered` over it, local control of the air speed as `control` says. */
 function ashraeSlot(control: boolean, entered: Parameters<typeof enteredSlotFor>[1] = {}): Slot {
   return withOption(enteredSlotFor(pmvPpdAshrae, entered), airSpeedControl, control);
 }
@@ -75,7 +74,7 @@ function zoneOf(spec: ChartSpec): PathTrace {
 }
 
 function hoverGridOf(spec: ChartSpec): HoverGridTrace {
-  const trace = spec.traces.find((entry): entry is HoverGridTrace => entry.kind === "hoverGrid");
+  const trace = spec.traces.find((candidate): candidate is HoverGridTrace => candidate.kind === "hoverGrid");
   if (!trace) {
     throw new Error("spec has no hover grid");
   }
@@ -102,17 +101,17 @@ function indexOf(samples: readonly number[], value: number): number {
 }
 
 /** `model` run on `slot` with `entered` over it, as a scan's cell is entered. */
-function runAt(model: RegisteredModel, slot: Slot, entered: ReadonlyMap<Quantity, number>) {
-  return runOn(withEnteredValues(slot, entered), model, P);
+function runAt(model: ModelDeclaration, slot: Slot, entered: ReadonlyMap<Quantity, number>) {
+  return runOn(withEnteredValues(slot, entered), model, DEFAULT_ATMOSPHERIC_PRESSURE);
 }
 
-/** Whether the run on `slot` with `entered` over it breaks a bound: its `warnings` has a row. */
-function isOutsideApplicability(model: RegisteredModel, slot: Slot, entered: ReadonlyMap<Quantity, number>): boolean {
-  return resultWarnings(model, runAt(model, slot, entered)).length > 0;
+/** Whether the run on `slot` with `entered` over it breaks a bound: its `warnings` has a range row. */
+function isOutsideApplicability(model: ModelDeclaration, slot: Slot, entered: ReadonlyMap<Quantity, number>): boolean {
+  return rangeRowsOf(runAt(model, slot, entered)).length > 0;
 }
 
 /** The limit of the zone drawn `position`-th among one slot's zones, largest first, as the chart draws them. */
-function limitOf(model: RegisteredModel, position: number): number {
+function limitOf(model: ModelDeclaration, position: number): number {
   return comfortZonesOf(model)[position].limit;
 }
 
@@ -164,7 +163,7 @@ describe("PMV (ASHRAE 55)'s air-speed chart", () => {
   });
 
   it("draws no zone between two grid points it leaves out, so no sliver runs through the cut", () => {
-    const iso = psychrometricSpec(chartRequestFor(pmvPpdIso, startingSlot(pmvPpdIso)));
+    const iso = psychrometricSpec(chartRequestFor(pmvPpdIso, defaultSlot(pmvPpdIso)));
     for (const [spec, fill] of [[off, zoneOf(off)], ...zoneFillsOf(iso).map((zone) => [iso, zone] as const)] as const) {
       const { x, y } = samplesOf(spec);
       const region = regionOf(spec, fill);
@@ -213,12 +212,12 @@ describe("PMV (ASHRAE 55)'s air-speed chart", () => {
     const yIndex = indexOf(speeds, 1.2);
     expect(regionOf(off, zoneOf(off))[yIndex][column]).toBe(false);
     expect(regionOf(on, zoneOf(on))[yIndex][column]).toBe(true);
-    const pmv = resultNumber(runAt(pmvPpdAshrae, inScope(false), new Map<Quantity, number>([[q.operative_tmp, 28], [q.v, 1.2]])), q.pmv);
+    const pmv = outputNumber(runAt(pmvPpdAshrae, inScope(false), new Map<Quantity, number>([[q.operative_tmp, 28], [q.v, 1.2]])), q.pmv);
     expect(hoverGridOf(off).hoverText[yIndex][column]).toContain(readoutLine(q.pmv, displayUnitFor(q.pmv, unitSystem.si), pmv));
   });
 
   it("is painted over by a Band list on Explore where the zone leaves a grid point out", () => {
-    const bands = bandListOf(pmvPpdAshrae.scan.classifier);
+    const bands = bandListOf(classifierOf(pmvPpdAshrae.info, pmvPpdAshrae.scan.bands));
     const banded = dynamicSpec({ ...chartRequestFor(pmvPpdAshrae, inScope(false)), bands }, airSpeedAxes);
     const [without, within] = [regionOf(off, zoneOf(off)), regionOf(on, zoneOf(on))];
     const left = speeds.map((_, yIndex) => yIndex).filter((yIndex) => !without[yIndex][column] && within[yIndex][column]);
@@ -241,7 +240,7 @@ describe("PMV (ASHRAE 55)'s clothing axis", () => {
     y.forEach((clo, yIndex) => {
       x.forEach((tdb, xIndex) => {
         const entered = new Map<Quantity, number>([[q.tdb, tdb], [q.clo, clo]]);
-        const pmv = resultNumber(runAt(pmvPpdAshrae, slot, entered), q.pmv);
+        const pmv = outputNumber(runAt(pmvPpdAshrae, slot, entered), q.pmv);
         const kept = Math.abs(pmv) < limit && !isOutsideApplicability(pmvPpdAshrae, slot, entered);
         expect(region[yIndex][xIndex], `${tdb} °C, ${clo} clo`).toBe(kept);
         if (Math.abs(pmv) < limit && !kept) {
@@ -261,26 +260,26 @@ describe("PMV (ASHRAE 55)'s clothing axis", () => {
  * that run breaks a bound. The cover hides the air above saturation, which
  * this file does not read.
  */
-function psychrometricCells(model: RegisteredModel, slot: Slot, spec: ChartSpec) {
+function psychrometricCells(model: ModelDeclaration, slot: Slot, spec: ChartSpec) {
   const { x, y } = samplesOf(spec);
-  const hrUnit = displayUnitFor(q.hr, unitSystem.si);
-  return y.flatMap((hrShown, yIndex) =>
+  const humidityRatioUnit = displayUnitFor(q.hr, unitSystem.si);
+  return y.flatMap((humidityRatioShown, yIndex) =>
     x.flatMap((tdb, xIndex) => {
-      const hr = hrUnit.toSi(hrShown);
-      const rh = hr_to_rh(hr, tdb, P);
+      const hr = humidityRatioUnit.toSi(humidityRatioShown);
+      const rh = hr_to_rh(hr, tdb, DEFAULT_ATMOSPHERIC_PRESSURE);
       if (rh > 100) {
         return [];
       }
       const entered = new Map<Quantity, number>([[q.tdb, tdb], [q.hr, hr]]);
-      const pmv = resultNumber(runAt(model, slot, entered), q.pmv);
-      return [{ xIndex, yIndex, tdb, pa: psy_ta_rh(tdb, rh, P).p_vap, pmv, outside: isOutsideApplicability(model, slot, entered) }];
+      const pmv = outputNumber(runAt(model, slot, entered), q.pmv);
+      return [{ xIndex, yIndex, tdb, pa: psy_ta_rh(tdb, rh, DEFAULT_ATMOSPHERIC_PRESSURE).p_vap, pmv, outside: isOutsideApplicability(model, slot, entered) }];
     }),
   );
 }
 
 describe("PMV (ISO 7730)'s psychrometric zones", () => {
   it("leave out the grid points above 30 °C and above 2 700 Pa of vapour pressure, and keep every other point they had", () => {
-    const slot = startingSlot(pmvPpdIso);
+    const slot = defaultSlot(pmvPpdIso);
     const spec = psychrometricSpec(chartRequestFor(isoDrawnPastItsBound, slot));
     const cells = psychrometricCells(isoDrawnPastItsBound, slot, spec);
     const fills = zoneFillsOf(spec);
@@ -345,7 +344,7 @@ describe("PMV (ASHRAE 55)'s psychrometric zone", () => {
  */
 describe("the note of a slot whose Comfort zones are all empty", () => {
   const empty = { text: copy.noComfortZone };
-  const tdbAndRh = { x: q.tdb, y: q.rh };
+  const relativeHumidityAxes = { x: q.tdb, y: q.rh };
 
   it("stands on PMV (ASHRAE 55)'s psychrometric chart at 0.9 m/s without local control, and not at its defaults", () => {
     expect(psychrometricSpec(chartRequestFor(pmvPpdAshrae, ashraeSlot(false, { v: 0.9 }))).notes).toEqual([empty]);
@@ -361,23 +360,23 @@ describe("the note of a slot whose Comfort zones are all empty", () => {
   });
 
   it("does not stand on Explore, where a Band list paints the field", () => {
-    const bands = bandListOf(pmvPpdAshrae.scan.classifier);
+    const bands = bandListOf(classifierOf(pmvPpdAshrae.info, pmvPpdAshrae.scan.bands));
     expect(psychrometricSpec({ ...chartRequestFor(pmvPpdAshrae, ashraeSlot(false, { v: 0.9 })), bands }).notes).toEqual([]);
   });
 
   it("under Compare stands for the empty slot alone, named and with its swatch", () => {
     const spec = psychrometricSpec(chartRequestForSlots(pmvPpdAshrae, [ashraeSlot(false), ashraeSlot(false, { v: 0.9 })]));
-    expect(spec.notes).toEqual([{ text: copy.slotNote(copy.slotName(1), copy.noComfortZone), color: chartInk.marker(palette.slots[1]) }]);
+    expect(spec.notes).toEqual([{ text: copy.slotNote(copy.slotLabel(1), copy.noComfortZone), color: chartColors.marker(palette.slots[1]) }]);
   });
 
   it("stands on the dynamic chart alike where its zone empties", () => {
-    expect(dynamicSpec(chartRequestFor(pmvPpdAshrae, ashraeSlot(false, { v: 0.9 })), tdbAndRh).notes).toEqual([empty]);
-    expect(dynamicSpec(chartRequestFor(pmvPpdAshrae, ashraeSlot(false)), tdbAndRh).notes).toEqual([]);
+    expect(dynamicSpec(chartRequestFor(pmvPpdAshrae, ashraeSlot(false, { v: 0.9 })), relativeHumidityAxes).notes).toEqual([empty]);
+    expect(dynamicSpec(chartRequestFor(pmvPpdAshrae, ashraeSlot(false)), relativeHumidityAxes).notes).toEqual([]);
   });
 
   it("does not stand for a model that declares no Comfort zone, which has none to empty", () => {
     const zoneless = { ...pmvPpdAshrae, scan: { ...pmvPpdAshrae.scan, comfortZones: undefined } };
-    expect(dynamicSpec(chartRequestFor(zoneless, ashraeSlot(false, { v: 0.9 })), tdbAndRh).notes).toEqual([]);
+    expect(dynamicSpec(chartRequestFor(zoneless, ashraeSlot(false, { v: 0.9 })), relativeHumidityAxes).notes).toEqual([]);
   });
 });
 
@@ -388,18 +387,18 @@ describe("the note of a slot whose Comfort zones are all empty", () => {
  * one. Every vertex lies on a grid line, where the scan placed it, and the run
  * one step inside it breaks no bound, so no vertex on the limit lies past a
  * bound nearer the zone. One where the library's |PMV| is within criterion
- * 3a's bound of the zone's limit lies on the limit, which
+ * 3a's tolerance of the zone's limit lies on the limit, which
  * `psychrometricChartAccuracy.test.ts` holds; every other vertex is held here
  * to the bound, so a vertex on neither fails.
  */
 describe("criterion 3c: a zone's boundary on a bound, against the library", () => {
   const charts: readonly {
     readonly name: string;
-    readonly model: RegisteredModel;
+    readonly model: ModelDeclaration;
     readonly slot: Slot;
     readonly frame: ScanFrame;
     readonly spec: ChartSpec;
-    readonly limitBound: number;
+    readonly limitTolerance: number;
   }[] = [
     (() => {
       const slot = inScope(false);
@@ -408,21 +407,21 @@ describe("criterion 3c: a zone's boundary on a bound, against the library", () =
         name: "PMV (ASHRAE 55)'s air-speed chart without local control",
         model: pmvPpdAshrae,
         slot,
-        frame: dynamicScanFrameFor(pmvPpdAshrae, airSpeedAxes, request.entryModes, P),
+        frame: dynamicScanFrameFor(pmvPpdAshrae, airSpeedAxes, request.entryModes, DEFAULT_ATMOSPHERIC_PRESSURE),
         spec: dynamicSpec(request, airSpeedAxes),
-        limitBound: 0.01,
+        limitTolerance: 0.01,
       };
     })(),
     (() => {
-      const slot = startingSlot(pmvPpdIso);
+      const slot = defaultSlot(pmvPpdIso);
       const request = chartRequestFor(isoDrawnPastItsBound, slot);
       return {
         name: "PMV (ISO 7730)'s psychrometric chart drawn past its 30 °C bound",
         model: isoDrawnPastItsBound,
         slot,
-        frame: psychrometricScanFrameFor(isoDrawnPastItsBound, request.entryModes, P),
+        frame: psychrometricScanFrameFor(isoDrawnPastItsBound, request.entryModes, DEFAULT_ATMOSPHERIC_PRESSURE),
         spec: psychrometricSpec(request),
-        limitBound: 0.005,
+        limitTolerance: 0.005,
       };
     })(),
     (() => {
@@ -433,14 +432,14 @@ describe("criterion 3c: a zone's boundary on a bound, against the library", () =
         name: "PMV (ASHRAE 55)'s tdb × clo chart",
         model: pmvPpdAshrae,
         slot,
-        frame: dynamicScanFrameFor(pmvPpdAshrae, axes, request.entryModes, P),
+        frame: dynamicScanFrameFor(pmvPpdAshrae, axes, request.entryModes, DEFAULT_ATMOSPHERIC_PRESSURE),
         spec: dynamicSpec(request, axes),
-        limitBound: 0.01,
+        limitTolerance: 0.01,
       };
     })(),
   ];
 
-  it.each(charts)("$name", ({ model, slot, frame, spec, limitBound }) => {
+  it.each(charts)("$name", ({ model, slot, frame, spec, limitTolerance }) => {
     const { x, y } = samplesOf(spec);
     const toSi = { x: displayUnitFor(frame.x.quantity, unitSystem.si).toSi, y: displayUnitFor(frame.y.quantity, unitSystem.si).toSi };
     const converted = withEntryModes(slot, frame.entryModes, model);
@@ -467,11 +466,11 @@ describe("criterion 3c: a zone's boundary on a bound, against the library", () =
           const pointAt = (offset: number): [number, number] => (onColumn ? [vertexX, vertexY + offset] : [vertexX + offset, vertexY]);
           const [inside, outside] = isInsideFill(fill, ...pointAt(-step)) ? [pointAt(-step), pointAt(step)] : [pointAt(step), pointAt(-step)];
           expect(isInsideFill(fill, ...inside), label).toBe(true);
-          expect(resultWarnings(model, runAtPoint(...inside)), label).toEqual([]);
-          if (Math.abs(Math.abs(resultNumber(runAtPoint(vertexX, vertexY), q.pmv)) - limit) <= limitBound) {
+          expect(rangeRowsOf(runAtPoint(...inside)), label).toEqual([]);
+          if (Math.abs(Math.abs(outputNumber(runAtPoint(vertexX, vertexY), q.pmv)) - limit) <= limitTolerance) {
             return; // On the limit.
           }
-          expect(resultWarnings(model, runAtPoint(...outside)).length, label).toBeGreaterThan(0);
+          expect(rangeRowsOf(runAtPoint(...outside)).length, label).toBeGreaterThan(0);
           onBounds += 1;
         });
       }

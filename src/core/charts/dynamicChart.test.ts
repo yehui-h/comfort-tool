@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { enteredSlotFor, entryModesWithAirSpeed, entryModesWithClothing, entryModesWithTemperature } from "$lib/core/declarationTestSlots";
-import { chartInk } from "$lib/core/bandPalette";
+import { chartColors } from "$lib/core/bandPalette";
 import { airSpeedMode, clothingMode, temperatureMode } from "$lib/core/entryModes";
-import { valuesReader } from "$lib/core/libraryInputs";
+import { inputsReader } from "$lib/core/libraryInputs";
 import {
   dynamicChartOf,
   requireAxisRange,
   type ComfortZone,
   type DeclaredDynamicChart,
-  type RegisteredModel,
+  type ModelDeclaration,
 } from "$lib/core/modelDeclaration";
 import { palette } from "$lib/core/palette";
 import { quantities, type Quantity } from "$lib/core/quantities";
-import { enteredQuantities, startingSlot } from "$lib/core/slot";
+import { enteredQuantities, defaultSlot } from "$lib/core/slot";
 import { displayUnitFor } from "$lib/core/units";
 import { unitSystem } from "$lib/core/unitSystem";
 import { copy } from "$lib/text/copy";
@@ -38,7 +38,7 @@ const slot = enteredSlotFor(pmvPpdIso, { tdb: 26, tr: 26 });
 const request = chartRequestFor(pmvPpdIso, slot);
 
 /** PMV (ISO 7730)'s own air speed, which every slot here keeps. */
-const { v } = valuesReader(startingSlot(pmvPpdIso).values);
+const { v } = inputsReader(defaultSlot(pmvPpdIso).values);
 
 /** The range `pmvPpdIso` declares for `quantity`, as the layout writes a range. */
 function declaredRangeOf(quantity: Quantity): [number, number] {
@@ -68,7 +68,7 @@ function runsAlong(line: PathTrace, fill: PathTrace): boolean {
 }
 
 function hoverGridOf(spec: ChartSpec): HoverGridTrace {
-  const trace = spec.traces.find((entry): entry is HoverGridTrace => entry.kind === "hoverGrid");
+  const trace = spec.traces.find((candidate): candidate is HoverGridTrace => candidate.kind === "hoverGrid");
   if (!trace) {
     throw new Error("spec has no hover grid");
   }
@@ -76,7 +76,7 @@ function hoverGridOf(spec: ChartSpec): HoverGridTrace {
 }
 
 /** `model`'s dynamic chart. */
-function dynamicOf(model: RegisteredModel): DeclaredDynamicChart {
+function dynamicOf(model: ModelDeclaration): DeclaredDynamicChart {
   const chart = dynamicChartOf(model);
   if (!chart) {
     throw new Error(`${model.info.label} no longer declares a dynamic chart`);
@@ -85,7 +85,7 @@ function dynamicOf(model: RegisteredModel): DeclaredDynamicChart {
 }
 
 /** The Comfort zones `model`'s scan declares, largest first. */
-function declaredZonesOf(model: RegisteredModel): ComfortZone[] {
+function declaredZonesOf(model: ModelDeclaration): ComfortZone[] {
   return [...(model.scan?.comfortZones ?? [])].sort((a, b) => b.limit - a.limit);
 }
 
@@ -100,7 +100,7 @@ describe("dynamicSpec", () => {
     expect(hoverText).toHaveLength(grid);
     expect(hoverText[0]).toHaveLength(grid);
     // The declared ranges, which are what the deployed tool draws, not
-    // ISO 7730's applicability limits.
+    // ISO 7730's applicability bounds.
     expect([x[0], last(x)]).toEqual(declaredRangeOf(q.tdb));
     expect([y[0], last(y)]).toEqual(declaredRangeOf(q.v));
   });
@@ -172,9 +172,9 @@ describe("the scanned dynamic chart of one slot", () => {
     const fills = zoneFillsOf(spec);
     const lines = zoneLinesOf(spec);
     expect(spec.traces.slice(0, 2 * zones.length)).toEqual([...fills, ...lines]);
-    expect(fills.map((fill) => [fill.color, fill.fill])).toEqual(zones.map((_, level) => Array(2).fill(chartInk.zoneFill(hue, level, zones.length))));
+    expect(fills.map((fill) => [fill.color, fill.fill])).toEqual(zones.map((_, level) => Array(2).fill(chartColors.zoneFill(hue, level, zones.length))));
     expect(lines.map((line) => [line.label, line.color, line.width, line.fill])).toEqual(
-      zones.map((zone) => [copy.zoneLegend(zone), chartInk.zoneLine(hue), chartInk.zoneLineWidth, undefined]),
+      zones.map((zone) => [copy.zoneLegend(zone), chartColors.zoneLine(hue), chartColors.zoneLineWidth, undefined]),
     );
     lines.forEach((line, index) => {
       expect(line.pieces.length).toBeGreaterThan(0);
@@ -191,7 +191,7 @@ describe("the scanned dynamic chart of one slot", () => {
 
   it("paints PMV (ASHRAE 55)'s one Comfort zone and one marker", () => {
     const ashrae = dynamicOf(pmvPpdAshrae);
-    const drawn = dynamicSpec(chartRequestFor(pmvPpdAshrae, startingSlot(pmvPpdAshrae)), ashrae.axes);
+    const drawn = dynamicSpec(chartRequestFor(pmvPpdAshrae, defaultSlot(pmvPpdAshrae)), ashrae.axes);
     expect(zoneFillsOf(drawn).map((zone) => zone.label)).toEqual(declaredZonesOf(pmvPpdAshrae).map((zone) => copy.zoneLegend(zone)));
     expect(zoneLinesOf(drawn).map((zone) => zone.label)).toEqual(declaredZonesOf(pmvPpdAshrae).map((zone) => copy.zoneLegend(zone)));
     expect(drawn.traces.filter((trace) => trace.kind === "point")).toHaveLength(1);
@@ -199,14 +199,14 @@ describe("the scanned dynamic chart of one slot", () => {
 
   it("paints Heat Index's marker alone, its output being no PMV", () => {
     const heat = dynamicOf(heatIndexRothfusz);
-    const drawn = dynamicSpec(chartRequestFor(heatIndexRothfusz, startingSlot(heatIndexRothfusz)), heat.axes);
+    const drawn = dynamicSpec(chartRequestFor(heatIndexRothfusz, defaultSlot(heatIndexRothfusz)), heat.axes);
     expect(drawn.traces.filter((trace) => trace.hover === "off").map((trace) => trace.kind)).toEqual(["point"]);
-    expect(drawn.legend.map((entry) => entry.swatch)).toEqual(["marker"]);
+    expect(drawn.legend.map((item) => item.swatch)).toEqual(["marker"]);
   });
 
   it("starts Heat Index's temperature axis where the regression holds", () => {
     const heat = dynamicOf(heatIndexRothfusz);
-    const heatRequest = chartRequestFor(heatIndexRothfusz, startingSlot(heatIndexRothfusz));
+    const heatRequest = chartRequestFor(heatIndexRothfusz, defaultSlot(heatIndexRothfusz));
     expect(dynamicSpec(heatRequest, heat.axes).layout.x.range).toEqual([27, 50]);
     const [ipMin, ipMax] = dynamicSpec({ ...heatRequest, unitSystem: unitSystem.ip }, heat.axes).layout.x.range;
     expect(ipMin).toBeCloseTo(80.6, 2);
@@ -237,7 +237,7 @@ describe("the scanned dynamic chart of one slot", () => {
   });
 
   it("carries one legend: every zone, then the slot", () => {
-    expect(spec.legend.map((entry) => [entry.label, entry.swatch])).toEqual([
+    expect(spec.legend.map((item) => [item.label, item.swatch])).toEqual([
       ...declaredZonesOf(pmvPpdIso).map((zone) => [copy.zoneLegend(zone), "fill"]),
       ["Input", "marker"],
     ]);
@@ -248,8 +248,8 @@ describe("a model's own number in the scanned field", () => {
   const chart = dynamicOf(pmvPpdIso);
 
   /** A model whose PMV is `value` at every point of the field. */
-  function flatModel(value: number): RegisteredModel {
-    return { ...pmvPpdIso, run: () => ({ pmv: value, warnings: [] }) } satisfies RegisteredModel;
+  function flatModel(value: number): ModelDeclaration {
+    return { ...pmvPpdIso, run: () => ({ pmv: value, warnings: [] }) } satisfies ModelDeclaration;
   }
 
   function flat(value: number): ChartSpec {
@@ -279,8 +279,8 @@ describe("a model's own number in the scanned field", () => {
 describe("dynamicAxisQuantities", () => {
   it("offers every entered quantity the chart declares a range for", () => {
     const separate = dynamicAxisQuantities(pmvPpdIso, entryModesWithTemperature(temperatureMode.separate));
-    // Every entered quantity, humidity included: no standard limits `rh`, and
-    // an axis range is a viewport rather than an applicability limit.
+    // Every entered quantity, humidity included: no standard bounds `rh`, and
+    // an axis range is a viewport rather than an applicability bound.
     expect(separate).toEqual(enteredQuantities(pmvPpdIso, entryModesWithTemperature(temperatureMode.separate)));
     expect(separate).toContain(q.rh);
   });
@@ -295,7 +295,7 @@ describe("dynamicAxisQuantities", () => {
     const model = {
       ...pmvPpdIso,
       inputs: [...pmvPpdIso.inputs, { quantity: q.compliance, value: 0 }],
-    } satisfies RegisteredModel;
+    } satisfies ModelDeclaration;
     expect(enteredQuantities(model, entryModesWithTemperature(temperatureMode.separate))).toContain(q.compliance);
     expect(dynamicAxisQuantities(model, entryModesWithTemperature(temperatureMode.separate))).not.toContain(q.compliance);
   });
@@ -327,13 +327,13 @@ describe("axes across a temperature entry mode switch", () => {
 });
 
 describe("axes across an air-speed entry mode switch", () => {
-  const corrected = entryModesWithAirSpeed(airSpeedMode.corrected);
+  const corrected = entryModesWithAirSpeed(airSpeedMode.relativeAirSpeed);
 
   it("offers the relative air speed where it offered the air speed", () => {
     const offered = dynamicAxisQuantities(pmvPpdIso, corrected);
     expect(offered).toContain(q.vr);
     expect(offered).not.toContain(q.v);
-    expect(dynamicAxisQuantities(pmvPpdIso, entryModesWithAirSpeed(airSpeedMode.uncorrected))).toContain(q.v);
+    expect(dynamicAxisQuantities(pmvPpdIso, entryModesWithAirSpeed(airSpeedMode.airSpeed))).toContain(q.v);
   });
 
   it("sweeps the relative air speed when a remembered air-speed axis no longer exists, and marks the entry", () => {
@@ -360,14 +360,14 @@ describe("axes across an air-speed entry mode switch", () => {
 });
 
 describe("axes across a clothing entry mode switch", () => {
-  const corrected = entryModesWithClothing(clothingMode.corrected);
+  const corrected = entryModesWithClothing(clothingMode.dynamicClothingInsulation);
   const clothingAxes = { x: q.tdb, y: q.clo };
 
   it("offers the dynamic clothing insulation where it offered the clothing insulation", () => {
     const offered = dynamicAxisQuantities(pmvPpdIso, corrected);
     expect(offered).toContain(q.clo_dynamic);
     expect(offered).not.toContain(q.clo);
-    expect(dynamicAxisQuantities(pmvPpdIso, entryModesWithClothing(clothingMode.uncorrected))).toContain(q.clo);
+    expect(dynamicAxisQuantities(pmvPpdIso, entryModesWithClothing(clothingMode.clothingInsulation))).toContain(q.clo);
   });
 
   it("sweeps the dynamic clothing insulation when a remembered clothing axis no longer exists, as far as it drew the clothing, and marks the entry", () => {
@@ -391,7 +391,7 @@ describe("axes across a clothing entry mode switch", () => {
 });
 
 describe("the scanned chart's hover readout", () => {
-  const pmvRequest = chartRequestFor(pmvPpdIso, startingSlot(pmvPpdIso));
+  const pmvRequest = chartRequestFor(pmvPpdIso, defaultSlot(pmvPpdIso));
 
   // Cell (row 4, column 40) of the 51 × 51 field at PMV (ISO 7730)'s defaults:
   // tdb 26 °C, v 0.08 m/s, where the model gives a PMV of -0.1459… on the

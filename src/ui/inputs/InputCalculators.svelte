@@ -1,11 +1,11 @@
 <!--
-  The input calculators' one entry and their dialog (ADR-0002 decision 75,
-  rule 6 as noted 2026-10-15). The entry is a full-width button at the Inputs
-  card's foot, "Input calculators" over the names of the calculators the
+  The input calculators' one button and their dialog (ADR-0002 decision 75,
+  rule 6 as noted 2026-10-15). The button stands full width at the input
+  panel's foot, "Input calculators" over the labels of the calculators the
   model's panel offers; there is none where it offers none. It opens one
   dialog of one width and one fixed height, a tab per calculator in the
-  panel's row order: the tab's settings, the one region that scrolls; the
-  result dock, the result and, for each slot Apply writes, that slot's row
+  panel's row order: the tab's inputs, the one region that scrolls; the
+  dock, the outputs and, for each slot Apply writes, that slot's row
   before and after, cut to the row's bound with the bound beside it; and the
   footer with Apply, which commits each row as a typed value is committed,
   with no toast, and closes (ADR-0002 decision 84, rule 5). While
@@ -14,16 +14,16 @@
   any other way changes nothing.
 
   Its look is the generated dialog's and tabs' (the `line` variant), with the
-  shared `.calculator-entry`, `.dialog-fixed` and `.result-dock` rules.
+  shared `.calculator-button`, `.dialog-fixed` and `.dock` rules.
 -->
 <script module lang="ts">
   import type { Calculator } from "$lib/core/calculators";
   import type { Quantity } from "$lib/core/quantities";
 
-  /** One line of a calculator's result in the dock: its name, and its SI value, not a number while there is none. */
-  export interface ResultLine {
+  /** One line of a calculator's outputs in the dock: its label, and its SI value, not a number while there is none. */
+  export interface DockLine {
     readonly quantity: Quantity;
-    readonly name: string;
+    readonly label: string;
     readonly value: number;
   }
 
@@ -38,11 +38,11 @@
 <script lang="ts">
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import { formatBound } from "$lib/core/applicability";
-  import { chartInk } from "$lib/core/bandPalette";
-  import { panelCalculators, shownRow, type CalculatorResult } from "$lib/core/calculators";
-  import type { RegisteredModel } from "$lib/core/modelDeclaration";
+  import { chartColors } from "$lib/core/bandPalette";
+  import { panelCalculators, shownRow, type CalculatorOutputs } from "$lib/core/calculators";
+  import type { ModelDeclaration } from "$lib/core/modelDeclaration";
   import type { UnitSystem } from "$lib/core/unitSystem";
-  import { displayUnitFor, nameWithUnit, numberInUnit } from "$lib/core/units";
+  import { displayUnitFor, numberInUnit, textWithUnit } from "$lib/core/units";
   import type { Session, SlotPosition } from "$lib/state/session.svelte";
   import { copy } from "$lib/text/copy";
   import Inline from "$lib/ui/layout/Inline.svelte";
@@ -54,12 +54,12 @@
   import * as Tabs from "$lib/ui/primitives/tabs";
   import CalculatorEnsembleTab from "./CalculatorEnsembleTab.svelte";
   import CalculatorFormTab from "./CalculatorFormTab.svelte";
-  import type { SlotColumn } from "./InputPanel.svelte";
+  import type { ComparedSlot } from "./InputPanel.svelte";
 
   interface Props {
-    model: RegisteredModel;
+    model: ModelDeclaration;
     /** The page's slot columns, as the input panel takes them, `null` for a slot not compared: the others are those Apply can write. */
-    columns: readonly [SlotColumn, ...(SlotColumn | null)[]];
+    columns: readonly [ComparedSlot, ...(ComparedSlot | null)[]];
     unitSystem: UnitSystem;
     /** The session's, in Pa: a slot's row is read in its entry mode at it. */
     atmosphericPressure: number;
@@ -75,13 +75,13 @@
   const calculators = $derived(panelCalculators(model, columns[0].inputSlot));
   const current = $derived(lastUsed && calculators.includes(lastUsed) ? lastUsed : calculators[0]);
 
-  const enabled = $derived(columns.filter((column) => column !== null));
-  /** Whether the slots carry names, Standard with Compare on (decision 50): only then does the footer ask which Apply writes. */
-  const named = $derived(columns[0].outputs.badge.name !== undefined);
+  const compared = $derived(columns.filter((slot) => slot !== null));
+  /** Whether the slots carry labels, Standard with Compare on (decision 50): only then does the footer ask which Apply writes. */
+  const named = $derived(columns[0].computation.appearance.label !== undefined);
   /** The slots "Apply to" has checked, by position, slot 1 alone each time the dialog opens. */
   let checked: readonly SlotPosition[] = $state.raw([0]);
   /** The slots Apply writes, in slot order: the checked ones while the slots are named, and slot 1 otherwise. */
-  const targets = $derived(named ? enabled.filter((column) => checked.includes(column.outputs.position)) : [columns[0]]);
+  const targets = $derived(named ? compared.filter((slot) => checked.includes(slot.computation.position)) : [columns[0]]);
 
   let open = $state(false);
 
@@ -96,9 +96,9 @@
   }
 
   /** Apply: each target's row committed as the dock shows it, cut to the row's bound. */
-  function apply(calculator: Calculator, result: CalculatorResult) {
-    for (const { outputs } of targets) {
-      calculatorWriter.applyCalculator(outputs.position, calculator, result);
+  function apply(calculator: Calculator, calculatorOutputs: CalculatorOutputs) {
+    for (const { computation } of targets) {
+      calculatorWriter.applyCalculator(computation.position, calculator, calculatorOutputs);
     }
     open = false;
   }
@@ -109,10 +109,10 @@
     <!-- Its border parts it from the rows above, with no rule (decision 75, rule 6 (a)); focus comes back to it on close. -->
     <Dialog.Trigger>
       {#snippet child({ props })}
-        <Button {...props} variant="outline" class="calculator-entry">
-          <span class="calculator-entry-text">
+        <Button {...props} variant="outline" class="calculator-button">
+          <span class="calculator-button-text">
             <span>{copy.inputCalculators}</span>
-            <span class="caption calculator-entry-names">{copy.calculatorNames(calculators.map((calculator) => calculator.label))}</span>
+            <span class="caption calculator-button-labels">{copy.calculatorLabels(calculators.map((calculator) => calculator.label))}</span>
           </span>
           <ChevronRightIcon />
         </Button>
@@ -124,7 +124,7 @@
       </Dialog.Header>
       <!--
         Every tab stays mounted, the inactive ones hidden, so a tab keeps its
-        scroll and the ensemble its search across a switch; its settings are
+        scroll and the ensemble its search across a switch; its inputs are
         kept by the tab's module. A tab's value is its calculator's position.
       -->
       <Tabs.Root bind:value={() => String(calculators.indexOf(current)), (value) => (lastUsed = calculators[Number(value)])}>
@@ -135,24 +135,24 @@
         </Tabs.List>
         {#each calculators as calculator, index (calculator)}
           <!--
-            The dock and the footer, drawn by the tab after its settings, which hands in its result and its lines.
+            The dock and the footer, drawn by the tab after its inputs, which hands in its outputs and its lines.
             The dock has a line per target, the row that slot shows in its own entry mode, named by the slot while
             the slots are named. The footer is drawn once per tab, every tab mounted, so its ids carry the tab's.
           -->
-          {#snippet dock(result: CalculatorResult | null, lines: readonly ResultLine[])}
-            <div class="result-dock">
+          {#snippet dock(calculatorOutputs: CalculatorOutputs | null, lines: readonly DockLine[])}
+            <div class="dock">
               <Stack gap="1">
                 {#each lines as line (line.quantity)}
                   {@const lineUnit = displayUnitFor(line.quantity, unitSystem)}
-                  {@render dockLine(`${index}-${line.quantity.key}`, nameWithUnit(line.name, lineUnit), numberInUnit(line.value, lineUnit))}
+                  {@render dockLine(`${index}-${line.quantity.key}`, textWithUnit(line.label, lineUnit), numberInUnit(line.value, lineUnit))}
                 {/each}
-                {#each targets as { inputSlot, outputs } (outputs.position)}
-                  {@const row = shownRow(inputSlot, calculator, result ?? undefined, model, atmosphericPressure)}
+                {#each targets as { inputSlot, computation } (computation.position)}
+                  {@const row = shownRow(inputSlot, calculator, calculatorOutputs ?? undefined, model, atmosphericPressure)}
                   {@const unit = displayUnitFor(row.quantity, unitSystem)}
                   {@const after = numberInUnit(row.after, unit)}
                   {@render dockLine(
-                    `${index}-row-${outputs.position}`,
-                    nameWithUnit(outputs.badge.name ? copy.slotControl(row.quantity.label, outputs.badge.name) : row.quantity.label, unit),
+                    `${index}-row-${computation.position}`,
+                    textWithUnit(computation.appearance.label ? copy.slotControl(row.quantity.label, computation.appearance.label) : row.quantity.label, unit),
                     numberInUnit(row.before, unit),
                     row.cutTo ? copy.calculatorCutTo(after, formatBound(row.cutTo, row.quantity, unitSystem)) : after,
                   )}
@@ -163,7 +163,10 @@
               {#if named}
                 {@render applyTo(`${id}-${index}-apply-to`)}
               {/if}
-              <Button disabled={result === null || targets.length === 0} onclick={() => result && apply(calculator, result)}>
+              <Button
+                disabled={calculatorOutputs === null || targets.length === 0}
+                onclick={() => calculatorOutputs && apply(calculator, calculatorOutputs)}
+              >
                 {copy.calculatorApply}
               </Button>
             </Dialog.Footer>
@@ -183,22 +186,23 @@
 
 <!--
   The footer's "Apply to": a checkbox per enabled slot, any number of them checked, which Apply confirms (decision 76,
-  rule 1), each labelled by the slot's swatch and name as its slot button is. `prefix` is the tab's, keeping ids unique.
+  rule 1), each labelled by the slot's swatch and label as its slot button is. `prefix` is the tab's, keeping ids
+  unique.
 -->
 {#snippet applyTo(prefix: string)}
   <div class="apply-to" role="group" aria-labelledby="{prefix}-heading">
     <Inline gap="2">
       <span id="{prefix}-heading" class="apply-to-heading">{copy.calculatorApplyTo}</span>
-      {#each enabled as { outputs } (outputs.position)}
+      {#each compared as { computation } (computation.position)}
         <Inline gap="2">
           <Checkbox
-            id="{prefix}-{outputs.position}"
-            checked={checked.includes(outputs.position)}
-            onCheckedChange={(isChecked) => check(outputs.position, isChecked)}
+            id="{prefix}-{computation.position}"
+            checked={checked.includes(computation.position)}
+            onCheckedChange={(isChecked) => check(computation.position, isChecked)}
           />
-          <Label for="{prefix}-{outputs.position}">
-            <span class="swatch swatch-marker" style:--swatch-color={chartInk.marker(outputs.badge.hue)}></span>
-            {outputs.badge.name}
+          <Label for="{prefix}-{computation.position}">
+            <span class="swatch swatch-marker" style:--swatch-color={chartColors.marker(computation.appearance.hue)}></span>
+            {computation.appearance.label}
           </Label>
         </Inline>
       {/each}
@@ -208,7 +212,7 @@
 
 <!--
   A line of the dock, named by its label, so the value is announced with what it is; a slot's row line has its value
-  after Apply too, with the row's bound beside it where the result was cut to it.
+  after Apply too, with the row's bound beside it where the value after was cut to it.
 -->
 {#snippet dockLine(key: string, label: string, value: string, after?: string)}
   <Inline gap="2" justify="between">

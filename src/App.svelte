@@ -3,13 +3,13 @@
   the first address from its share link or what the tab kept, and kept for
   every page after it, until Reset or a link's yes replaces it (ADR-0002
   decisions 57 and 63); beside it the question a waiting link asks, and the
-  one toaster every notice is raised in (decision 84, rule 7), both drawn
+  one toaster every toast is raised in (decision 84, rule 7), both drawn
   here, with the toast a compared slot raises when its run breaks a new
-  limit, on whichever page; the router renders the page for the current URL.
+  bound, on whichever page; the router renders the page for the current URL.
 -->
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { breaksNewLimit, type ViolationRow } from "$lib/core/applicability";
+  import { breaksNewBound, type ViolationRow } from "$lib/core/applicability";
   import { narrowedToPage, toText } from "$lib/core/shareLink";
   import { registeredModels } from "$lib/models";
   import { followAddress, Router, shareLinkTo } from "$lib/routes/navigation";
@@ -20,9 +20,9 @@
   import { copy } from "$lib/text/copy";
   import QuestionDialog from "$lib/ui/inputs/QuestionDialog.svelte";
   import Toaster from "$lib/ui/layout/Toaster.svelte";
-  import { closeNotices, raiseLimitsBroken, raiseNotice } from "$lib/ui/outputs/notices";
+  import { closeToasts, raiseBoundsBroken, raiseToast } from "$lib/ui/layout/toasts";
 
-  const tab = new Tab(registeredModels, raiseNotice);
+  const tab = new Tab(registeredModels, raiseToast);
 
   /** The share link to the page the session is on: its address, and the session narrowed to it (ADR-0002 decision 63, rule 5). */
   function linkToPage(): string {
@@ -43,7 +43,7 @@
     }
   });
 
-  // A compared slot's toast when the limits its run breaks gain one against
+  // A compared slot's toast when the bounds its run breaks gain one against
   // its run at the last change, a switch's and an arrival's too, and not
   // while they hold or shrink (ADR-0002 decision 84, rule 8): external
   // synchronisation, assigning no state. What was broken is remembered in a
@@ -61,12 +61,12 @@
       watched = opened;
       brokenBefore = new Map();
     }
-    for (const slot of opened.outputs.slots) {
-      if (breaksNewLimit(brokenBefore.get(slot.position) ?? [], slot.violations)) {
-        raiseLimitsBroken(slot.position, slot.violations, opened.session.unitSystem, slot.badge.name);
+    for (const slot of opened.computation.slots) {
+      if (breaksNewBound(brokenBefore.get(slot.position) ?? [], slot.violations)) {
+        raiseBoundsBroken(slot.position, slot.violations, opened.session.unitSystem, slot.appearance.label);
       }
     }
-    brokenBefore = new Map([...brokenBefore, ...opened.outputs.slots.map((slot) => [slot.position, slot.violations] as const)]);
+    brokenBefore = new Map([...brokenBefore, ...opened.computation.slots.map((slot) => [slot.position, slot.violations] as const)]);
   });
 
   setOpenSession(() => {
@@ -77,11 +77,11 @@
   });
   // Reset closes the toasts standing, which speak of the session it replaces
   // (the user's ruling, `.scratch/input-gate/issues/01-…md` Comments). A
-  // link's yes closes none, so a limit toast the kept session raised while
-  // the question waited stands after it (`.scratch/open-points.md` B30).
+  // link's yes closes none, so a bounds-broken toast the kept session raised
+  // while the question waited stands after it (`.scratch/open-points.md` B30).
   setTabControls({
     reset: () => {
-      closeNotices();
+      closeToasts();
       tab.reset();
     },
     link: linkToPage,

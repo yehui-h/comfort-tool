@@ -43,7 +43,7 @@ interface Boxes {
   header: Box;
   sidebar: Box;
   inputs: Box;
-  results: Box;
+  resultsColumn: Box;
   footer: Box;
   plot: Box & { height: number };
   legend: Box & { height: number };
@@ -62,7 +62,7 @@ function contentEdgesOf(locator: Locator) {
   });
 }
 
-async function boxOf(locator: Locator) {
+async function boundingBoxOf(locator: Locator) {
   const box = await locator.boundingBox();
   if (box === null) {
     throw new Error(`${locator} has no box`);
@@ -72,18 +72,18 @@ async function boxOf(locator: Locator) {
 
 async function boxes(page: Page): Promise<Boxes> {
   const region = async (locator: Locator) => {
-    const { x, y, width } = await boxOf(locator);
+    const { x, y, width } = await boundingBoxOf(locator);
     return { x, y, width };
   };
   return {
     header: await region(page.getByRole("banner")),
     sidebar: await region(page.locator('[data-slot="sidebar-content"]').locator("..")),
     inputs: await region(card(page, "Inputs")),
-    // The result column: the Results card and the Chart card under it.
-    results: await region(card(page, "Results").locator("..")),
+    // The results column: the Results card and the Chart card under it.
+    resultsColumn: await region(card(page, "Results").locator("..")),
     footer: await region(page.getByRole("contentinfo")),
-    plot: await boxOf(page.locator(".chart-plot")),
-    legend: await boxOf(page.locator(".chart-legend")),
+    plot: await boundingBoxOf(page.locator(".chart-plot")),
+    legend: await boundingBoxOf(page.locator(".chart-legend")),
   };
 }
 
@@ -95,12 +95,12 @@ async function boxes(page: Page): Promise<Boxes> {
  * Comments), and a chart with axes by its view row (decision 89, rule 6), so
  * their checks leave the plot's `y` out.
  */
-function inPlace({ header, sidebar, inputs, results, footer, plot }: Boxes, plotMayDrop = false) {
+function inPlace({ header, sidebar, inputs, resultsColumn, footer, plot }: Boxes, plotMayDrop = false) {
   return {
     header,
     sidebar,
     inputs,
-    results,
+    resultsColumn,
     footer: { x: footer.x, width: footer.width },
     plot: { x: plot.x, width: plot.width, height: plot.height, ...(plotMayDrop ? {} : { y: plot.y }) },
   };
@@ -154,10 +154,10 @@ async function holdBoxes(page: Page) {
  */
 const SCROLLBAR_GUTTER = 15;
 
-/** Whether the result and chart cards stand to the input card's right, their tops level, not under it. */
+/** Whether the result and chart cards stand to the input panel's right, their tops level, not under it. */
 async function isResultBesideInputs(page: Page) {
-  const inputs = await boxOf(card(page, "Inputs"));
-  const results = await boxOf(card(page, "Results"));
+  const inputs = await boundingBoxOf(card(page, "Inputs"));
+  const results = await boundingBoxOf(card(page, "Results"));
   return inputs.x + inputs.width <= results.x && results.y === inputs.y;
 }
 
@@ -240,7 +240,7 @@ for (const width of [1440, 1280]) {
   test(`at ${width} px, the switch question opens and closes moving no region or the plot`, async ({ page }) => {
     await openStandard(page, width);
     // PMV holds an air speed to its kind's bound alone; 3 m/s is past Adaptive's 2, so the switch asks.
-    // Committed before the boxes are held: the run it gives breaks a limit, which its result row shows.
+    // Committed before the boxes are held: the run it gives breaks a bound, which its result row shows.
     const airSpeed = page.getByRole("spinbutton", { name: /^Air speed/ });
     await airSpeed.fill("3");
     await airSpeed.press("Enter");
@@ -263,19 +263,56 @@ for (const width of [1440, 1280]) {
   });
 }
 
+test("at 1440 px, the switch question's title and yes say limits and cut, and the yes cuts the value to the new model's bound and switches", async ({ page }) => {
+  await openStandard(page, 1440);
+  // PMV holds an air speed to its kind's bound alone; 3 m/s is past Adaptive's 2, so the switch asks.
+  const airSpeed = page.getByRole("spinbutton", { name: /^Air speed/ });
+  await airSpeed.fill("3");
+  await airSpeed.press("Enter");
+  await page.getByRole("button", { name: "Model", exact: true }).click();
+  await page.getByRole("option", { name: /^Adaptive/ }).click();
+  const question = page.getByRole("dialog", { name: "Values outside the new model's limits" });
+  await expect(question).toBeVisible();
+
+  await question.getByRole("button", { name: "Yes, cut and switch", exact: true }).click();
+
+  await expect(question).toBeHidden();
+  await expect(page).toHaveURL((url) => url.pathname === ADAPTIVE_ADDRESS);
+  await expect(airSpeed).toHaveValue("2");
+});
+
+test("at 1440 px, the humidity menu's relative-humidity and humidity-ratio lines and Reset's question say the atmospheric pressure", async ({ page }) => {
+  await openStandard(page, 1440);
+  await page.getByRole("button", { name: "Change humidity", exact: true }).click();
+  const menu = page.getByRole("menu");
+  for (const [mode, line] of [
+    [/^Relative humidity/, "Held as the temperature or the atmospheric pressure changes; the humidity ratio follows."],
+    [/^Humidity ratio/, "Held as the temperature or the atmospheric pressure changes; the relative humidity follows."],
+  ] as const) {
+    await expect(menu.getByRole("menuitemradio", { name: mode }).locator(".caption")).toHaveText(line);
+  }
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+
+  await page.getByRole("group", { name: "Settings" }).getByRole("button", { name: "Reset" }).click();
+  await expect(page.getByRole("dialog")).toHaveAccessibleDescription(
+    "This returns the page to what a new tab at this address shows: every input, the units, the atmospheric pressure, Compare, and the chart settings and Bands of every model. It cannot be undone.",
+  );
+});
+
 /**
  * A desktop keeps two columns at every width (decision 87, rule 3): on a
  * laptop with the sidebar open the result and chart cards stand beside the
- * input card, and Compare moves neither card sideways.
+ * input panel, and Compare moves none of them sideways.
  */
 for (const width of [1366, 1280]) {
-  test(`at ${width} px, the result card is beside the input card, nothing scrolls sideways, and Compare off and on move neither card sideways`, async ({ page }) => {
+  test(`at ${width} px, the result card is beside the input panel, nothing scrolls sideways, and Compare off and on move neither sideways`, async ({ page }) => {
     await openStandard(page, width);
     expect(await isResultBesideInputs(page)).toBe(true);
     expect(await scrollsSideways(page)).toBe(false);
     const horizontalBoxes = async () => {
-      const { inputs, results } = await boxes(page);
-      return { inputs: { x: inputs.x, width: inputs.width }, results: { x: results.x, width: results.width } };
+      const { inputs, resultsColumn } = await boxes(page);
+      return { inputs: { x: inputs.x, width: inputs.width }, resultsColumn: { x: resultsColumn.x, width: resultsColumn.width } };
     };
     const off = await horizontalBoxes();
 
@@ -295,8 +332,8 @@ test("at 1024 px, the page scrolls sideways and the result and chart column is 3
   expect(await isResultBesideInputs(page)).toBe(true);
   expect(await scrollsSideways(page)).toBe(true);
 
-  const { results, plot } = await boxes(page);
-  expect(results.width).toBe(33.5 * 16);
+  const { resultsColumn, plot } = await boxes(page);
+  expect(resultsColumn.width).toBe(33.5 * 16);
   // The column at its least, so the plot is at 4:3 and the cap, `24rem`, tall.
   expect({ width: plot.width, height: plot.height }).toEqual({ width: 32 * 16, height: 24 * 16 });
 });
@@ -305,8 +342,8 @@ test("at 1024 px, the page scrolls sideways and the result and chart column is 3
 async function chartAreaOf(page: Page) {
   const chart = card(page, "Chart");
   return {
-    plot: await boxOf(chart.locator(".chart-plot")),
-    legend: await boxOf(chart.locator(".chart-legend")),
+    plot: await boundingBoxOf(chart.locator(".chart-plot")),
+    legend: await boundingBoxOf(chart.locator(".chart-legend")),
     content: await contentEdgesOf(chart.locator('[data-slot="card-content"]')),
   };
 }
@@ -338,7 +375,7 @@ for (const address of [PMV_ADDRESS, EXPLORE_ADDRESS]) {
  */
 async function yTicksSideOf(page: Page) {
   const plot = page.locator(".chart-plot");
-  const area = await boxOf(plot.locator(".nsewdrag"));
+  const area = await boundingBoxOf(plot.locator(".nsewdrag"));
   const ticks = await plot.locator("g.ytick text").evaluateAll((texts) =>
     texts.map((text) => {
       const box = text.getBoundingClientRect();
@@ -371,7 +408,7 @@ test("at 375 px, the plot fills the card at 4:3", async ({ page }) => {
   expect(plot.height).toBeCloseTo((plot.width * 3) / 4, 0);
 });
 
-test("at 1440 px with three compared slots, the legend wraps above the plot and every entry is in view", async ({ page }) => {
+test("at 1440 px with three compared slots, the legend wraps above the plot and every item is in view", async ({ page }) => {
   await openStandard(page, 1440);
   const oneLine = (await chartAreaOf(page)).legend.height;
   await page.getByRole("switch", { name: "Compare", exact: true }).click();
@@ -381,11 +418,11 @@ test("at 1440 px with three compared slots, the legend wraps above the plot and 
   const area = await chartAreaOf(page);
   expect(isLegendAbovePlot(area)).toBe(true);
   expect(area.legend.height).toBeGreaterThan(oneLine);
-  const entries = card(page, "Chart").locator(".chart-legend li");
-  expect(await entries.count()).toBeGreaterThan(3);
-  for (const entry of await entries.all()) {
-    await expect(entry).toBeInViewport();
-    const box = await boxOf(entry);
+  const items = card(page, "Chart").locator(".chart-legend li");
+  expect(await items.count()).toBeGreaterThan(3);
+  for (const item of await items.all()) {
+    await expect(item).toBeInViewport();
+    const box = await boundingBoxOf(item);
     expect(box.x).toBeGreaterThanOrEqual(area.legend.x);
     expect(box.x + box.width).toBeLessThanOrEqual(area.legend.x + area.legend.width + 0.5);
   }
@@ -438,11 +475,11 @@ async function downloadedImageOf(page: Page, size: string, titleSummaryAndFooter
   try {
     await view.setContent(`<body style="margin: 0">${svg}</body>`);
     return await view.evaluate(() => {
-      const boxOf = (element: Element): FileBox => {
+      const boundingBoxOf = (element: Element): FileBox => {
         const { top, bottom, left, right } = element.getBoundingClientRect();
         return { top, bottom, left, right };
       };
-      const boxesOf = (selector: string) => [...document.querySelectorAll(selector)].map(boxOf);
+      const boundingBoxesOf = (selector: string) => [...document.querySelectorAll(selector)].map(boundingBoxOf);
       const extentOf = (boxes: FileBox[]) => ({
         top: Math.min(...boxes.map((box) => box.top)),
         bottom: Math.max(...boxes.map((box) => box.bottom)),
@@ -452,17 +489,17 @@ async function downloadedImageOf(page: Page, size: string, titleSummaryAndFooter
       const clip = document.querySelector('clipPath.axesclip[id$="xy"] rect')!;
       const [x, y, width, height] = ["x", "y", "width", "height"].map((name) => Number(clip.getAttribute(name)));
       const plotArea = { top: y, bottom: y + height, left: x, right: x + width };
-      const yTicks = boxesOf("g.ytick text");
-      const xTitle = boxOf(document.querySelector(".g-xtitle text")!);
+      const yTicks = boundingBoxesOf("g.ytick text");
+      const xTitle = boundingBoxOf(document.querySelector(".g-xtitle text")!);
       const chartTop = Math.min(plotArea.top, ...yTicks.map((tick) => tick.top));
-      const textBlocks = boxesOf(".annotation-text")
+      const textBlocks = boundingBoxesOf(".annotation-text")
         .filter((box) => box.bottom <= plotArea.top || box.top >= plotArea.bottom)
         .sort((a, b) => a.top - b.top);
       return {
         height: Number(document.querySelector("svg")!.getAttribute("height")),
         plotArea,
-        legend: boxOf(document.querySelector("g.legend rect.bg")!),
-        legendInk: extentOf(boxesOf("g.legend .legendtext, g.legend .legendsymbols")),
+        legend: boundingBoxOf(document.querySelector("g.legend rect.bg")!),
+        legendInk: extentOf(boundingBoxesOf("g.legend .legendtext, g.legend .legendsymbols")),
         yTicks,
         chart: { ...plotArea, top: chartTop, bottom: xTitle.bottom },
         textBlocks,
@@ -530,7 +567,7 @@ for (const [size, ratio] of [["Single column", 4 / 3], ["Double column", 16 / 9]
 for (const width of [767, 375]) {
   test(`at ${width} px, the input, result and chart cards are one column`, async ({ page }) => {
     await openStandard(page, width);
-    const [inputs, results, chart] = await Promise.all(["Inputs", "Results", "Chart"].map((name) => boxOf(card(page, name))));
+    const [inputs, results, chart] = await Promise.all(["Inputs", "Results", "Chart"].map((name) => boundingBoxOf(card(page, name))));
 
     expect(results.x).toBe(inputs.x);
     expect(chart.x).toBe(inputs.x);
@@ -540,21 +577,22 @@ for (const width of [767, 375]) {
 }
 
 /**
- * The input card has one width at every Compare state and window width, and
+ * The input panel has one width at every Compare state and window width, and
  * Compare moves nothing sideways (ADR-0002 decision 84, rule 12).
  */
-test.describe("the input card's width", () => {
+test.describe("the input panel's width", () => {
   // Playwright's headless Chromium hides its scrollbars, which then take no room (the gutter is still reserved), so
   // without the gutter Compare would move nothing there either; this test launches one that shows them.
-  test("at 1600 × 1000, where Compare makes the page scroll, the input card's left edge and width are the same with Compare off and on", async ({ playwright, baseURL }) => {
+  test("at 1600 × 960, where Compare makes the page scroll, the input panel's left edge and width are the same with Compare off and on", async ({ playwright, baseURL }) => {
     const browser = await playwright.chromium.launch({ ignoreDefaultArgs: ["--hide-scrollbars"] });
     try {
-      const page = await browser.newPage({ baseURL, viewport: { width: 1600, height: 1000 } });
+      // The page is about 930 px tall with Compare off and 990 px with it on, so 960 scrolls only under Compare.
+      const page = await browser.newPage({ baseURL, viewport: { width: 1600, height: 960 } });
       await page.goto(PMV_ADDRESS);
       await expect(page.locator(".chart-plot svg").first()).toBeVisible();
       const scrolls = () => page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight);
       const inputsBox = async () => {
-        const { x, width } = await boxOf(card(page, "Inputs"));
+        const { x, width } = await boundingBoxOf(card(page, "Inputs"));
         return { x, width };
       };
       expect(await scrolls()).toBe(false);
@@ -617,12 +655,12 @@ test.describe("the input card's width", () => {
 async function frame(page: Page) {
   const banner = page.getByRole("banner");
   const footer = page.getByRole("contentinfo");
-  const frameStart = (await boxOf(page.locator('[data-slot="sidebar-content"]').locator(".."))).x;
-  const grid = await boxOf(card(page, "Inputs").locator(".."));
+  const frameStart = (await boundingBoxOf(page.locator('[data-slot="sidebar-content"]').locator(".."))).x;
+  const grid = await boundingBoxOf(card(page, "Inputs").locator(".."));
   const frameEnd = grid.x + grid.width;
-  const fromStart = async (locator: Locator) => (await boxOf(locator)).x - frameStart;
+  const fromStart = async (locator: Locator) => (await boundingBoxOf(locator)).x - frameStart;
   const toEnd = async (locator: Locator) => {
-    const box = await boxOf(locator);
+    const box = await boundingBoxOf(locator);
     return frameEnd - (box.x + box.width);
   };
   return {
@@ -660,7 +698,7 @@ for (const width of [2560, 1920, 1440, 1366, 1280, 1024, 768, 767]) {
     const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
 
     for (const band of [page.getByRole("banner"), page.getByRole("contentinfo")]) {
-      expect(await boxOf(band)).toMatchObject({ x: 0, width: scrollWidth });
+      expect(await boundingBoxOf(band)).toMatchObject({ x: 0, width: scrollWidth });
     }
   });
 }
@@ -675,7 +713,7 @@ test("at 768 px, the sidebar is the column, open, as the header's toggle says, a
 
   await expect(page.getByRole("group", { name: "Settings" })).toBeVisible();
   await expect(sidebarToggle(page)).toHaveAttribute("aria-expanded", "true");
-  expect((await boxOf(page.getByRole("main"))).x).toBeGreaterThan(0);
+  expect((await boundingBoxOf(page.getByRole("main"))).x).toBeGreaterThan(0);
   expect(await isResultBesideInputs(page)).toBe(true);
 });
 
@@ -684,10 +722,10 @@ test("below 768 px, the sidebar is a sheet that the header's toggle opens and Es
   const toggle = sidebarToggle(page);
   const sheet = page.getByRole("dialog", { name: "Sidebar" });
 
-  expect((await boxOf(page.getByRole("main"))).x).toBe(0);
+  expect((await boundingBoxOf(page.getByRole("main"))).x).toBe(0);
   await expect(page.getByRole("group", { name: "Settings" })).toHaveCount(0);
-  expect((await boxOf(toggle)).x).toBeLessThan(
-    (await boxOf(page.getByRole("link", { name: "Center for the Built Environment" }).first())).x,
+  expect((await boundingBoxOf(toggle)).x).toBeLessThan(
+    (await boundingBoxOf(page.getByRole("link", { name: "Center for the Built Environment" }).first())).x,
   );
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
 
@@ -739,8 +777,8 @@ test.describe("the header and the footer on a phone and on a desktop", () => {
   async function footerParts(page: Page) {
     const footer = page.getByRole("contentinfo");
     return {
-      text: await boxOf(footer.locator("p").first().locator("..")),
-      marks: await boxOf(footer.getByRole("link", { name: "Center for the Built Environment" }).locator("..")),
+      text: await boundingBoxOf(footer.locator("p").first().locator("..")),
+      marks: await boundingBoxOf(footer.getByRole("link", { name: "Center for the Built Environment" }).locator("..")),
     };
   }
 
@@ -753,11 +791,11 @@ test.describe("the header and the footer on a phone and on a desktop", () => {
 
       await expect(banner.getByRole("link", { name: DOCUMENTATION, exact: true })).toHaveCount(0);
       for (const item of [sidebarToggle(page), banner.getByRole("link", { name: "Center for the Built Environment" }), title]) {
-        const box = await boxOf(item);
+        const box = await boundingBoxOf(item);
         expect(box.x + box.width).toBeLessThanOrEqual(inWindow);
       }
-      const band = await boxOf(banner);
-      const titleBox = await boxOf(title);
+      const band = await boundingBoxOf(banner);
+      const titleBox = await boundingBoxOf(title);
       const lineHeight = await title.evaluate((heading) => parseFloat(getComputedStyle(heading).lineHeight));
       expect(titleBox.height).toBeLessThanOrEqual(2 * lineHeight);
       expect(titleBox.y).toBeGreaterThanOrEqual(band.y);
@@ -778,7 +816,7 @@ test.describe("the header and the footer on a phone and on a desktop", () => {
       const inWindow = await pageWidth(page);
 
       for (const name of ["Center for the Built Environment", "University of California, Berkeley"]) {
-        const mark = await boxOf(footer.getByRole("link", { name }));
+        const mark = await boundingBoxOf(footer.getByRole("link", { name }));
         expect(mark.x + mark.width).toBeLessThanOrEqual(inWindow);
       }
     });
@@ -793,8 +831,8 @@ test.describe("the header and the footer on a phone and on a desktop", () => {
   for (const width of [768, 1440]) {
     test(`at ${width} px, Documentation ends the header and is not in the sidebar, and the footer is one row`, async ({ page }) => {
       await openStandard(page, width);
-      const banner = await boxOf(page.getByRole("banner"));
-      const documentation = await boxOf(page.getByRole("banner").getByRole("link", { name: DOCUMENTATION, exact: true }));
+      const banner = await boundingBoxOf(page.getByRole("banner"));
+      const documentation = await boundingBoxOf(page.getByRole("banner").getByRole("link", { name: DOCUMENTATION, exact: true }));
 
       // The row's end, inside the gutter.
       expect(documentation.x + documentation.width).toBe(banner.x + banner.width - 0.75 * 16);
@@ -842,14 +880,14 @@ test.describe("links to other sites", () => {
   /** Opens a new tab, its words in a box of a pixel. */
   async function expectNewTab(link: Locator) {
     await expect(link).toHaveAttribute("target", "_blank");
-    const words = await boxOf(link.getByText(NEW_TAB, { exact: true }));
+    const words = await boundingBoxOf(link.getByText(NEW_TAB, { exact: true }));
     expect(words.width).toBeLessThanOrEqual(1);
     expect(words.height).toBeLessThanOrEqual(1);
   }
 
   /** A link whose box hugs its content, as the header's and the footer's do, is as wide as before: no space underlined after it. */
   async function expectNoRoomTaken(link: Locator) {
-    const box = await boxOf(link);
+    const box = await boundingBoxOf(link);
     const content = await visibleEdges(link);
     expect(Math.abs(box.x - content.start)).toBeLessThan(0.5);
     expect(Math.abs(box.x + box.width - content.end)).toBeLessThan(0.5);
@@ -914,7 +952,7 @@ test.describe("links to other sites", () => {
 test.describe("the sidebar's toggle", () => {
   const sidebar = (page: Page) => page.locator('[data-slot="sidebar-content"]');
 
-  test("at 1440 px, the header's first control collapses the sidebar, the input card at the gutter and the result and chart cards wider, and a second click restores the page", async ({ page }) => {
+  test("at 1440 px, the header's first control collapses the sidebar, the input panel at the gutter and the result and chart cards wider, and a second click restores the page", async ({ page }) => {
     await openStandard(page, 1440);
     const toggle = sidebarToggle(page);
     await page.keyboard.press("Tab");
@@ -925,9 +963,9 @@ test.describe("the sidebar's toggle", () => {
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await expect(sidebar(page)).toHaveCount(0);
-    // The toggle stands at the header row's gutter; the input card is now as far in.
-    expect((await boxOf(card(page, "Inputs"))).x).toBe((await boxOf(toggle)).x);
-    expect((await boxOf(card(page, "Results").locator(".."))).width).toBeGreaterThan(before.results.width);
+    // The toggle stands at the header row's gutter; the input panel is now as far in.
+    expect((await boundingBoxOf(card(page, "Inputs"))).x).toBe((await boundingBoxOf(toggle)).x);
+    expect((await boundingBoxOf(card(page, "Results").locator(".."))).width).toBeGreaterThan(before.resultsColumn.width);
 
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
@@ -1041,24 +1079,24 @@ test("at 1440 px, the Standard page's model select lists its models under no hea
 
 /**
  * A slot is named only on the Standard page while Compare is on (ADR-0002
- * decision 50): the result table's Input heading's word and each row's name and
- * swatch, the legend's marker entries by name, and the switch question's slot
- * column come and go together. The Input column itself stays, its heading
+ * decision 50): the result table's Input heading's word and each row's label
+ * and swatch, the legend's marker items by label, and the switch question's
+ * slot column come and go together. The Input column itself stays, its heading
  * named for a screen reader alone (decision 85, as amended 2026-10-28).
  */
-test.describe("the slots' names", () => {
+test.describe("the slots' labels", () => {
   const resultTable = (page: Page) => card(page, "Results").getByRole("table");
   const inputColumn = (page: Page) => resultTable(page).getByRole("columnheader", { name: "Input", exact: true });
-  const markerEntries = (page: Page) => page.locator(".chart-legend li").filter({ has: page.locator(".swatch-marker") });
+  const markerItems = (page: Page) => page.locator(".chart-legend li").filter({ has: page.locator(".swatch-marker") });
 
   async function expectUnnamed(page: Page) {
     await expect(inputColumn(page)).toHaveCount(1);
     // The heading's word stands in a box too small to show it.
-    const word = await boxOf(inputColumn(page).getByText("Input", { exact: true }));
+    const word = await boundingBoxOf(inputColumn(page).getByText("Input", { exact: true }));
     expect(Math.max(word.width, word.height)).toBeLessThanOrEqual(1);
     await expect(resultTable(page).getByRole("row", { name: /^Input 1/ })).toHaveCount(0);
     await expect(resultTable(page).getByRole("cell", { name: /Input/ })).toHaveCount(0);
-    await expect(markerEntries(page)).toHaveText(["Input"]);
+    await expect(markerItems(page)).toHaveText(["Input"]);
   }
 
   test("at 1440 px, appear with Compare and go with it", async ({ page }) => {
@@ -1071,7 +1109,7 @@ test.describe("the slots' names", () => {
     for (const name of ["Input 1", "Input 2"]) {
       await expect(resultTable(page).getByRole("row", { name: new RegExp(`^${name}`) }).locator(".swatch-marker")).toHaveCount(1);
     }
-    await expect(markerEntries(page)).toHaveText(["Input 1", "Input 2"]);
+    await expect(markerItems(page)).toHaveText(["Input 1", "Input 2"]);
 
     await compare.click();
     await expectUnnamed(page);
@@ -1080,7 +1118,7 @@ test.describe("the slots' names", () => {
   test("at 1440 px, are absent on Explore while the session's Compare is on", async ({ page }) => {
     await openStandard(page, 1440);
     await page.getByRole("switch", { name: "Compare", exact: true }).click();
-    await expect(markerEntries(page)).toHaveText(["Input 1", "Input 2"]);
+    await expect(markerItems(page)).toHaveText(["Input 1", "Input 2"]);
 
     await openStandard(page, 1440, EXPLORE_ADDRESS);
     await expectUnnamed(page);
@@ -1088,7 +1126,7 @@ test.describe("the slots' names", () => {
     // The tab kept the session, Compare on, and Standard names its slots again.
     await openStandard(page, 1440);
     await expect(page.getByRole("switch", { name: "Compare", exact: true })).toHaveAttribute("aria-checked", "true");
-    await expect(markerEntries(page)).toHaveText(["Input 1", "Input 2"]);
+    await expect(markerItems(page)).toHaveText(["Input 1", "Input 2"]);
   });
 
   test("at 1440 px, name the switch question's slot column by position while the session holds more than one slot, Compare on or off and slot 2 disabled too, and none while it holds one", async ({ page }) => {
@@ -1139,15 +1177,15 @@ test.describe("the slots' names", () => {
  * A control by the question it answers (ADR-0002 decision 76): a setting on
  * or off at once is a switch, Compare in the Inputs heading row and a model's
  * option under the row it qualifies; every checkbox's and switch's edge holds
- * 3:1 against the paper; the sidebar's settings are headed "Settings".
+ * 3:1 against the background; the sidebar's settings are headed "Settings".
  */
 test.describe("controls by their question", () => {
   const OPTION = "Occupants have local control of the air speed";
   const compareSwitch = (page: Page) => page.getByRole("switch", { name: "Compare", exact: true });
 
   /**
-   * WCAG 2.1's contrast ratio of an element's top border colour against white, the paper, the colour laid on the
-   * paper by its alpha first, so a transparent edge reads as the paper's and not as black.
+   * WCAG 2.1's contrast ratio of an element's top border colour against white, the background, the colour laid on the
+   * background by its alpha first, so a transparent edge reads as the background's and not as black.
    */
   async function edgeContrast(control: Locator) {
     return control.evaluate((element) => {
@@ -1168,9 +1206,9 @@ test.describe("controls by their question", () => {
       const header = card(page, "Inputs").locator('[data-slot="card-header"]');
       const compare = header.getByRole("switch", { name: "Compare", exact: true });
       const label = header.getByText("Compare", { exact: true });
-      const title = await boxOf(header.getByRole("heading", { name: "Inputs", exact: true }));
-      const switchBox = await boxOf(compare);
-      const labelBox = await boxOf(label);
+      const title = await boundingBoxOf(header.getByRole("heading", { name: "Inputs", exact: true }));
+      const switchBox = await boundingBoxOf(compare);
+      const labelBox = await boundingBoxOf(label);
 
       // The label after its switch, at the row's end, the title at its start.
       expect(switchBox.x).toBeGreaterThan(title.x + title.width);
@@ -1179,27 +1217,27 @@ test.describe("controls by their question", () => {
       places.push({ switchBox, labelBox });
 
       for (const row of await page.locator('[data-slot="card-header"]').all()) {
-        expect((await boxOf(row)).height).toBeGreaterThanOrEqual(28);
+        expect((await boundingBoxOf(row)).height).toBeGreaterThanOrEqual(28);
       }
-      const results = await boxOf(card(page, "Results").getByRole("heading", { name: "Results", exact: true }));
+      const results = await boundingBoxOf(card(page, "Results").getByRole("heading", { name: "Results", exact: true }));
       expect(title.y).toBe(results.y);
     }
     expect(places[1]).toEqual(places[0]);
     expect(places[2]).toEqual(places[0]);
   });
 
-  test("at 1440 px, the Inputs card reads Model, a rule, the rows and the Input calculators button, on Standard and Explore", async ({ page }) => {
+  test("at 1440 px, the input panel reads Model, a rule, the rows and the Input calculators button, on Standard and Explore", async ({ page }) => {
     for (const address of [PMV_ADDRESS, EXPLORE_ADDRESS]) {
       await openStandard(page, 1440, address);
       const inputs = card(page, "Inputs").locator('[data-slot="card-content"]');
-      const model = await boxOf(inputs.getByRole("button", { name: "Model", exact: true }));
-      const rule = await boxOf(inputs.locator('[data-slot="separator"]'));
-      const firstRow = await boxOf(inputs.getByRole("spinbutton").first());
-      const entry = await boxOf(inputs.getByRole("button", { name: /^Input calculators/ }));
+      const model = await boundingBoxOf(inputs.getByRole("button", { name: "Model", exact: true }));
+      const rule = await boundingBoxOf(inputs.locator('[data-slot="separator"]'));
+      const firstRow = await boundingBoxOf(inputs.getByRole("spinbutton").first());
+      const calculatorsButton = await boundingBoxOf(inputs.getByRole("button", { name: /^Input calculators/ }));
 
       expect(rule.y).toBeGreaterThan(model.y + model.height);
       expect(firstRow.y).toBeGreaterThan(rule.y);
-      expect(entry.y).toBeGreaterThan(firstRow.y);
+      expect(calculatorsButton.y).toBeGreaterThan(firstRow.y);
     }
   });
 
@@ -1238,11 +1276,11 @@ test.describe("controls by their question", () => {
       const header = chart.locator('[data-slot="card-header"]');
       const chartType = header.getByRole("button", { name: "Chart type", exact: true });
       await expect(chartType).toHaveText("Psychrometric");
-      const headerBox = await boxOf(header);
+      const headerBox = await boundingBoxOf(header);
       const row = [
-        await boxOf(header.getByRole("heading", { name: "Chart", exact: true })),
-        await boxOf(chartType),
-        ...(await Promise.all(actions.map((name) => boxOf(header.getByRole("button", { name, exact: true }))))),
+        await boundingBoxOf(header.getByRole("heading", { name: "Chart", exact: true })),
+        await boundingBoxOf(chartType),
+        ...(await Promise.all(actions.map((name) => boundingBoxOf(header.getByRole("button", { name, exact: true }))))),
       ];
 
       // One line, left to right, each control after the last; the last at the row's content end.
@@ -1252,18 +1290,18 @@ test.describe("controls by their question", () => {
       }
       const last = row[row.length - 1];
       expect(last.x + last.width).toBeCloseTo((await contentEdgesOf(header)).right, 0);
-      expect((await boxOf(card(page, "Inputs").getByRole("button", { name: "Model", exact: true }))).height).toBeGreaterThan(row[1].height);
+      expect((await boundingBoxOf(card(page, "Inputs").getByRole("button", { name: "Model", exact: true }))).height).toBeGreaterThan(row[1].height);
 
       // The psychrometric chart has no view row: the chart's area is the card's content's first line.
       await expect(chart.getByLabel("X axis")).toHaveCount(0);
       const content = chart.locator('[data-slot="card-content"]');
-      expect((await boxOf(chart.locator(".chart-area"))).y).toBeCloseTo((await boxOf(content)).y, 0);
+      expect((await boundingBoxOf(chart.locator(".chart-area"))).y).toBeCloseTo((await boundingBoxOf(content)).y, 0);
 
       await chooseChartType(page, "Dynamic");
       await expect(chartType).toHaveText("Dynamic");
-      const xAxis = await boxOf(chart.getByLabel("X axis"));
-      const yAxis = await boxOf(chart.getByLabel("Y axis"));
-      const plot = await boxOf(chart.locator(".chart-plot"));
+      const xAxis = await boundingBoxOf(chart.getByLabel("X axis"));
+      const yAxis = await boundingBoxOf(chart.getByLabel("Y axis"));
+      const plot = await boundingBoxOf(chart.locator(".chart-plot"));
       for (const axis of [xAxis, yAxis]) {
         expect(axis.y).toBeGreaterThanOrEqual(headerBox.y + headerBox.height);
         expect(axis.y + axis.height).toBeLessThanOrEqual(plot.y);
@@ -1298,7 +1336,7 @@ test.describe("controls by their question", () => {
         const controls = [header.getByRole("heading"), ...(await header.getByRole("button").all())];
         expect(controls.length).toBe(address === EXPLORE_ADDRESS ? 4 : 3);
         for (const control of controls) {
-          const box = await boxOf(control);
+          const box = await boundingBoxOf(control);
           expect(box.x).toBeGreaterThanOrEqual(left);
           expect(box.x + box.width).toBeLessThanOrEqual(right);
         }
@@ -1324,9 +1362,9 @@ test.describe("controls by their question", () => {
 
     for (const mode of ["Air speed", "Relative air speed"]) {
       await expect(page.getByRole("spinbutton", { name: new RegExp(`^${mode} `) })).toBeVisible();
-      const row = await boxOf(airSpeedRow);
+      const row = await boundingBoxOf(airSpeedRow);
       // The option's line: its switch and its label.
-      const line = await boxOf(option.locator(".."));
+      const line = await boundingBoxOf(option.locator(".."));
       // The field gap, `--space-field`.
       expect(line.y - (row.y + row.height)).toBeCloseTo(4, 0);
       await expect(page.getByText(OPTION, { exact: true })).toBeVisible();
@@ -1352,7 +1390,7 @@ test.describe("controls by their question", () => {
     await expect(page.getByText(OPTION, { exact: true })).toHaveCount(1);
   });
 
-  test("at 1440 px, an off switch's and an unchecked checkbox's edge is 3:1 against the paper, a focused switch's and a checked checkbox's the primitive's own", async ({ page }) => {
+  test("at 1440 px, an off switch's and an unchecked checkbox's edge is 3:1 against the background, a focused switch's and a checked checkbox's the primitive's own", async ({ page }) => {
     await openStandard(page, 1440);
     expect(await edgeContrast(compareSwitch(page))).toBeGreaterThanOrEqual(3);
     expect(await edgeContrast(page.getByRole("switch", { name: OPTION, exact: true }))).toBeGreaterThanOrEqual(3);
@@ -1389,22 +1427,22 @@ test.describe("controls by their question", () => {
 
   test("at 1440 px, the sidebar's settings are headed Settings, ruled off from Share and Reset", async ({ page }) => {
     await openStandard(page, 1440);
-    const settings = page.getByRole("group", { name: "Settings" });
-    const pressure = await boxOf(settings.getByRole("spinbutton", { name: /^Atmospheric pressure/ }));
-    const rule = await boxOf(settings.locator('[data-slot="separator"]'));
-    const share = await boxOf(settings.getByRole("button", { name: "Share" }));
+    const sessionControls = page.getByRole("group", { name: "Settings" });
+    const atmosphericPressure = await boundingBoxOf(sessionControls.getByRole("spinbutton", { name: /^Atmospheric pressure/ }));
+    const rule = await boundingBoxOf(sessionControls.locator('[data-slot="separator"]'));
+    const share = await boundingBoxOf(sessionControls.getByRole("button", { name: "Share" }));
 
-    expect(rule.y).toBeGreaterThan(pressure.y + pressure.height);
+    expect(rule.y).toBeGreaterThan(atmosphericPressure.y + atmosphericPressure.height);
     expect(share.y).toBeGreaterThan(rule.y);
   });
 
   test("the sidebar's Share puts the link to the page on the clipboard and says Link copied", async ({ page }) => {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     await openStandard(page, 1440);
-    const settings = page.getByRole("group", { name: "Settings" });
-    await settings.getByRole("button", { name: "Share" }).click();
+    const sessionControls = page.getByRole("group", { name: "Settings" });
+    await sessionControls.getByRole("button", { name: "Share" }).click();
 
-    await expect(settings.getByRole("button", { name: "Link copied" })).toBeVisible();
+    await expect(sessionControls.getByRole("button", { name: "Link copied" })).toBeVisible();
     const prefix = `${new URL(page.url()).origin}${PMV_ADDRESS}?share=v1.`;
     const link = await page.evaluate(() => navigator.clipboard.readText());
     expect(link.slice(0, prefix.length)).toBe(prefix);
@@ -1412,15 +1450,15 @@ test.describe("controls by their question", () => {
 
   test("at 1440 px, the sidebar's line above Settings starts and ends where the line inside Settings does", async ({ page }) => {
     await openStandard(page, 1440);
-    const outer = await boxOf(page.locator('[data-slot="sidebar-separator"]'));
-    const inner = await boxOf(page.getByRole("group", { name: "Settings" }).locator('[data-slot="separator"]'));
+    const outer = await boundingBoxOf(page.locator('[data-slot="sidebar-separator"]'));
+    const inner = await boundingBoxOf(page.getByRole("group", { name: "Settings" }).locator('[data-slot="separator"]'));
 
     expect(Math.abs(outer.x - inner.x)).toBeLessThanOrEqual(1);
     expect(Math.abs(outer.x + outer.width - (inner.x + inner.width))).toBeLessThanOrEqual(1);
   });
 });
 
-test("a row's Presets is the word at the box's end, and its list's values end at one x, as far from the right edge as the names from the left", async ({ page }) => {
+test("a row's Presets is the word at the box's end, and its list's values end at one x, as far from the right edge as the labels from the left", async ({ page }) => {
   await openStandard(page, 1440);
   const box = page
     .locator('[data-slot="input-group"]')
@@ -1437,7 +1475,7 @@ test("a row's Presets is the word at the box's end, and its list's values end at
   await list.evaluate((element) =>
     Promise.all(element.closest('[data-slot="popover-content"]')!.getAnimations().map((animation) => animation.finished)),
   );
-  // Each item's name and value as far from its two edges, read off their text, not their boxes: a box may run past
+  // Each item's label and value as far from its two edges, read off their text, not their boxes: a box may run past
   // its text.
   const insets = await list.getByRole("option").evaluateAll((items) =>
     items.map((item) => {
@@ -1447,8 +1485,8 @@ test("a row's Presets is the word at the box's end, and its list's values end at
         return text.getBoundingClientRect();
       };
       const edges = item.getBoundingClientRect();
-      const [name, value] = item.querySelectorAll("span");
-      return [Math.round(textOf(name).left - edges.left), Math.round(edges.right - textOf(value).right)];
+      const [label, value] = item.querySelectorAll("span");
+      return [Math.round(textOf(label).left - edges.left), Math.round(edges.right - textOf(value).right)];
     }),
   );
   expect(insets.length).toBeGreaterThan(1);
@@ -1464,28 +1502,28 @@ test.describe("the sidebar's headings and the one radius", () => {
     ["Standard", PMV_ADDRESS],
     ["Explore", EXPLORE_ADDRESS],
   ]) {
-    test(`at 1440 px on ${name}, the sidebar's groups are level-two headings Standard, Tools and Settings, 14 px at 600 in ink, and the Units and Atmospheric pressure labels share one weight`, async ({ page }) => {
+    test(`at 1440 px on ${name}, the sidebar's groups are level-two headings Standard, Tools and Settings, 14 px at 600 in the foreground colour, and the Units and Atmospheric pressure labels share one weight`, async ({ page }) => {
       await openStandard(page, 1440, address);
       const sidebar = page.locator('[data-slot="sidebar-content"]');
       const headings = sidebar.getByRole("heading", { level: 2 });
 
       await expect(headings).toHaveText(["Standard", "Tools", "Settings"]);
-      const ink = await page.evaluate(() => getComputedStyle(document.body).color);
+      const foreground = await page.evaluate(() => getComputedStyle(document.body).color);
       for (const heading of await headings.all()) {
         expect(await heading.evaluate((element) => {
           const { fontSize, fontWeight, color } = getComputedStyle(element);
           return { fontSize, fontWeight, color };
-        })).toEqual({ fontSize: "14px", fontWeight: "600", color: ink });
+        })).toEqual({ fontSize: "14px", fontWeight: "600", color: foreground });
       }
       // The groups keep their names.
       for (const group of ["Standard", "Tools", "Settings"]) {
         await expect(sidebar.getByRole("group", { name: group, exact: true })).toHaveCount(1);
       }
 
-      const settings = sidebar.getByRole("group", { name: "Settings" });
+      const sessionControls = sidebar.getByRole("group", { name: "Settings" });
       const weightOf = (locator: Locator) => locator.evaluate((element) => getComputedStyle(element).fontWeight);
-      expect(await weightOf(settings.getByText("Units", { exact: true }))).toBe(
-        await weightOf(settings.locator('[data-slot="field-label"]').filter({ hasText: /^Atmospheric pressure/ })),
+      expect(await weightOf(sessionControls.getByText("Units", { exact: true }))).toBe(
+        await weightOf(sessionControls.locator('[data-slot="field-label"]').filter({ hasText: /^Atmospheric pressure/ })),
       );
     });
   }
@@ -1496,8 +1534,8 @@ test.describe("the sidebar's headings and the one radius", () => {
     const cardRadius = await radiusOf(card(page, "Inputs"));
     expect(cardRadius).toBe("6px");
 
-    const settings = page.getByRole("group", { name: "Settings" });
-    await settings.getByRole("button", { name: "Reset" }).click();
+    const sessionControls = page.getByRole("group", { name: "Settings" });
+    await sessionControls.getByRole("button", { name: "Reset" }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
     expect(await radiusOf(dialog)).toBe(cardRadius);
@@ -1508,7 +1546,7 @@ test.describe("the sidebar's headings and the one radius", () => {
     await page.evaluate(() => {
       navigator.clipboard.writeText = () => Promise.reject(new Error("Refused for the test"));
     });
-    await settings.getByRole("button", { name: "Share" }).click();
+    await sessionControls.getByRole("button", { name: "Share" }).click();
     const toast = page.getByRole("region", { name: /^Notifications/ }).getByRole("listitem");
     await expect(toast).toHaveCount(1);
     expect(await radiusOf(toast)).toBe(cardRadius);
@@ -1523,13 +1561,13 @@ test.describe("the sidebar's headings and the one radius", () => {
 
 /**
  * The header's mark is a link to the default model's address, and a plain
- * click on it is an in-app switch as a Standard link's is (ADR-0002 decision
+ * click on it is in-app navigation as a Standard link's is (ADR-0002 decision
  * 73, rule 5): the values travel, and a value the default model cannot judge
  * is asked about.
  */
 test.describe("the header's mark", () => {
   const mark = (page: Page) => page.getByRole("banner").getByRole("link", { name: "Center for the Built Environment" });
-  const dryBulb = (page: Page) => page.getByRole("spinbutton", { name: /^Dry-bulb air temperature/ });
+  const dryBulbTemperature = (page: Page) => page.getByRole("spinbutton", { name: /^Dry-bulb air temperature/ });
   const metabolicRate = (page: Page) => page.getByRole("spinbutton", { name: /^Metabolic rate/ });
 
   test("links to the default model's address, and the footer's marks to their institutions", async ({ page }) => {
@@ -1549,12 +1587,12 @@ test.describe("the header's mark", () => {
 
   test("on PMV (ISO 7730), a click switches to the default model with a value inside both models' bounds kept", async ({ page }) => {
     await openStandard(page, 1440, ISO_ADDRESS);
-    await dryBulb(page).fill("26");
+    await dryBulbTemperature(page).fill("26");
 
     await mark(page).click();
 
     await expect(page).toHaveURL((url) => url.pathname === DEFAULT_ADDRESS);
-    await expect(dryBulb(page)).toHaveValue("26");
+    await expect(dryBulbTemperature(page)).toHaveValue("26");
   });
 
   test("on PMV (ISO 7730), with a metabolic rate below the default model's bound, a click asks, and No leaves everything as it was", async ({ page }) => {
@@ -1659,7 +1697,7 @@ function markerPoints(page: Page): Promise<{ x: number; y: number }[]> {
 }
 
 /**
- * A slot first enabled starts from slot 1's values, each moved up by a share of its axis range, so its marker and its
+ * A slot first enabled starts from slot 1's values, each moved up by a part of its axis range, so its marker and its
  * Comfort zone do not lie on slot 1's, and a value the move carries past its bound is cut to it with no toast
  * (GLOSSARY.md, **Slot offset**; ADR-0002 decision 89's revision of rule 8).
  */
@@ -1750,18 +1788,18 @@ test.describe("the result table's columns", () => {
           await page.getByRole("switch", { name: "Compare", exact: true }).click();
           await expect(card(page, "Results").getByRole("row", { name: /Input 2/ })).toBeVisible();
         }
-        const [input, ...values] = await Promise.all((await headings(page).all()).map(async (heading) => (await boxOf(heading)).width));
+        const [input, ...values] = await Promise.all((await headings(page).all()).map(async (heading) => (await boundingBoxOf(heading)).width));
         const widest = Math.max(...values);
         const narrowest = Math.min(...values);
         expect(input, `Compare ${compare}`).toBeLessThan(narrowest);
         expect(widest - narrowest, `Compare ${compare}: ${values.join(", ")}`).toBeLessThanOrEqual(1);
-        expect((await boxOf(headings(page).first())).height, `Compare ${compare}`).toBeLessThan(40);
+        expect((await boundingBoxOf(headings(page).first())).height, `Compare ${compare}`).toBeLessThan(40);
       }
     });
   }
 });
 
-/** The Results card holds results only: no line under the table names the standard (ADR-0002 decision 86, rule 4). */
+/** The Results card holds the result table only: no line under the table names the standard (ADR-0002 decision 86, rule 4). */
 test("at 1440 px, PMV (ASHRAE 55)'s Results card names no standard and ends at the table's last row, Compare off and on", async ({ page }) => {
   await openStandard(page, 1440, PMV_ADDRESS);
   const results = card(page, "Results");
@@ -1771,18 +1809,18 @@ test("at 1440 px, PMV (ASHRAE 55)'s Results card names no standard and ends at t
       await expect(results.getByRole("row", { name: /Input 2/ })).toBeVisible();
     }
     await expect(results, `Compare ${compare}`).not.toContainText("ASHRAE 55");
-    const content = await boxOf(results.locator('[data-slot="card-content"]'));
-    const lastRow = await boxOf(results.getByRole("row").last());
+    const content = await boundingBoxOf(results.locator('[data-slot="card-content"]'));
+    const lastRow = await boundingBoxOf(results.getByRole("row").last());
     expect(content.y + content.height - (lastRow.y + lastRow.height), `Compare ${compare}`).toBeLessThanOrEqual(1);
   }
 });
 
 /**
- * A run that broke a limit is marked on its result row (ADR-0002 decision 85, rule 5), and the Results card has no
+ * A run that broke a bound is marked on its result row (ADR-0002 decision 85, rule 5), and the Results card has no
  * alert. Every row keeps the icon's room, so no value column moves when it appears (decision 87, rule 9).
  */
-test.describe("the result row's limits icon", () => {
-  test("at 1440 px, PMV (ASHRAE 55) at 0.9 m/s without local control puts the icon in the row's Input cell and in no value cell, the table straight under the Results heading and the compliance dash with no icon of its own, and back within the limit leaves no image in the Input cell, on Standard and Explore", async ({ page }) => {
+test.describe("the result row's bounds icon", () => {
+  test("at 1440 px, PMV (ASHRAE 55) at 0.9 m/s without local control puts the icon in the row's Input cell and in no value cell, the table straight under the Results heading and the compliance dash with no icon of its own, and back within the bound leaves no image in the Input cell, on Standard and Explore", async ({ page }) => {
     for (const address of [PMV_ADDRESS, EXPLORE_ADDRESS]) {
       await openStandard(page, 1440, address);
       const results = card(page, "Results");
@@ -1791,10 +1829,10 @@ test.describe("the result row's limits icon", () => {
       const cells = table.getByRole("row").nth(1).getByRole("cell");
       const inputCell = cells.first();
       const headingBottom = async () => {
-        const heading = await boxOf(results.getByRole("heading", { name: "Results", exact: true }));
+        const heading = await boundingBoxOf(results.getByRole("heading", { name: "Results", exact: true }));
         return heading.y + heading.height;
       };
-      const gap = (await boxOf(table)).y - (await headingBottom());
+      const gap = (await boundingBoxOf(table)).y - (await headingBottom());
       await expect(table.getByRole("cell", { name: "Yes", exact: true }), address).toHaveCount(1);
       await expect(inputHeading, address).toHaveCount(1);
       await expect(inputCell, address).toHaveText("");
@@ -1812,14 +1850,14 @@ test.describe("the result row's limits icon", () => {
       await expect(table.locator("svg"), address).toHaveCount(1);
       // Before the band's badge, and on the badge's line.
       await expect(cells.nth(1), address).toHaveText("Slightly Cool");
-      const box = await boxOf(icon);
-      const label = await boxOf(cells.nth(1).locator('[data-slot="badge"]'));
+      const box = await boundingBoxOf(icon);
+      const label = await boundingBoxOf(cells.nth(1).locator('[data-slot="badge"]'));
       expect(box.x + box.width, address).toBeLessThanOrEqual(label.x);
       expect(box.y + box.height / 2, address).toBeGreaterThan(label.y);
       expect(box.y + box.height / 2, address).toBeLessThan(label.y + label.height);
       await expect(results.getByRole("alert"), address).toHaveCount(0);
       await expect(results.getByRole("status"), address).toHaveCount(0);
-      expect((await boxOf(table)).y - (await headingBottom()), address).toBe(gap);
+      expect((await boundingBoxOf(table)).y - (await headingBottom()), address).toBe(gap);
       const dash = table.getByRole("cell", { name: "—", exact: true });
       await expect(dash, address).toHaveCount(1);
       await expect(dash.locator("svg"), address).toHaveCount(0);
@@ -1844,7 +1882,7 @@ test.describe("the result row's limits icon", () => {
       const results = card(page, "Results");
       const icon = results.getByRole("img", { name: "Calculated, but outside these limits:" });
       const valueEdges = async () =>
-        Promise.all((await results.getByRole("columnheader").all()).slice(1).map(async (heading) => (await boxOf(heading)).x));
+        Promise.all((await results.getByRole("columnheader").all()).slice(1).map(async (heading) => (await boundingBoxOf(heading)).x));
       for (const compare of compares) {
         if (compare === "on") {
           await page.getByRole("switch", { name: "Compare", exact: true }).click();
@@ -1879,7 +1917,7 @@ test.describe("the result row's limits icon", () => {
 
     const icon = second.getByRole("img", { name: "Calculated, but outside these limits:" });
     await expect(icon).toBeVisible();
-    expect((await boxOf(icon)).x).toBeLessThan((await boxOf(second.locator(".swatch-marker"))).x);
+    expect((await boundingBoxOf(icon)).x).toBeLessThan((await boundingBoxOf(second.locator(".swatch-marker"))).x);
     await expect(second.getByRole("cell", { name: "—", exact: true })).toHaveCount(1);
     // Slot 1's icon keeps its room but is no image to a screen reader (decision 87, rule 9).
     await expect(first.getByRole("img")).toHaveCount(0);
@@ -1899,7 +1937,7 @@ test.describe("the empty-zone line", () => {
     await page.getByRole("spinbutton", { name: /^Air speed/ }).fill("0.9");
 
     await expect(line).toBeVisible();
-    const plot = await boxOf(chart.locator(".chart-plot"));
-    expect((await boxOf(line)).y).toBeGreaterThanOrEqual(plot.y + plot.height);
+    const plot = await boundingBoxOf(chart.locator(".chart-plot"));
+    expect((await boundingBoxOf(line)).y).toBeGreaterThanOrEqual(plot.y + plot.height);
   });
 });

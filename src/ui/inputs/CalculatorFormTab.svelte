@@ -4,9 +4,9 @@
   the posture, where it asks one, and each quantity it asks as the panel's
   row, one box, in the session's unit system, held to the calculator's bound
   and marked out of range outside it, the cells in two columns, a row's boxes
-  level. These settings are the one region that scrolls. The dialog's dock and
-  footer follow, handed the result, which is none while a box is out of range.
-  Restore defaults, at the title's right, is enabled once the settings differ
+  level. These inputs are the one region that scrolls. The dialog's dock and
+  footer follow, handed the outputs, none while a box is out of range.
+  Restore defaults, at the title's right, is enabled once the inputs differ
   from where they start; it is drawn last, so the keyboard reaches it after
   Apply and before the dialog's Close.
 -->
@@ -25,7 +25,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { calculatorBound, outOfRangeCalculatorInputs } from "$lib/core/applicability";
-  import { startingInputs, type CalculatorResult, type PostureOption } from "$lib/core/calculators";
+  import { defaultInputs, type CalculatorOutputs, type PostureChoice } from "$lib/core/calculators";
   import type { Quantity } from "$lib/core/quantities";
   import { requireValue } from "$lib/core/slot";
   import type { UnitSystem } from "$lib/core/unitSystem";
@@ -35,41 +35,41 @@
   import { Button } from "$lib/ui/primitives/button";
   import * as Field from "$lib/ui/primitives/field";
   import ChoiceSelect from "./ChoiceSelect.svelte";
-  import type { ResultLine } from "./InputCalculators.svelte";
+  import type { DockLine } from "./InputCalculators.svelte";
   import QuantityInput from "./QuantityInput.svelte";
 
   interface Props {
     calculator: FormCalculator;
     unitSystem: UnitSystem;
-    /** The dialog's dock and footer, for the result, none while a box is out of range, and its lines. */
-    dock: Snippet<[result: CalculatorResult | null, lines: readonly ResultLine[]]>;
+    /** The dialog's dock and footer, for the outputs, none while a box is out of range, and its lines. */
+    dock: Snippet<[outputs: CalculatorOutputs | null, lines: readonly DockLine[]]>;
   }
 
   let { calculator, unitSystem, dock }: Props = $props();
 
   const id = $props.id();
 
-  const starting = $derived(startingInputs(calculator));
-  const inputs = $derived(keptInputs.get(calculator) ?? starting);
+  const defaults = $derived(defaultInputs(calculator));
+  const inputs = $derived(keptInputs.get(calculator) ?? defaults);
   const outOfRange = $derived(outOfRangeCalculatorInputs(calculator, inputs));
-  const result = $derived(outOfRange.length > 0 ? null : calculator.compute(inputs));
+  const outputs = $derived(outOfRange.length > 0 ? null : calculator.compute(inputs));
   const lines = $derived(
-    calculator.outputs.map((quantity) => ({ quantity, name: quantity.label, value: result?.outputs.get(quantity) ?? Number.NaN })),
+    calculator.outputs.map((quantity) => ({ quantity, label: quantity.label, value: outputs?.values.get(quantity) ?? Number.NaN })),
   );
   const changed = $derived(
-    inputs.posture !== starting.posture || [...inputs.values].some(([quantity, value]) => starting.values.get(quantity) !== value),
+    inputs.posture !== defaults.posture || [...inputs.values].some(([quantity, value]) => defaults.values.get(quantity) !== value),
   );
 
   function setValue(quantity: Quantity, si: number) {
     keptInputs.set(calculator, { ...inputs, values: new Map([...inputs.values, [quantity, si]]) });
   }
 
-  function setPosture(posture: PostureOption["value"]) {
+  function setPosture(posture: PostureChoice["value"]) {
     keptInputs.set(calculator, { ...inputs, posture });
   }
 </script>
 
-<div class="calculator-settings">
+<div class="calculator-inputs">
   <Stack gap="4">
     <p class="caption">{calculator.method}</p>
     <!-- Every cell ends with its box and a caption line, so a row's boxes stand level under labels of one or two lines. -->
@@ -82,7 +82,7 @@
           <QuantityInput
             {quantity}
             {unitSystem}
-            entries={[
+            boxes={[
               {
                 value: requireValue(inputs.values, quantity),
                 bound: calculatorBound(calculator, quantity),
@@ -96,13 +96,13 @@
     </div>
   </Stack>
 </div>
-{@render dock(result, lines)}
+{@render dock(outputs, lines)}
 <Button variant="ghost" size="sm" class="dialog-title-action" disabled={!changed} onclick={() => keptInputs.delete(calculator)}>
   {copy.restoreDefaults}
 </Button>
 
 <!-- The posture chosen by its position among the library's postures, in the Model row's select, a column wide. -->
-{#snippet postureSelect(postures: readonly PostureOption[])}
+{#snippet postureSelect(postures: readonly PostureChoice[])}
   {@const chosen = postures.find((posture) => posture.value === inputs.posture) ?? postures[0]}
   <Field.Field>
     <Field.Label for="{id}-posture">{copy.posture}</Field.Label>

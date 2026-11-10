@@ -3,7 +3,7 @@
  * holds values is rehearsed, the question lists every held slot's rows,
  * grouped by slot in slot order, and one answer lands the model with every
  * slot or leaves them all. Asserted at the seam the other session tests use —
- * a session in, its state and its outputs out, with no component and no
+ * a session in, its state and its computation out, with no component and no
  * router — and nothing flushes, for the reason `compute.svelte.test.ts` gives.
  *
  * A slot's expected rows and landed values are those of a session holding that
@@ -12,14 +12,14 @@
 import { describe, expect, it } from "vitest";
 import { isAtmosphericPressureOutOfRange } from "$lib/core/applicability";
 import { humidityMode, temperatureMode } from "$lib/core/entryModes";
-import { inputsOf, type RegisteredModel } from "$lib/core/modelDeclaration";
+import { declaredQuantitiesOf, type ModelDeclaration } from "$lib/core/modelDeclaration";
 import { page } from "$lib/core/page";
 import { quantities, type Quantity } from "$lib/core/quantities";
 import { adaptiveAshrae } from "$lib/models/adaptiveAshrae";
 import { heatIndexRothfusz } from "$lib/models/heatIndexRothfusz";
 import { pmvPpdAshrae } from "$lib/models/pmvPpdAshrae";
 import { pmvPpdIso } from "$lib/models/pmvPpdIso";
-import { Outputs } from "./compute.svelte";
+import { Computation } from "./compute.svelte";
 import { Session, slotPositions, type SlotPosition } from "./session.svelte";
 import {
   differenceFromSlot1,
@@ -42,7 +42,7 @@ const q = quantities;
 const coolerAndTakesWork = {
   ...withBounds({ tdb: { min: 10, max: 20 }, met: { min: 1.1 } }),
   inputs: [...pmvPpdIso.inputs, { quantity: q.wme, value: 0.4 }],
-} satisfies RegisteredModel;
+} satisfies ModelDeclaration;
 
 /** A dry-bulb temperature, [°C], and a metabolic rate, [met], {@link coolerAndTakesWork} accepts. */
 const accepted = new Map<Quantity, number>([
@@ -70,9 +70,9 @@ function entriesBreaking(breaking: readonly SlotPosition[]): ReadonlyMap<Quantit
  */
 function comparingSlotsEntered(entries: readonly ReadonlyMap<Quantity, number>[]): Session {
   const session = sessionComparingThreeSlots(pmvPpdIso);
-  const starting = [...session.slots[0].values];
+  const defaults = [...session.slots[0].values];
   slotPositions.forEach((position) => {
-    for (const [quantity, value] of [...starting, ...entries[position]]) {
+    for (const [quantity, value] of [...defaults, ...entries[position]]) {
       heldSlot(session, position).setEntered(quantity, value);
     }
   });
@@ -235,18 +235,18 @@ describe("Session.requestModel while Compare is on", () => {
 
   it("leaves every compared slot's outputs the current model's while the question is pending", () => {
     const session = comparingSlotsEntered(entriesBreaking([0, 2]));
-    const outputs = new Outputs(session);
-    const before = outputs.slots.map((slot) => slot.result);
+    const computation = new Computation(session);
+    const before = computation.slots.map((slot) => slot.outputs);
 
     session.requestModel(coolerAndTakesWork);
 
-    outputs.slots.forEach((slot, index) => expect(slot.result).toBe(before[index]));
+    computation.slots.forEach((slot, index) => expect(slot.outputs).toBe(before[index]));
     expect(session.comparedPositions.map((position) => outOfRangeQuantitiesAt(session, position))).toEqual([[], [], []]);
   });
 });
 
 describe("the model switch while Compare is on, by setting the model or there and back", () => {
-  it("lands the model set with every slot converted and seeded, asking nothing and adjusting nothing", () => {
+  it("lands the model set with every slot converted and seeded, asking nothing and cutting nothing", () => {
     const entries = entriesBreaking([0, 1, 2]);
     const session = comparingSlotsEntered(entries);
     session.setTemperatureMode(temperatureMode.operative);
@@ -278,7 +278,7 @@ describe("the model switch while Compare is on, by setting the model or there an
     expect(session.model).toBe(pmvPpdIso);
     slotPositions.forEach((position) => {
       const held = heldSlot(session, position);
-      for (const { quantity } of inputsOf(pmvPpdIso)) {
+      for (const { quantity } of declaredQuantitiesOf(pmvPpdIso)) {
         if (quantity !== q.rh) {
           expect(held.values.get(quantity)).toBe(before[position].values.get(quantity));
         }

@@ -17,7 +17,7 @@ const LIBRARY_NAME = "jsthermalcomfort";
 const CHANGE = "Change";
 
 /**
- * UI copy, English only in v1 (ADR §2). Quantity names never appear here:
+ * UI copy, English only in v1 (ADR §2). Quantity labels never appear here:
  * they come from `Quantity.label`. The one exception is `zoneLegend`'s |PMV|
  * (ADR-0002 decision 44).
  */
@@ -49,18 +49,18 @@ export const copy = {
   cbeAddress: "https://cbe.berkeley.edu/",
   berkeleyName: "University of California, Berkeley",
   berkeleyAddress: "https://www.berkeley.edu/",
-  // The sidebar's group labels after Standard, which is the Standard page's title (decision 73, rule 6): the session
+  // The sidebar's group labels after Standard, which is the Standard page's label (decision 73, rule 6): the session
   // controls' group reads "Settings", the users' word, not the project's (rule 6 as revised 2026-10-15).
   tools: "Tools",
-  settings: "Settings",
+  sessionControls: "Settings",
   inputs: "Inputs",
   results: "Results",
   model: "Model",
   units: "Units",
   // The Explore model select's heading over the models with no standard (ADR-0002 decision 74, rule 4).
   otherModels: "Other",
-  // The entry groups' names, each read into its menu button's name (ADR-0002 decision 72, rule 1, as decision 87
-  // rule 7 revised it).
+  // The entry groups' labels, each read into its menu button's accessible name (ADR-0002 decision 72, rule 1, as
+  // decision 87 rule 7 revised it).
   temperatureGroup: "Temperature",
   humidityGroup: "Humidity",
   airSpeedGroup: "Air speed",
@@ -68,17 +68,17 @@ export const copy = {
   // An entry group's menu button: "Change" on every group, named "Change air speed" so the visible word is in the name
   // (WCAG 2.5.3).
   entryGroupButton: CHANGE,
-  entryGroupButtonName: (groupName: string) => `${CHANGE} ${groupName.toLowerCase()}`,
+  entryGroupButtonName: (groupLabel: string) => `${CHANGE} ${groupLabel.toLowerCase()}`,
   // An entry mode in its group's menu, by the quantities it enters: "Dry-bulb air temperature and mean radiant temperature".
   entryModeChoice: (labels: readonly string[]) =>
     labels.map((label, index) => (index === 0 ? label : label.charAt(0).toLowerCase() + label.slice(1))).join(" and "),
   // The line under an entry mode in its menu: what is held or what follows when another input changes, never
-  // the mode's name again (decision 72, rule 3).
+  // the mode's label again (decision 72, rule 3).
   entryModeDescriptions: {
     separate: "The operative temperature follows the air speed.",
     operative: "Held as the air speed changes; used as both the air and the mean radiant temperature.",
-    "relative-humidity": "Held as the temperature or the pressure changes; the humidity ratio follows.",
-    "humidity-ratio": "Held as the temperature or the pressure changes; the relative humidity follows.",
+    "relative-humidity": "Held as the temperature or the atmospheric pressure changes; the humidity ratio follows.",
+    "humidity-ratio": "Held as the temperature or the atmospheric pressure changes; the relative humidity follows.",
     "dew-point": "Held as the temperature changes; the relative humidity follows.",
     "wet-bulb": "Held as the temperature changes; the relative humidity follows.",
     "vapour-pressure": "Held as the temperature changes; the relative humidity follows.",
@@ -89,18 +89,17 @@ export const copy = {
   } satisfies Record<EntryModeId, string>,
   // A row's menu button holds the row's presets alone (ADR-0002 decision 75, rule 6).
   presetTrigger: "Presets",
-  // The input calculators' entry at the Inputs card's foot, its second line the calculators' names, and the dialog's
+  // The input calculators' button at the input panel's foot, its second line the calculators' labels, and the dialog's
   // title (decision 75, rule 6 (a) and (b)).
   inputCalculators: "Input calculators",
-  calculatorNames: (labels: readonly string[]) => labels.join(" · "),
+  calculatorLabels: (labels: readonly string[]) => labels.join(" · "),
   calculatorApply: "Apply",
   // The footer's slot checkboxes while the slots are named (decision 75, rule 6 (c)).
   calculatorApplyTo: "Apply to",
   restoreDefaults: "Restore defaults",
-  // The input calculators' tab names, and Solar gain's postures in the standard's words (ADR-0002 decision 75).
+  // Custom ensemble's tab label, the other calculators being named by their model infos, and Solar gain's postures in
+  // the standard's words (ADR-0002 decision 75).
   customEnsemble: "Custom ensemble",
-  clothingFromOutdoorTemperature: "Clothing from outdoor temperature",
-  solarGainOnOccupants: "Solar gain on occupants",
   postureSeated: "Seated",
   postureStanding: "Standing",
   postureSupine: "Supine",
@@ -110,9 +109,9 @@ export const copy = {
   solarGainMethod: "The mean radiant temperature increase equivalent to the solar gain (ASHRAE 55 Normative Appendix C).",
   customEnsembleMethod:
     "The sum of the garments' insulation, plus a chair's for ensembles of 0.5 to 1.2 clo standing (ASHRAE 55 §5.2.2.2(c) and (d)).",
-  clothingFromOutdoorTemperatureMethod:
+  cloToutMethod:
     "The clothing of the day predicted from the outdoor air temperature at 6 a.m. (ASHRAE 55 §5.2.2.2(f)).",
-  // The result dock's line for a slot: the row's value before and after Apply, and an after outside the row's bound
+  // The dock's line for a slot: the row's value before and after Apply, and an after outside the row's bound
   // with that bound named as its limit, "44.98 (limit 10 – 40)" (decision 75, rule 6 (d); worded by the user,
   // 2026-10-15).
   calculatorChangeJoiner: " → ",
@@ -129,25 +128,25 @@ export const copy = {
   presetSearchPlaceholder: "Search…",
   presetEmpty: "No matches.",
   inputColumn: "Input",
-  // The heading of the limits a run broke, in a result row's icon name (ADR-0002 decision 85, rule 5) and in an Image's
+  // The heading of the bounds a run broke, in a result row's icon name (ADR-0002 decision 85, rule 5) and in an Image's
   // Input summary (decision 84, rule 8), in decision 83's words: "limits", the standards' word for both kinds of bound.
-  limitsBrokenHeading: "Calculated, but outside these limits:",
+  boundsBrokenHeading: "Calculated, but outside these limits:",
   // One broken applicability row: `bound` already carries its unit.
-  applicabilityWarning: (label: string, bound: string) => `${label} must be ${bound}`,
+  boundSentence: (label: string, bound: string) => `${label} must be ${bound}`,
   // The model-switch dialog (ADR §4.5, ADR-0002 decision 32). Its own column
-  // headings: "Input" heads quantity names here and slot names in the result
+  // headings: "Input" heads quantity labels here and slot labels in the result
   // table, so the two are not one string.
-  boundaryWarningTitle: "Boundary Range Warning",
-  boundaryWarningIntro: (modelLabel: string) => `${modelLabel} does not accept every value you entered.`,
-  boundaryWarningQuestion: "Adjust these values to the nearest allowed value and switch?",
-  boundaryWarningAccept: "Yes, switch and adjust",
-  boundaryWarningDecline: "No, stay here",
-  boundaryWarningInputColumn: "Input",
-  boundaryWarningCurrentColumn: "Current",
-  boundaryWarningAllowedColumn: "Allowed range",
+  switchCutTitle: "Values outside the new model's limits",
+  switchCutIntro: (modelLabel: string) => `${modelLabel} does not accept every value you entered.`,
+  switchCutQuestion: "Cut these values to their limits and switch?",
+  switchCutAccept: "Yes, cut and switch",
+  switchCutDecline: "No, stay here",
+  switchCutInputColumn: "Input",
+  switchCutCurrentColumn: "Current",
+  switchCutAllowedColumn: "Limits",
   // Reset and its question (ADR-0002 decision 63, rules 7 and 8).
   reset: "Reset",
-  resetQuestion: "This returns the page to what a new tab at this address shows: every input, the units, the pressure, Compare, and the chart settings and Bands of every model. It cannot be undone.",
+  resetQuestion: "This returns the page to what a new tab at this address shows: every input, the units, the atmospheric pressure, Compare, and the chart settings and Bands of every model. It cannot be undone.",
   resetAccept: "Yes, reset",
   resetDecline: "No, keep everything",
   // A share link's question in a tab that kept a session (ADR-0002 decision 63, rule 8).
@@ -155,34 +154,34 @@ export const copy = {
   linkQuestion: "This tab already holds a session. Opening the link replaces it, and that cannot be undone.",
   linkAccept: "Yes, open the link",
   linkDecline: "No, keep mine",
-  // Share, and the notices a link and Share raise (ADR-0002 decision 63, rules 6 and 7; rule 7's button as noted 2026-10-27).
+  // Share, and the toasts a link and Share raise (ADR-0002 decision 63, rules 6 and 7; rule 7's button as noted 2026-10-27).
   share: "Share",
   linkCopied: "Link copied",
-  linkRefusedNotice: "The shared link could not be read, so nothing was opened from it.",
-  copyRefusedNotice: "The link could not be copied.",
+  linkRefusedToast: "The shared link could not be read, so nothing was opened from it.",
+  copyRefusedToast: "The link could not be copied.",
   // An arrival that cut values to their bounds (decision 84, rule 4, as noted 2026-10-28).
-  valuesCutNotice: "Some values were out of range and were cut to the nearest allowed value.",
+  valuesCutToast: "Some values were out of range and were cut to the nearest allowed value.",
   // A toast's close button (decision 84, rule 7).
   closeToast: "Close",
   // What a refused value's toast says (decision 84, rules 2 and 7): `subject` is the box's quantity, with its slot
   // under Compare; `value` carries its unit; each reason is a bound sentence, of what the value would break.
-  refusedNotice: (subject: string, value: string, reasons: readonly string[]) =>
+  refusedToast: (subject: string, value: string, reasons: readonly string[]) =>
     reasons.length === 1
       ? `${subject} was not changed to ${value}, which would put another value out of range. ${reasons[0]}. Change it first.`
       : `${subject} was not changed to ${value}, which would put other values out of range. ${reasons.join(". ")}. Change them first.`,
-  // A run that broke a limit it did not break before (decision 84, rule 8): each reason is a bound sentence.
-  limitsBrokenNotice: (reasons: readonly string[]) => `Calculated, but outside ${reasons.length === 1 ? "a limit" : "limits"}. ${reasons.join(". ")}.`,
+  // A run that broke a bound it did not break before (decision 84, rule 8): each reason is a bound sentence.
+  boundsBrokenToast: (reasons: readonly string[]) => `Calculated, but outside ${reasons.length === 1 ? "a limit" : "limits"}. ${reasons.join(". ")}.`,
   // An Image of the chart (ADR-0002 decision 64, rules 6 and 8).
   exportImage: "Export image",
   imageTitle: "Title",
   imageSize: "Size",
   imageFormat: "Format",
   imageDownload: "Download",
-  imageFailedNotice: "The image could not be made.",
+  imageFailedToast: "The image could not be made.",
   imageIncludesSummaryAndFooter: "Include input summary and footer",
-  // A standard's name, `ASHRAE 55:2023`, as the sidebar, the Explore select's group heading and the Input summary write
-  // it (decision 86, rule 2): the colon for every body.
-  standardName: (bodyAndNumber: string, year: string) => `${bodyAndNumber}:${year}`,
+  // A standard's label, `ASHRAE 55:2023`, as the sidebar, the Explore select's group heading and the Input summary
+  // write it (decision 86, rule 2): the colon for every body.
+  standardLabel: (bodyAndNumber: string, year: string) => `${bodyAndNumber}:${year}`,
   // The Input summary's lines (decision 64, rule 3): `label` is a quantity's with its unit, or an option's.
   summaryModel: (model: string, standard: string) => `${model} · ${standard}`,
   summaryValue: (label: string, value: string) => `${label}: ${value}`,
@@ -195,21 +194,22 @@ export const copy = {
   // A yes-or-no result cell (`acceptability_80`, `compliance`).
   yes: "Yes",
   no: "No",
-  slotName: (index: number) => `Input ${index + 1}`,
-  // The chart marker's legend entry while its slot has no name: the one slot of a page that compares nothing. Its
+  slotLabel: (index: number) => `Input ${index + 1}`,
+  // The chart marker's legend item while its slot has no label: the one slot of a page that compares nothing. Its
   // own string beside the two "Input" column headings, three places that say the word.
   unnamedMarker: "Input",
-  // The accessible name of one slot's control in a row that stands over several slots, on Compare.
-  slotControl: (control: string, slotName: string) => `${control}, ${slotName}`,
+  // One slot's control or quantity while the slots are named: a control's accessible name in a row that stands over
+  // several slots, on Compare, and a dock line's label or a refused value's subject.
+  slotControl: (control: string, slotLabel: string) => `${control}, ${slotLabel}`,
   compare: "Compare",
   // A switch's state beside it, under Compare, where its label stands above the slot columns (ADR-0002 decision 76,
   // rule 2).
   on: "On",
   off: "Off",
   // A caption line about one row of the result table, while Compare is on.
-  slotNote: (slotName: string, note: string) => `${slotName}: ${note}`,
-  // A chart's legend entry or readout line of one slot, while the slots are named.
-  slotEntry: (slotName: string, entry: string) => `${slotName} · ${entry}`,
+  slotNote: (slotLabel: string, note: string) => `${slotLabel}: ${note}`,
+  // A chart's legend item or readout line of one slot, while the slots are named.
+  withSlotLabel: (label: string, text: string) => `${label} · ${text}`,
   chart: "Chart",
   // The chart type select's name, in the chart card's heading row with no visible label (ADR-0002 decision 87, rule 4,
   // as revised by decision 89, rule 6).
@@ -223,7 +223,7 @@ export const copy = {
   // The line under the plot of a slot whose Comfort zones are all empty, whatever emptied them (ADR-0002 decision 83
   // rule 1, as noted 2026-10-22).
   noComfortZone: "No comfort zone at these inputs.",
-  // The Bands panel on Explore (ADR-0002 decision 59), in a dialog the chart's heading row opens (decision 73, rule 8).
+  // The Bands table on Explore (ADR-0002 decision 59), in a dialog the chart's heading row opens (decision 73, rule 8).
   bands: "Bands",
   bandsReset: "Reset bands",
   bandsApply: "Apply",
@@ -242,7 +242,7 @@ export const copy = {
       : above === undefined
         ? `Not taken: ${edge} is not above ${below}, the edge before it.`
         : `Not taken: ${edge} is not between ${below} and ${above}, the edges beside it.`,
-  // A band's legend entry and hover line while its label is empty, as Add leaves it (ADR-0002 decision 59's note of
+  // A band's legend item and hover line while its label is empty, as Add leaves it (ADR-0002 decision 59's note of
   // 2026-10-17); the Band list keeps the empty label.
   unlabelledBand: "Unlabelled band",
   // A control's name for assistive technology: a band is named by its place, since its label may be empty.

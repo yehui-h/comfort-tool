@@ -5,15 +5,15 @@
   results float over the rows while a query is typed; then one row per
   garment group of the library's, in its order, the chairs last, each garment
   the key as the library prints it with its value in clo (decision 20). A row
-  is its group's name, a list button at one width in every row, the Presets
+  is its group's label, a list button at one width in every row, the Presets
   list (`ValueList`) of the group's garments not yet worn, then the worn
   garments as chips, each taken off by one click. Chairs holds one, a chosen
-  chair replacing it. These settings are the one region that scrolls. The
+  chair replacing it. These inputs are the one region that scrolls. The
   dialog's dock and footer follow, handed the sum, which is none while
   nothing is worn; Clear, at the title's right, is drawn last, so the
   keyboard reaches it after Apply and before the dialog's Close.
 
-  Its look is the shared `.garment-search`, `.garment-row-name` and
+  Its look is the shared `.garment-search`, `.garment-row-label` and
   `.garment-list-trigger` rules.
 -->
 <script module lang="ts">
@@ -33,7 +33,7 @@
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
   import XIcon from "@lucide/svelte/icons/x";
   import type { Snippet } from "svelte";
-  import { outputOf, requireGarment, wearGarment, type CalculatorResult, type GarmentGroup } from "$lib/core/calculators";
+  import { outputOf, requireGarment, withGarment, type CalculatorOutputs, type GarmentGroup } from "$lib/core/calculators";
   import { formatNumber } from "$lib/core/numberFormat";
   import { copy } from "$lib/text/copy";
   import Grid from "$lib/ui/layout/Grid.svelte";
@@ -42,13 +42,13 @@
   import { Button } from "$lib/ui/primitives/button";
   import * as Command from "$lib/ui/primitives/command";
   import * as Popover from "$lib/ui/primitives/popover";
-  import type { ResultLine } from "./InputCalculators.svelte";
+  import type { DockLine } from "./InputCalculators.svelte";
   import ValueList from "./ValueList.svelte";
 
   interface Props {
     calculator: GarmentCalculator;
     /** The dialog's dock and footer, for the sum, none while nothing is worn, and its line. */
-    dock: Snippet<[result: CalculatorResult | null, lines: readonly ResultLine[]]>;
+    dock: Snippet<[outputs: CalculatorOutputs | null, lines: readonly DockLine[]]>;
   }
 
   let { calculator, dock }: Props = $props();
@@ -60,17 +60,17 @@
   let openGroup: GarmentGroup | null = $state.raw(null);
 
   const worn = $derived(keptGarments.get(calculator) ?? []);
-  const result = $derived(worn.length > 0 ? calculator.compute(worn) : null);
+  const outputs = $derived(worn.length > 0 ? calculator.compute(worn) : null);
   const lines = $derived([
-    { quantity: calculator.output, name: copy.ensembleInsulation, value: result ? outputOf(calculator, result) : Number.NaN },
+    { quantity: calculator.output, label: copy.ensembleInsulation, value: outputs ? outputOf(calculator, outputs) : Number.NaN },
   ]);
   const searching = $derived(query.trim() !== "");
 
-  function wear(garment: string) {
-    keptGarments.set(calculator, wearGarment(calculator, worn, garment));
+  function addGarment(garment: string) {
+    keptGarments.set(calculator, withGarment(calculator, worn, garment));
   }
 
-  function takeOff(garment: string) {
+  function removeGarment(garment: string) {
     keptGarments.set(calculator, worn.filter((other) => other !== garment));
   }
 
@@ -85,17 +85,17 @@
 
   /** A garment chosen from its row's list: worn, and the list closed. */
   function pick(garment: string) {
-    wear(garment);
+    addGarment(garment);
     openGroup = null;
   }
 
   /** A garment chosen among the search's results: worn, and the query cleared, which hides them. */
   function pickFound(garment: string) {
-    wear(garment);
+    addGarment(garment);
     query = "";
   }
 
-  /** A garment's insulation in clo, as a list's entry ends with it. */
+  /** A garment's insulation in clo, as a list's item ends with it. */
   function shownInsulationOf(garment: string): string {
     return formatNumber(requireGarment(garment));
   }
@@ -110,7 +110,7 @@
   }
 </script>
 
-<div class="calculator-settings">
+<div class="calculator-inputs">
   <Stack gap="4">
     <p class="caption">{calculator.method}</p>
     <Command.Root class="garment-search" filter={scoreByName}>
@@ -139,7 +139,7 @@
     </Stack>
   </Stack>
 </div>
-{@render dock(result, lines)}
+{@render dock(outputs, lines)}
 <Button variant="ghost" size="sm" class="dialog-title-action" disabled={worn.length === 0} onclick={() => keptGarments.delete(calculator)}>
   {copy.ensembleClear}
 </Button>
@@ -152,18 +152,18 @@
 {#snippet garmentRow(group: GarmentGroup, rowId: string)}
   {@const wornHere = worn.filter((garment) => group.garments.includes(garment))}
   {@const isChairs = group === calculator.chairs}
-  <div role="group" aria-labelledby="{rowId}-name">
+  <div role="group" aria-labelledby="{rowId}-label">
     <Grid columns="10rem minmax(0, 1fr)" gap="2">
-      <span id="{rowId}-name" class="garment-row-name">{group.group}</span>
+      <span id="{rowId}-label" class="garment-row-label">{group.group}</span>
       <Inline gap="1">
-        {@render garmentList(
+        {@render garmentMenu(
           group,
           rowId,
           isChairs && wornHere.length > 0 ? copy.ensembleChange : copy.ensembleAdd,
           group.garments.filter((garment) => !wornHere.includes(garment)),
         )}
         {#each wornHere as garment (garment)}
-          <Button variant="secondary" size="sm" aria-label={copy.ensembleRemove(garment)} onclick={() => takeOff(garment)}>
+          <Button variant="secondary" size="sm" aria-label={copy.ensembleRemove(garment)} onclick={() => removeGarment(garment)}>
             {garment}
             <XIcon />
           </Button>
@@ -173,12 +173,12 @@
   </div>
 {/snippet}
 
-<!-- The row's list button, named by its word and the group, "Add Footwear", opening the group's garments not worn. -->
-{#snippet garmentList(group: GarmentGroup, rowId: string, word: string, garments: readonly string[])}
+<!-- The row's menu: its button, named by its word and the group, "Add Footwear", opening the group's garments not worn. -->
+{#snippet garmentMenu(group: GarmentGroup, rowId: string, word: string, garments: readonly string[])}
   <Popover.Root bind:open={() => openGroup === group, (isOpen) => setListOpen(group, isOpen)}>
     <Popover.Trigger>
       {#snippet child({ props })}
-        <Button {...props} variant="outline" size="sm" class="garment-list-trigger" aria-labelledby="{rowId}-word {rowId}-name">
+        <Button {...props} variant="outline" size="sm" class="garment-list-trigger" aria-labelledby="{rowId}-word {rowId}-label">
           <span id="{rowId}-word">{word}</span>
           <ChevronDownIcon />
         </Button>

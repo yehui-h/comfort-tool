@@ -3,7 +3,7 @@
   block's `site-header.svelte` (`npx shadcn-svelte add sidebar-16`, CLI 1.6.0,
   Nova), changed for the tool. Kept: the header, its one row at
   `--header-height`, a toggle of the sidebar first, the vertical `Separator`.
-  Changed: a band of the brand, its text in the paper's white, with no rule
+  Changed: a band of the brand, its text in the background's white, with no rule
   under it and not sticky, so it scrolls away with the page; the row's inset
   and gap are the page's spacing token; the toggle stands at every width
   (decision 87, rule 1): the generated button, ghost at its small icon size
@@ -13,18 +13,18 @@
   desktop it collapses and reopens the sidebar's column, which `PageFrame`
   holds, and below `md` it opens and closes the primitive's sheet; the CBE
   mark follows it, a link to the default model's address
-  that the page follows as an in-app switch (rule 5 as revised again
+  that the page follows as in-app navigation (rule 5 as revised again
   2026-10-12), handed in as the navigation's items are; the separator stands
   after the mark, not the toggle, `h-6` in the band's white at 30 %; the
   breadcrumb is the title, the `h1`, which on a phone wraps to two lines; the
   search form goes, and Documentation, the last item, stands at the row's end
-  (decision 84, rule 7: every notice is a toast, so the header holds none),
-  and below `md` leaves the header for the sheet's Tools group (decision 87,
-  rule 2), a link to another site that opens a new tab (decision 89, rule
-  2); the row stands in the page's frame,
+  (decision 84, rule 7: the app's notifications are toasts, so the header
+  holds none), and below `md` leaves the header for the sheet's
+  Tools group (decision 87, rule 2), a link to another site that opens a new
+  tab (decision 89, rule 2); the row stands in the page's frame,
   `--frame-width`, which `PageFrame` sets beside the sidebar's width, the
-  band's ground the window's width (rule 10 as revised again 2026-10-12).
-  The band's own links and the toggle ring in the paper's white on focus,
+  band's background the window's width (rule 10 as revised again 2026-10-12).
+  The band's own links and the toggle ring in the background's white on focus,
   where the brand's ring would not show.
 -->
 <script lang="ts">

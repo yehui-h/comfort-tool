@@ -1,4 +1,5 @@
-import libraryPackage from "jsthermalcomfort/package.json";
+// By file path, as vite.config.js reads it: the library's `exports` map need not list its package file.
+import libraryPackage from "../../node_modules/jsthermalcomfort/package.json";
 import { describe, expect, it } from "vitest";
 import appPackage from "../../package.json";
 import { registeredModels } from "$lib/models";
@@ -24,10 +25,10 @@ describe("imageSize", () => {
 });
 
 describe("defaultImageTitle", () => {
-  it("is the model's name as the model select shows it and the chart type's title, for every registered model and each chart it declares", () => {
+  it("is the model's label as the model select shows it and the chart type's label, for every registered model and each chart it declares", () => {
     for (const model of registeredModels) {
       for (const declared of model.charts) {
-        expect(defaultImageTitle(model, declared.type)).toBe(`${model.info.label} · ${declared.type.title}`);
+        expect(defaultImageTitle(model, declared.type)).toBe(`${model.info.label} · ${declared.type.label}`);
       }
     }
   });

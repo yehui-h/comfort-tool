@@ -1,12 +1,12 @@
-import { heat_index_rothfusz, HEAT_INDEX_ROTHFUSZ_INFO, HEAT_INDEX_STRESS_CATEGORY_BINS } from "jsthermalcomfort";
+import { heat_index_rothfusz, HEAT_INDEX_ROTHFUSZ_INFO } from "jsthermalcomfort";
 import { chartType } from "$lib/core/chartType";
-import type { RegisteredModel } from "$lib/core/modelDeclaration";
+import type { ModelDeclaration } from "$lib/core/modelDeclaration";
 import { quantities } from "$lib/core/quantities";
 
 const q = quantities;
 
-const tdbMin = HEAT_INDEX_ROTHFUSZ_INFO.inputs.tdb?.applicability?.min;
-if (tdbMin === undefined) {
+const dryBulbTemperatureMin = HEAT_INDEX_ROTHFUSZ_INFO.inputs.tdb?.applicability?.min;
+if (dryBulbTemperatureMin === undefined) {
   throw new Error("HEAT_INDEX_ROTHFUSZ_INFO no longer bounds tdb from below");
 }
 
@@ -20,7 +20,7 @@ export const heatIndexRothfusz = {
   // 0.1 °C. `limit_inputs: false`: the app gates entered values itself and
   // reads the rows the run breaks off `warnings`. The function takes no
   // `units`, and no `wme` or `standard`.
-  run: (values) => heat_index_rothfusz({ tdb: values.tdb, rh: values.rh, round_output: false, limit_inputs: false }),
+  run: (inputs) => heat_index_rothfusz({ tdb: inputs.tdb, rh: inputs.rh, round_output: false, limit_inputs: false }),
   inputs: [
     { quantity: q.tdb, value: 30 },
     { quantity: q.rh, value: 50 },
@@ -31,13 +31,13 @@ export const heatIndexRothfusz = {
   // not hold: at 20 °C and 100 % it answers 15 °C, colder than the air, and
   // Explore would paint bands from it (ADR-0002 decision 77 rule 4).
   axisRanges: [
-    { quantity: q.tdb, min: tdbMin, max: 50 },
+    { quantity: q.tdb, min: dryBulbTemperatureMin, max: 50 },
     { quantity: q.rh, min: 0, max: 100 },
   ],
   table: [q.stress_category, q.hi],
   // The scanned number is `hi`, cut by the same stress-category bins the
   // kernel classifies `stress_category` with. No Comfort zones: the model has
   // no standard to draw a limit on it.
-  scan: { output: q.hi, classifier: HEAT_INDEX_STRESS_CATEGORY_BINS },
+  scan: { output: q.hi, bands: q.stress_category },
   charts: [{ type: chartType.dynamic, axes: { x: q.tdb, y: q.rh } }],
-} satisfies RegisteredModel;
+} satisfies ModelDeclaration;

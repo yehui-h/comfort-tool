@@ -1,13 +1,13 @@
 <script lang="ts">
   import type { ChartType } from "$lib/core/chartType";
-  import type { RegisteredModel } from "$lib/core/modelDeclaration";
+  import type { ModelDeclaration } from "$lib/core/modelDeclaration";
   import type { ChartState } from "$lib/state/session.svelte";
   import { copy } from "$lib/text/copy";
   import { Label } from "$lib/ui/primitives/label";
   import ChoiceSelect from "./ChoiceSelect.svelte";
 
   interface Props {
-    model: RegisteredModel;
+    model: ModelDeclaration;
     chart: ChartState;
   }
 
@@ -17,7 +17,7 @@
   // Options are addressed by position in this list rather than by any string id: a select's value is text, and a
   // chart type is compared by identity.
   const types: readonly ChartType[] = $derived(model.charts.map((declaredChart) => declaredChart.type));
-  const typeGroups = $derived([{ options: types.map((type, index) => ({ key: String(index), label: type.title })) }]);
+  const typeGroups = $derived([{ options: types.map((type, index) => ({ key: String(index), label: type.label })) }]);
 </script>
 
 <!--

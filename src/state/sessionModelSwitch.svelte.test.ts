@@ -5,9 +5,9 @@
  * stays in the sibling file.
  *
  * The seam is that file's, and nothing flushes for the reason
- * `compute.svelte.test.ts` gives: the outputs are a derivation, so reading one
- * after a change is what recomputes it. The models here are fixtures, not
- * registry entries: each spreads PMV (ISO 7730)'s declaration and overrides
+ * `compute.svelte.test.ts` gives: the computation is a derivation, so reading
+ * it after a change is what recomputes it. The models here are fixtures, not
+ * registered models: each spreads PMV (ISO 7730)'s declaration and overrides
  * the one thing it is about.
  */
 import { psy_ta_rh } from "jsthermalcomfort";
@@ -19,9 +19,9 @@ import { DEFAULT_ATMOSPHERIC_PRESSURE, quantities, type Quantity } from "$lib/co
 import { displayUnitFor } from "$lib/core/units";
 import { unitSystem } from "$lib/core/unitSystem";
 import { pmvPpdIso } from "$lib/models/pmvPpdIso";
-import { Outputs } from "./compute.svelte";
+import { Computation } from "./compute.svelte";
 import { Session } from "./session.svelte";
-import { listedRowsOf, outOfRangeQuantitiesAt, resultValueOf, shapeOf, withBounds } from "./sessionTestReaders";
+import { listedRowsOf, outOfRangeQuantitiesAt, outputValueOf, shapeOf, withBounds } from "./sessionTestReaders";
 
 const q = quantities;
 
@@ -42,8 +42,8 @@ const acceptsTheSlot = withBounds({ tdb: { min: 10, max: 40 } });
  * Applicability (ADR-0002 decision 32, "The session owns the question"): the
  * request changes nothing and leaves the question pending, and the person's
  * answer lands it or drops it. Asserted at the same seam as the rest — a
- * session in, its state and its outputs out — because the dialog renders the
- * pending switch and decides nothing.
+ * session in, its state and its computation out — because the dialog renders
+ * the pending switch and decides nothing.
  */
 describe("Session.requestModel, when the new model does not accept a value", () => {
   it("leaves the model and the slot as they were and holds the question", () => {
@@ -66,7 +66,7 @@ describe("Session.requestModel, when the new model does not accept a value", () 
     expect(listedRowsOf(session)).toEqual(outOfRangeRows(session.slots[0], belowTheSlot, DEFAULT_ATMOSPHERIC_PRESSURE));
   });
 
-  it("lists the operative temperature against the range both temperatures allow at once", () => {
+  it("lists the operative temperature against the bound both temperatures allow at once", () => {
     const session = new Session(pmvPpdIso);
     session.setTemperatureMode(temperatureMode.operative);
     const operative = session.slots[0].values.get(q.operative_tmp);
@@ -79,7 +79,7 @@ describe("Session.requestModel, when the new model does not accept a value", () 
     ]);
   });
 
-  it("gives a one-ended row for a bound with one end, and adjusts only towards it", () => {
+  it("gives a one-ended row for a bound with one end, and cuts only towards it", () => {
     const session = new Session(pmvPpdIso);
     session.slots[0].setEntered(q.met, 6);
 
@@ -95,7 +95,7 @@ describe("Session.requestModel, when the new model does not accept a value", () 
 
   it("moves each listed value to the end of its bound it was beyond, and nothing else", () => {
     const session = new Session(pmvPpdIso);
-    const outputs = new Outputs(session);
+    const computation = new Computation(session);
     session.slots[0].setEntered(q.v, 0.2);
     session.slots[0].setEntered(q.rh, 35);
 
@@ -109,12 +109,12 @@ describe("Session.requestModel, when the new model does not accept a value", () 
     expect(session.slots[0].values.get(q.v)).toBe(0.2);
     expect(session.slots[0].humidity?.value).toBe(35);
     expect(outOfRangeQuantitiesAt(session, 0)).toEqual([]);
-    expect(resultValueOf(outputs.slots[0].result, q.pmv)).toBeTypeOf("number");
+    expect(outputValueOf(computation.slots[0].outputs, q.pmv)).toBeTypeOf("number");
   });
 
-  it("leaves, on a yes in IP, the same ends held, each read in its box as the range beside it reads", () => {
+  it("leaves, on a yes in IP, the same ends held, each read in its box as the bound beside it reads", () => {
     const session = new Session(pmvPpdIso);
-    const outputs = new Outputs(session);
+    const computation = new Computation(session);
     session.unitSystem = unitSystem.ip;
     session.setHumidityMode(humidityMode.humidityRatio);
     session.slots[0].setEntered(q.hr, 0.017);
@@ -132,7 +132,7 @@ describe("Session.requestModel, when the new model does not accept a value", () 
     expect(formatBound(rows[0].bound, q.tdb, unitSystem.ip)).toBe("50 – 68");
     expect(formatBound(rows[1].bound, q.hr, unitSystem.ip)).toBe(`0 – ${boxOf(q.hr, session.slots[0].humidity?.value)}`);
     expect(outOfRangeQuantitiesAt(session, 0)).toEqual([]);
-    expect(outputs.slots[0].violations).toEqual([]);
+    expect(computation.slots[0].violations).toEqual([]);
   });
 
   it("lists a humidity entry the new model's relative-humidity bound rules out, in the entry's own unit, and moves it to the converted end", () => {
@@ -190,12 +190,12 @@ describe("Session.requestModel, when the new model does not accept a value", () 
 
   it("leaves the outputs the current model's while the question is pending", () => {
     const session = new Session(pmvPpdIso);
-    const outputs = new Outputs(session);
-    const before = outputs.slots[0].result;
+    const computation = new Computation(session);
+    const before = computation.slots[0].outputs;
 
     session.requestModel(belowTheSlot);
 
-    expect(outputs.slots[0].result).toBe(before);
+    expect(computation.slots[0].outputs).toBe(before);
     expect(outOfRangeQuantitiesAt(session, 0)).toEqual([]);
   });
 
@@ -230,7 +230,7 @@ describe("Session.requestModel, when the new model does not accept a value", () 
     expect(session.model).toBe(acceptsTheSlot);
   });
 
-  it("never asks when the model is set: setting adjusts nothing and holds no question", () => {
+  it("never asks when the model is set: setting cuts nothing and holds no question", () => {
     const session = new Session(pmvPpdIso);
 
     session.setModel(belowTheSlot);

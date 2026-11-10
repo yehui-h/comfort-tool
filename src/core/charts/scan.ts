@@ -5,8 +5,8 @@
  * a Comfort zone's or a Band's, found on those runs and on the few more a
  * boundary asks for.
  */
-import type { ComfortZone, Range, RegisteredModel } from "$lib/core/modelDeclaration";
-import { resultNumber, resultWarnings, runOn } from "$lib/core/modelRun";
+import type { ComfortZone, ModelDeclaration, Range } from "$lib/core/modelDeclaration";
+import { outputNumber, rangeRowsOf, runOn } from "$lib/core/modelRun";
 import type { Quantity } from "$lib/core/quantities";
 import { withEnteredValues, withEntryModes, type Slot, type ValueEntryModes } from "$lib/core/slot";
 import type { RegionGrid } from "./regionTracer";
@@ -34,13 +34,13 @@ export interface Sweep {
  * What every slot's scan on one chart shares (ADR-0002 decision 61): the
  * model and the output it scans, the two quantities swept, the entry modes
  * the slot is converted into, and the atmospheric pressure. A slot's scan is
- * a function of this and the slot alone, so the outputs can keep one per slot
- * and an edit to one slot scans that slot and no other
+ * a function of this and the slot alone, so the computation can keep one per
+ * slot and an edit to one slot scans that slot and no other
  * (`state/compute.svelte.ts`). Each chart builds its own frame; the scan is
  * the same for both.
  */
 export interface ScanFrame {
-  readonly model: RegisteredModel;
+  readonly model: ModelDeclaration;
   readonly output: Quantity;
   readonly x: Sweep;
   readonly y: Sweep;
@@ -97,7 +97,7 @@ export interface NumberInterval {
  * declaring the psychrometric chart has some, which a registry-wide test holds
  * (`core/modelDeclaration.test.ts`).
  */
-export function comfortZonesOf(model: RegisteredModel): readonly ComfortZone[] {
+export function comfortZonesOf(model: ModelDeclaration): readonly ComfortZone[] {
   return [...(model.scan?.comfortZones ?? [])].sort((a, b) => b.limit - a.limit);
 }
 
@@ -121,8 +121,8 @@ export function scannedField(frame: ScanFrame, slot: Slot): ScannedField {
       [x.quantity, point.x],
       [y.quantity, point.y],
     ]));
-    const result = runOn(cell, model, atmosphericPressure);
-    return { value: resultNumber(result, output), withinBounds: resultWarnings(model, result).length === 0 };
+    const outputs = runOn(cell, model, atmosphericPressure);
+    return { value: outputNumber(outputs, output), withinBounds: rangeRowsOf(outputs).length === 0 };
   };
   const grid = { x: samples(x.range, GRID), y: samples(y.range, GRID) };
   const readings = grid.y.map((yValue) => grid.x.map((xValue) => run({ x: xValue, y: yValue })));

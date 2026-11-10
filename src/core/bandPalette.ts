@@ -1,24 +1,19 @@
-import {
-  HEAT_INDEX_STRESS_CATEGORY_BINS,
-  PMV_CATEGORY_BINS_ISO_7730_2025,
-  PMV_THERMAL_SENSATION_VOTE_BINS_ASHRAE,
-  PMV_THERMAL_SENSATION_VOTE_BINS_ISO,
-  UTCI_STRESS_CATEGORY_BINS,
-  type ClassifierBins,
-} from "jsthermalcomfort";
+import { HEAT_INDEX_ROTHFUSZ_INFO, PMV_PPD_ASHRAE_INFO, PMV_PPD_ISO_INFO, UTCI_INFO, type ClassifierBins } from "jsthermalcomfort";
+import { classifierOf } from "./modelDeclaration";
 import { lettering, palette } from "./palette";
-import type { SlotHue } from "./slotBadge";
+import { quantities } from "./quantities";
+import type { SlotHue } from "./slotAppearance";
 
 /**
  * The band palettes of the app (ADR-0002 decisions 60 and 66). A classifier's
- * colours come from its entry in {@link classifierPalettes}, keyed by the
+ * colours come from its palette in {@link classifierPalettes}, keyed by the
  * library's classifier object, by identity, as the quantity table is, and read
- * by its entry's rule; they are assigned by position in its bins, never by
- * label text, so the library owns the bands and the app owns only the paint.
- * The result table's Band badges read their fill and lettering from here
+ * by its palette's rule; they are assigned by position in its bins, never by
+ * label text, so the library owns the bands and the app owns only the colours.
+ * The result table's Band badges read their fill and foreground from here
  * (`core/resultCell.ts`), as Explore's default Band list does its colours
- * (`core/bands.ts`), and both charts' chrome ink; a slot's own
- * ink is its hue (`core/slotBadge.ts`).
+ * (`core/bands.ts`), and both charts' chrome colours; a slot's own
+ * colour is its hue (`core/slotAppearance.ts`).
  */
 
 /** Colours by count, first first, as its source lists them. */
@@ -51,12 +46,12 @@ export const colorFamilies = { rdBu, ylOrRd } as const;
  * longer side, the shorter side's surplus dropped from the neutral outward, so
  * each side keeps its darkest colours and the neutral its family's neutral.
  */
-export type PaletteEntry =
+export type BandPalette =
   | {
       readonly kind: "sequential";
       readonly family: ColorFamily;
       /** The last band is outside every category, as ISO 7730's "none" is, and has no colour. */
-      readonly lastBandUnpainted?: true;
+      readonly lastBandUncoloured?: true;
     }
   | {
       readonly kind: "diverging";
@@ -67,65 +62,67 @@ export type PaletteEntry =
       readonly neutral: number;
     };
 
-/** The entries {@link classifierPalettes} chooses from. */
+/** The palettes {@link classifierPalettes} chooses from. */
 export const palettes = {
   /** A scale around the neutral band `neutral`, cold blue to hot red. */
-  diverging: (neutral: number): PaletteEntry => ({ kind: "diverging", family: rdBu, reversed: true, neutral }),
+  diverging: (neutral: number): BandPalette => ({ kind: "diverging", family: rdBu, reversed: true, neutral }),
   /** A one-sided scale, safe to dangerous. */
   sequential: { kind: "sequential", family: ylOrRd },
   /** A one-sided scale of categories, whose last band, "none", is in none of them. */
-  sequentialCategories: { kind: "sequential", family: ylOrRd, lastBandUnpainted: true },
-} as const satisfies Record<string, PaletteEntry | ((neutral: number) => PaletteEntry)>;
+  sequentialCategories: { kind: "sequential", family: ylOrRd, lastBandUncoloured: true },
+} as const satisfies Record<string, BandPalette | ((neutral: number) => BandPalette)>;
 
 /**
  * Every classifier the app paints, with its palette. A new classifier lands
  * here ahead of its model, its own commit with a test, as a new quantity lands
  * in the quantity table; a family gains the colours at a new count with it.
+ * Each is read off its model info by the output it classifies, so an output
+ * the info stops classifying fails here when the app loads.
  */
-const classifierPalettes: ReadonlyMap<ClassifierBins, PaletteEntry> = new Map<ClassifierBins, PaletteEntry>([
+const classifierPalettes: ReadonlyMap<ClassifierBins, BandPalette> = new Map<ClassifierBins, BandPalette>([
   // Neutral is "Neutral", the fourth of seven.
-  [PMV_THERMAL_SENSATION_VOTE_BINS_ISO, palettes.diverging(3)],
-  [PMV_THERMAL_SENSATION_VOTE_BINS_ASHRAE, palettes.diverging(3)],
-  [HEAT_INDEX_STRESS_CATEGORY_BINS, palettes.sequential],
-  [PMV_CATEGORY_BINS_ISO_7730_2025, palettes.sequentialCategories],
+  [classifierOf(PMV_PPD_ISO_INFO, quantities.tsv), palettes.diverging(3)],
+  [classifierOf(PMV_PPD_ASHRAE_INFO, quantities.tsv), palettes.diverging(3)],
+  [classifierOf(HEAT_INDEX_ROTHFUSZ_INFO, quantities.stress_category), palettes.sequential],
+  [classifierOf(PMV_PPD_ISO_INFO, quantities.category), palettes.sequentialCategories],
   // Neutral is "no thermal stress", the sixth of ten.
-  [UTCI_STRESS_CATEGORY_BINS, palettes.diverging(5)],
+  [classifierOf(UTCI_INFO, quantities.stress_category), palettes.diverging(5)],
 ]);
 
 /**
  * One colour per band of `bins`, in its order, read from its palette's family
  * by the palette's rule; `undefined` for a band its palette leaves unpainted.
  * Throws, naming the classifier by its first and last labels, when `table` has
- * no entry for it, its family has no colours at the count the rule reads, or
+ * no palette for it, its family has no colours at the count the rule reads, or
  * its neutral band is not one of its bands, rather than painting it half or
  * wrapping round. Only a test passes its own `table`.
  */
 export function bandColors(
   bins: ClassifierBins,
-  table: ReadonlyMap<ClassifierBins, PaletteEntry> = classifierPalettes,
+  table: ReadonlyMap<ClassifierBins, BandPalette> = classifierPalettes,
 ): readonly (string | undefined)[] {
   const { labels } = bins;
   const count = labels.length;
   const name = `The classifier "${labels[0]}" … "${labels[count - 1]}"`;
-  const entry = table.get(bins);
-  if (!entry) {
+  const bandPalette = table.get(bins);
+  if (!bandPalette) {
     throw new Error(`${name} has no palette; add it to the band palette's table`);
   }
   const colorsAt = (read: number): readonly string[] => {
-    const colors = entry.family[read];
+    const colors = bandPalette.family[read];
     if (!colors) {
       throw new Error(`${name} has ${count} bands, read at ${read} colours, a count its palette's colour family does not have`);
     }
     return colors;
   };
-  if (entry.kind === "sequential") {
+  if (bandPalette.kind === "sequential") {
     const ordered: (string | undefined)[] = colorsAt(count + 1).slice(1);
-    if (entry.lastBandUnpainted) {
+    if (bandPalette.lastBandUncoloured) {
       ordered[count - 1] = undefined;
     }
     return ordered;
   }
-  const { neutral } = entry;
+  const { neutral } = bandPalette;
   if (!Number.isInteger(neutral) || neutral < 0 || neutral >= count) {
     throw new Error(`${name} has ${count} bands, which cannot centre on a neutral band at index ${neutral}`);
   }
@@ -133,19 +130,19 @@ export function bandColors(
   const above = count - 1 - neutral;
   const side = Math.max(below, above);
   const read = colorsAt(2 * side + 1);
-  const colors = entry.reversed ? [...read].reverse() : read;
+  const colors = bandPalette.reversed ? [...read].reverse() : read;
   return [...colors.slice(0, below), colors[side], ...colors.slice(colors.length - above)];
 }
 
 /**
- * Fill for `category`'s band in `bins`, as {@link bandColors} gives it;
- * `undefined` for a band left unpainted and for a category the classifier does
+ * Fill for the band labelled `label` in `bins`, as {@link bandColors} gives it;
+ * `undefined` for a band left unpainted and for a label the classifier does
  * not name (NaN included — the model's own way of saying "past the last
  * Edge"). The app never calls `classifyFromBins` here: the value is already
- * the category the model returned, not a number to re-classify.
+ * the label the model returned, not a number to re-classify.
  */
-export function colorForBand(bins: ClassifierBins, category: string | number): string | undefined {
-  const index = bins.labels.indexOf(category as string);
+export function colorForBand(bins: ClassifierBins, label: string | number): string | undefined {
+  const index = bins.labels.indexOf(label as string);
   return index === -1 ? undefined : bandColors(bins)[index];
 }
 
@@ -170,46 +167,46 @@ function contrastRatio(one: string, other: string): number {
 }
 
 /**
- * The lettering of a Band badge filled with `fill` (ADR-0002 decision 85,
- * rule 3): the palette's ink or white, the paper's, whichever has the higher
- * contrast ratio with the fill; ink on a tie.
+ * The foreground of a Band badge filled with `fill` (ADR-0002 decision 85,
+ * rule 3): the palette's foreground or white, the background's, whichever has
+ * the higher contrast ratio with the fill; the foreground on a tie.
  */
-export function letteringOn(fill: string): string {
-  return contrastRatio(palette.paper, fill) > contrastRatio(palette.ink, fill) ? palette.paper : palette.ink;
+export function foregroundOn(fill: string): string {
+  return contrastRatio(palette.background, fill) > contrastRatio(palette.foreground, fill) ? palette.background : palette.foreground;
 }
 
 /**
- * Chart ink. Not bands — the Comfort zones and the markers are in their
- * slot's hue (`core/slotBadge.ts`), the isolines are neutral chrome, and a
+ * Chart colours. Not bands — the Comfort zones and the markers are in their
+ * slot's hue (`core/slotAppearance.ts`), the isolines are neutral chrome, and a
  * Band's Edge is one neutral line whatever the band's own colour. The chrome
  * is the interface's slate (`core/palette.ts`), so the page is one palette.
  */
-export const chartInk = {
+export const chartColors = {
   /** A slot's marker: its hue. */
   marker: (hue: SlotHue): string => hue,
   /** A Comfort zone's outline: its slot's hue. */
   zoneLine: (hue: SlotHue): string => hue,
   zoneLineWidth: 1.5,
   /** A Band's Edge (ADR-0002 decision 62): darker than the isolines, so it reads over them, and thinner than a zone's outline. */
-  bandLine: palette.inkMuted,
+  bandLine: palette.mutedForeground,
   bandLineWidth: 1,
   /**
    * Fill of zone `level` of `levels` nested Comfort zones, 0 the outermost:
    * the slot's hue, its opacity rising evenly from 0.2 at the outermost, so
-   * every zone shows on the paper, to 0.4 at the innermost; a lone zone is
+   * every zone shows on the background, to 0.4 at the innermost; a lone zone is
    * 0.4 (ADR-0002 decision 71).
    */
   zoneFill: (hue: SlotHue, level: number, levels: number): string =>
     `rgba(${channelsOf(hue).join(", ")}, ${0.2 + 0.2 * (levels === 1 ? 1 : level / (levels - 1))})`,
-  /** The plot area's ground, which a band painted nowhere shows: the page's paper. */
-  ground: palette.paper,
+  /** The plot area's background, which a band painted nowhere shows: the palette's white `background`, as a card's. */
+  plotBackground: palette.background,
   isoline: palette.lineStrong,
   isolineWidth: 1,
   saturationLine: palette.lineHeavy,
   saturationLineWidth: 1.5,
-  markerEdge: palette.paper,
-  /** The hover readout on the pointer (ADR-0002 decision 67, rule 5): the page's text in its caption's size, on its paper, edged with a rule. */
-  readoutFont: { family: lettering.family, size: lettering.captionSize, color: palette.ink },
-  readoutGround: palette.paper,
-  readoutEdge: palette.line,
+  markerEdge: palette.background,
+  /** The hover readout on the pointer (ADR-0002 decision 67, rule 5): the page's text in its caption's size, on its background, bordered with a rule. */
+  readoutFont: { family: lettering.family, size: lettering.captionSize, color: palette.foreground },
+  readoutBackground: palette.background,
+  readoutBorder: palette.border,
 } as const;

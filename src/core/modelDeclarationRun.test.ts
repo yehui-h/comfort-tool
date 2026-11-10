@@ -10,38 +10,24 @@
  * axis range a chart reads off it — is the sibling `modelDeclaration.test.ts`'s.
  */
 import { describe, expect, it } from "vitest";
-import { classifyFromBins, pmv_ppd_iso, type ClassifierBins } from "jsthermalcomfort";
+import { classifyFromBins, pmv_ppd_iso } from "jsthermalcomfort";
 import { registeredModels } from "$lib/models";
 import { pmvPpdIso } from "$lib/models/pmvPpdIso";
 import { chartType } from "./chartType";
 import {
   adaptiveChartOf,
+  classifierOf,
   dynamicChartOf,
   requireAxisRange,
   type ChartAxes,
   type DeclaredScan,
+  type LibraryInputs,
+  type ModelDeclaration,
   type Range,
-  type RegisteredModel,
-  type Values,
 } from "./modelDeclaration";
-import { resultValue, runOn } from "./modelRun";
-import { DEFAULT_ATMOSPHERIC_PRESSURE, quantities, quantityFor, type Quantity } from "./quantities";
-import { startingSlot, withEnteredValues, type Slot } from "./slot";
-
-/**
- * The classified output the declared bands cut, found by object identity:
- * nothing in `_INFO` names the quantity a classifier belongs to, which is why
- * the declaration pairs them by reference in the first place (ADR-0002
- * decision 27).
- */
-function classifiedOutputOf(model: RegisteredModel, bins: ClassifierBins): Quantity {
-  const key = Object.entries(model.info.outputs).find(([, output]) => output.classifier === bins)?.[0];
-  const quantity = key === undefined ? undefined : quantityFor(key);
-  if (!quantity) {
-    throw new Error(`${model.info.label} declares bands that classify none of its outputs`);
-  }
-  return quantity;
-}
+import { outputValue, runOn } from "./modelRun";
+import { DEFAULT_ATMOSPHERIC_PRESSURE, quantities, type Quantity } from "./quantities";
+import { defaultSlot, withEnteredValues, type Slot } from "./slot";
 
 /**
  * The ISO declaration scanning nothing, its one chart the adaptive chart, as
@@ -52,10 +38,10 @@ const isoWithAdaptiveChart = {
   ...pmvPpdIso,
   scan: undefined,
   charts: [{ type: chartType.adaptive, axes: { x: quantities.tdb, y: quantities.v }, limits: () => [] }],
-} satisfies RegisteredModel;
+} satisfies ModelDeclaration;
 
 /** The axes of `model`'s chart that has some: its dynamic chart's, else its adaptive chart's. */
-function chartAxesOf(model: RegisteredModel): ChartAxes | undefined {
+function chartAxesOf(model: ModelDeclaration): ChartAxes | undefined {
   return (dynamicChartOf(model) ?? adaptiveChartOf(model))?.axes;
 }
 
@@ -64,8 +50,8 @@ function chartAxesOf(model: RegisteredModel): ChartAxes | undefined {
  * declared defaults, the range the axis is drawn over, the slot at a position
  * along it, and the run's value for a quantity there.
  */
-function alongTheXAxis(model: RegisteredModel, axes: ChartAxes) {
-  const defaults = startingSlot(model);
+function alongTheXAxis(model: ModelDeclaration, axes: ChartAxes) {
+  const defaults = defaultSlot(model);
   const axis = axes.x;
   const at = (position: number) => withEnteredValues(defaults, new Map([[axis, position]]));
   return {
@@ -73,7 +59,7 @@ function alongTheXAxis(model: RegisteredModel, axes: ChartAxes) {
     range: requireAxisRange(model, axis),
     at,
     valueAt: (position: number, quantity: Quantity) => {
-      return resultValue(runOn(at(position), model, DEFAULT_ATMOSPHERIC_PRESSURE), quantity);
+      return outputValue(runOn(at(position), model, DEFAULT_ATMOSPHERIC_PRESSURE), quantity);
     },
   };
 }
@@ -108,12 +94,12 @@ function bracketAcross(outputAt: (position: number) => number, range: Range, edg
  * an Edge when only one cut is misplaced, which is why the rest of the probes
  * go there.
  */
-function driftProbes(model: RegisteredModel, axes: ChartAxes, scan: DeclaredScan): Slot[] {
+function driftProbes(model: ModelDeclaration, axes: ChartAxes, scan: DeclaredScan): Slot[] {
   const { defaults, range, at, valueAt } = alongTheXAxis(model, axes);
   const outputAt = (position: number) => Number(valueAt(position, scan.output));
 
   const probes = [defaults];
-  for (const edge of scan.classifier.edges) {
+  for (const edge of classifierOf(model.info, scan.bands).edges) {
     const bracket = bracketAcross(outputAt, range, edge);
     if (bracket) {
       probes.push(at(bracket[0]), at(bracket[1]));
@@ -123,21 +109,21 @@ function driftProbes(model: RegisteredModel, axes: ChartAxes, scan: DeclaredScan
 }
 
 /** Asserts that the scan's bands cut the run's output where the run itself does, at every probe. */
-function expectBandsToBinAsRunDoes(model: RegisteredModel): void {
+function expectBandsToBinAsRunDoes(model: ModelDeclaration): void {
   const { scan } = model;
   const chart = dynamicChartOf(model);
   // A model that scans nothing declares no bands to check.
   if (!scan || !chart) return;
-  const classified = classifiedOutputOf(model, scan.classifier);
+  const classifier = classifierOf(model.info, scan.bands);
   const probes = driftProbes(model, chart.axes, scan);
   // A model whose Edges the axis cannot reach would pass vacuously.
   expect(probes.length, model.info.label).toBeGreaterThan(1);
   for (const slot of probes) {
-    const result = runOn(slot, model, DEFAULT_ATMOSPHERIC_PRESSURE);
-    const value = resultValue(result, scan.output);
+    const outputs = runOn(slot, model, DEFAULT_ATMOSPHERIC_PRESSURE);
+    const value = outputValue(outputs, scan.output);
     expect(typeof value, `${model.info.label} ${scan.output.label}`).toBe("number");
-    expect(classifyFromBins(Number(value), scan.classifier), `${model.info.label} at ${scan.output.label} ${String(value)}`).toBe(
-      resultValue(result, classified),
+    expect(classifyFromBins(Number(value), classifier), `${model.info.label} at ${scan.output.label} ${String(value)}`).toBe(
+      outputValue(outputs, scan.bands),
     );
   }
 }
@@ -155,7 +141,7 @@ describe("the scan's declared bands", () => {
       run: () => {
         throw new Error("a chart with no bands was probed");
       },
-    } satisfies RegisteredModel;
+    } satisfies ModelDeclaration;
     expect(() => expectBandsToBinAsRunDoes(neverRun)).not.toThrow();
   });
 });
@@ -174,12 +160,12 @@ const ROUNDED_GRID_PER_UNIT = 100;
 const SAMPLES_ALONG_THE_AXIS = 25;
 
 /**
- * The first column of `model`'s table whose result is a number: a classified
+ * The first column of `model`'s table whose output is a number: a classified
  * output's category leads the table (ADR-0002 decision 85, rule 1), and a
- * category or a yes or no has no decimals to round.
+ * label or a flag has no decimals to round.
  */
-function firstNumberColumn(model: RegisteredModel): Quantity | undefined {
-  return model.table.find((column) => column.kind !== "category" && column.kind !== "yesNo");
+function firstNumberColumn(model: ModelDeclaration): Quantity | undefined {
+  return model.table.find((column) => column.kind !== "label" && column.kind !== "flag");
 }
 
 /**
@@ -194,7 +180,7 @@ function firstNumberColumn(model: RegisteredModel): Quantity | undefined {
  * the grid now and then, and one such value says nothing.
  */
 function unroundedSampleCount(
-  model: RegisteredModel,
+  model: ModelDeclaration,
   axes: ChartAxes,
   quantity: Quantity | undefined = firstNumberColumn(model),
 ): number {
@@ -206,7 +192,7 @@ function unroundedSampleCount(
   // one; left to the comparison below it would read as rounding. Heat Index
   // returns NaN below 27 °C unless the call turns `limit_inputs` off, so the
   // next model would fail this test with the wrong reason printed. A column
-  // that is a category or a yes-or-no answer has no decimals to check.
+  // that is a label or a flag has no decimals to check.
   const finite = (position: number) => {
     const value = valueAt(position, quantity);
     if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -230,25 +216,25 @@ function unroundedSampleCount(
 /**
  * The ISO declaration with its rounding switch under the test's control. The
  * call is written out rather than wrapped, because rounding cannot be added to
- * `run`'s result after the fact; only the switch differs between the two halves
+ * `run`'s outputs after the fact; only the switch differs between the two halves
  * of the proof below.
  */
 function isoRounding(round_output: boolean) {
   return {
     ...pmvPpdIso,
-    run: (values: Values) =>
+    run: (inputs: LibraryInputs) =>
       pmv_ppd_iso({
-        tdb: values.tdb,
-        tr: values.tr,
-        vr: values.vr,
-        rh: values.rh,
-        met: values.met,
-        clo: values.clo,
+        tdb: inputs.tdb,
+        tr: inputs.tr,
+        vr: inputs.vr,
+        rh: inputs.rh,
+        met: inputs.met,
+        clo: inputs.clo,
         wme: 0,
         limit_inputs: false,
         round_output,
       }),
-  } satisfies RegisteredModel;
+  } satisfies ModelDeclaration;
 }
 
 describe("run's numbers", () => {

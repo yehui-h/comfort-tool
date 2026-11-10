@@ -68,7 +68,7 @@ const displayUnits = {
       fromSi: (celsius) => (celsius * 9) / 5 + 32,
     },
   },
-  // A difference of two temperatures, UTCI's `tr_minus_tdb`: a degree
+  // A difference of two temperatures, UTCI's `"tr - tdb"`: a degree
   // Fahrenheit is 5/9 of a degree Celsius, and no 32 °F offset applies.
   temperatureDifference: {
     si: { symbol: "°C", step: 0.1, toSi: identity, fromSi: identity },
@@ -115,12 +115,12 @@ const displayUnits = {
   angle: sameInBothSystems({ symbol: "°", step: 1 }),
   irradiance: sameInBothSystems({ symbol: "W/m²", step: 10 }),
   fraction: sameInBothSystems({ symbol: "", step: 0.01 }),
-  // A classified output (`tsv`, `stress_category`): no unit, no meaningful
+  // A band's label (`tsv`, `stress_category`): no unit, no meaningful
   // step — it is never an editable input.
-  category: sameInBothSystems({ symbol: "", step: 0 }),
-  // A boolean output (`acceptability_80`, `compliance`), shown as "Yes" or
-  // "No": no unit, and like a category never an editable input.
-  yesNo: sameInBothSystems({ symbol: "", step: 0 }),
+  label: sameInBothSystems({ symbol: "", step: 0 }),
+  // A yes-or-no output (`acceptability_80`, `compliance`), shown as "Yes" or
+  // "No": no unit, and like a label never an editable input.
+  flag: sameInBothSystems({ symbol: "", step: 0 }),
   pressure: pressureUnits,
   atmosphericPressure: pressureUnits,
 } satisfies Record<QuantityKind, UnitPair>;
@@ -132,12 +132,12 @@ export function displayUnitFor(quantity: Quantity, system: UnitSystem): DisplayU
 
 /** `quantity`'s label with its display unit in brackets, or the bare label when the unit has no symbol. */
 export function labelWithUnit(quantity: Quantity, unit: DisplayUnit): string {
-  return nameWithUnit(quantity.label, unit);
+  return textWithUnit(quantity.label, unit);
 }
 
-/** `name` with `unit` in brackets, or bare when the unit has no symbol: a label that is not a quantity's own. */
-export function nameWithUnit(name: string, unit: DisplayUnit): string {
-  return unit.symbol ? `${name} (${unit.symbol})` : name;
+/** `text` with `unit` in brackets, or bare when the unit has no symbol: a label that is not a quantity's own. */
+export function textWithUnit(text: string, unit: DisplayUnit): string {
+  return unit.symbol ? `${text} (${unit.symbol})` : text;
 }
 
 /**

@@ -3,13 +3,13 @@ import {
   requireAxisRange,
   requireScan,
   type ChartAxes,
-  type RegisteredModel,
+  type ModelDeclaration,
 } from "$lib/core/modelDeclaration";
 import type { Quantity } from "$lib/core/quantities";
 import { enteredQuantities, enteredValue, underEntryModes, withEntryModes, type ValueEntryModes } from "$lib/core/slot";
 import { displayUnitFor } from "$lib/core/units";
 import type { ChartRequest } from "./chartRequest";
-import type { ChartSpec, LegendEntry, Trace } from "./chartSpec";
+import type { ChartSpec, LegendItem, Trace } from "./chartSpec";
 import { fieldPaintFor } from "./fieldPaint";
 import type { ScanFrame, ScannedField } from "./scan";
 import { axisFor, markerFor } from "./specParts";
@@ -20,7 +20,7 @@ import { axisFor, markerFor } from "./specParts";
  * each across its declared range.
  */
 export function dynamicScanFrameFor(
-  model: RegisteredModel,
+  model: ModelDeclaration,
   axes: ChartAxes,
   modes: ValueEntryModes,
   atmosphericPressure: number,
@@ -60,15 +60,15 @@ export function dynamicSpec(request: ChartRequest, axes: ChartAxes, scans?: read
   const xUnit = displayUnitFor(x, unitSystem);
   const yUnit = displayUnitFor(y, unitSystem);
 
-  const legend: LegendEntry[] = [];
-  /** Each slot's legend entries, zones first, so the legend reads slot by slot. */
-  const legendOfSlot = request.slots.map((): LegendEntry[] => []);
+  const legend: LegendItem[] = [];
+  /** Each slot's legend items, zones first, so the legend reads slot by slot. */
+  const legendOfSlot = request.slots.map((): LegendItem[] => []);
 
   const paint = fieldPaintFor(request, dynamicScanFrameFor(model, axes, modes, atmosphericPressure), scans);
   // The one drawing order (ADR-0002 decision 62), with no chrome: the fills, the outlines, the hover grid, the markers.
   const traces: Trace[] = [...paint.fills, ...paint.outlines, paint.hoverGrid];
   legend.push(...paint.bandLegend);
-  paint.zoneLegendOfSlot.forEach((entries, position) => legendOfSlot[position].push(...entries));
+  paint.zoneLegendOfSlot.forEach((items, position) => legendOfSlot[position].push(...items));
 
   request.slots.forEach((charted, position) => {
     const slot = withEntryModes(charted.slot, modes, model);
@@ -77,7 +77,7 @@ export function dynamicSpec(request: ChartRequest, axes: ChartAxes, scans?: read
     if (markerX !== undefined && markerY !== undefined) {
       const marker = markerFor(charted, xUnit.fromSi(markerX), yUnit.fromSi(markerY));
       traces.push(marker.trace);
-      legendOfSlot[position].push(marker.legendEntry);
+      legendOfSlot[position].push(marker.legendItem);
     }
   });
   legend.push(...legendOfSlot.flat());
@@ -99,7 +99,7 @@ export function dynamicSpec(request: ChartRequest, axes: ChartAxes, scans?: read
  * collapse onto a single quantity. x === y is not a chart (ADR §4.4), so the
  * y axis moves to the next quantity that can carry one.
  */
-export function resolvedAxes(model: RegisteredModel, axes: ChartAxes, modes: ValueEntryModes): ChartAxes {
+export function resolvedAxes(model: ModelDeclaration, axes: ChartAxes, modes: ValueEntryModes): ChartAxes {
   const x = underEntryModes(axes.x, modes);
   const y = underEntryModes(axes.y, modes);
   if (y !== x) {
@@ -113,6 +113,6 @@ export function resolvedAxes(model: RegisteredModel, axes: ChartAxes, modes: Val
  * enters, minus anything with no axis range ({@link axisRangeFor}) — the
  * range is what the scan sweeps between.
  */
-export function dynamicAxisQuantities(model: RegisteredModel, modes: ValueEntryModes): Quantity[] {
+export function dynamicAxisQuantities(model: ModelDeclaration, modes: ValueEntryModes): Quantity[] {
   return enteredQuantities(model, modes).filter((quantity) => axisRangeFor(model, quantity) !== undefined);
 }

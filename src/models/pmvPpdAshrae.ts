@@ -1,13 +1,8 @@
-import {
-  PMV_COMPLIANCE_INTERVAL_ASHRAE,
-  pmv_ppd_ashrae,
-  PMV_PPD_ASHRAE_INFO,
-  PMV_THERMAL_SENSATION_VOTE_BINS_ASHRAE,
-} from "jsthermalcomfort";
-import { clothingFromOutdoorTemperature, customEnsemble, solarGainOnOccupants } from "$lib/core/calculators";
+import { pmv_ppd_ashrae, PMV_PPD_ASHRAE_INFO } from "jsthermalcomfort";
+import { cloTout, customEnsemble, solarGain } from "$lib/core/calculators";
 import { chartType } from "$lib/core/chartType";
 import { intervalZone } from "$lib/core/comfortZones";
-import type { OptionSpec, RegisteredModel } from "$lib/core/modelDeclaration";
+import type { ModelDeclaration, OptionSpec } from "$lib/core/modelDeclaration";
 import { quantities } from "$lib/core/quantities";
 import { copy } from "$lib/text/copy";
 
@@ -20,7 +15,7 @@ const q = quantities;
 // the deployed tool (rewrite plan, Phase 4b item 1): up to three upper bounds
 // on `vr`, at ISO 7726's air-speed-weighted operative temperature, applied
 // only below 0.7 clo and 1.3 met, and shown on the entered `v`. The deployed
-// tool checks the entered `v` against one limit clamped to 0.2–0.8 m/s, at
+// tool checks the entered `v` against one bound clamped to 0.2–0.8 m/s, at
 // `(tdb + tr) / 2`, at 0.7 clo and 1.3 met or below, where alone it offers the
 // option. The difference is not ported.
 const airSpeedControl: OptionSpec = {
@@ -36,33 +31,32 @@ export const pmvPpdAshrae = {
   // since the app gates entered values itself and reads the rows the run
   // breaks off `warnings`, the air-speed rule's among them; `round_output:
   // false`, since the charts trace the zone on a scan of this `pmv` and
-  // the display rounds; `suppress_warnings: true`, since the cooling effect logs
-  // each time it assumes 0 and a chart scan calls it per cell. No `units`: the
+  // the display rounds. No `suppress_warnings`: the library takes no such key,
+  // and puts what it would log on `warnings` as a notice row. No `units`: the
   // library's default is SI, and so is the boundary (ADR-0002 decision 1). No
   // `standard`: the library's default edition, the one its info lists first
   // (decision 86, rule 3).
-  run: (values, options) =>
+  run: (inputs, options) =>
     pmv_ppd_ashrae({
-      tdb: values.tdb,
-      tr: values.tr,
-      vr: values.vr,
-      rh: values.rh,
-      met: values.met,
-      clo: values.clo,
+      tdb: inputs.tdb,
+      tr: inputs.tr,
+      vr: inputs.vr,
+      rh: inputs.rh,
+      met: inputs.met,
+      clo: inputs.clo,
       wme: 0,
       limit_inputs: false,
       round_output: false,
-      suppress_warnings: true,
       airspeed_control: options(airSpeedControl),
     }),
   inputs: [
     { quantity: q.tdb, value: 25 },
-    { quantity: q.tr, value: 25, calculators: [solarGainOnOccupants] },
+    { quantity: q.tr, value: 25, calculators: [solarGain] },
     { quantity: q.v, value: 0.1 },
     { option: airSpeedControl },
     { quantity: q.rh, value: 50 },
     { quantity: q.met, value: 1.1 },
-    { quantity: q.clo, value: 0.5, calculators: [customEnsemble, clothingFromOutdoorTemperature] },
+    { quantity: q.clo, value: 0.5, calculators: [customEnsemble, cloTout] },
   ],
   // Demonstration ranges: the deployed tool's where it draws the quantity and
   // its range holds what may be entered (`rh`), else what the model is given
@@ -92,8 +86,8 @@ export const pmvPpdAshrae = {
   // against.
   scan: {
     output: q.pmv,
-    classifier: PMV_THERMAL_SENSATION_VOTE_BINS_ASHRAE,
-    comfortZones: [intervalZone(copy.comfortZone, PMV_COMPLIANCE_INTERVAL_ASHRAE)],
+    bands: q.tsv,
+    comfortZones: [intervalZone(copy.comfortZone, PMV_PPD_ASHRAE_INFO.outputs.compliance.interval)],
   },
   charts: [{ type: chartType.psychrometric }, { type: chartType.dynamic, axes: { x: q.tdb, y: q.v } }],
-} satisfies RegisteredModel;
+} satisfies ModelDeclaration;

@@ -1,6 +1,6 @@
 import { adaptive_ashrae, ADAPTIVE_ASHRAE_INFO } from "jsthermalcomfort";
 import { chartType } from "$lib/core/chartType";
-import type { RegisteredModel, ZoneLimits } from "$lib/core/modelDeclaration";
+import type { ModelDeclaration, ZoneLimits } from "$lib/core/modelDeclaration";
 import { quantities } from "$lib/core/quantities";
 import { adaptive_ashrae_zone, type AdaptiveAshraeBand, type AdaptivePoint } from "$lib/temporary-library/adaptive_ashrae_zone";
 
@@ -24,12 +24,12 @@ export const adaptiveAshrae = {
   // before deriving the limits and the answers from it, and the display
   // rounds. No `units`: the library's default is SI, and so is the boundary
   // (ADR-0002 decision 1). The function takes no `standard`.
-  run: (values) =>
+  run: (inputs) =>
     adaptive_ashrae({
-      tdb: values.tdb,
-      tr: values.tr,
-      t_running_mean: values.t_running_mean,
-      v: values.v,
+      tdb: inputs.tdb,
+      tr: inputs.tr,
+      t_running_mean: inputs.t_running_mean,
+      v: inputs.v,
       limit_inputs: false,
       round_output: false,
     }),
@@ -61,7 +61,7 @@ export const adaptiveAshrae = {
   ],
   charts: [
     // On running mean × operative temperature in every entry mode. The marker
-    // sits at the library's air-speed-weighted `t_o` of dry-bulb and mean
+    // sits at the library's air-speed-weighted `operative_tmp` of dry-bulb and mean
     // radiant under separate entry (`slot.operativeTemperatureOf`), where the
     // run's two answers are read, and not at the plain mean the deployed tool
     // puts it at.
@@ -78,8 +78,8 @@ export const adaptiveAshrae = {
     {
       type: chartType.adaptive,
       axes: { x: q.t_running_mean, y: q.operative_tmp },
-      limits: ({ values, xRange }) => {
-        const zone = adaptive_ashrae_zone({ v: values.v, t_running_mean_range: [xRange.min, xRange.max] });
+      limits: ({ inputs, xRange }) => {
+        const zone = adaptive_ashrae_zone(inputs.v, xRange.min, xRange.max);
         return [
           toZoneLimits(zone.acceptability_80, q.acceptability_80.label),
           toZoneLimits(zone.acceptability_90, q.acceptability_90.label),
@@ -87,4 +87,4 @@ export const adaptiveAshrae = {
       },
     },
   ],
-} satisfies RegisteredModel;
+} satisfies ModelDeclaration;

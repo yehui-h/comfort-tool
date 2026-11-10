@@ -4,13 +4,13 @@
  * add a Slot offset, set an option, convert an entry mode, seed a model's
  * defaults and build the slot a model starts on; and the get-or-throws they
  * read through.
- * Turning a slot into the library's params is `core/libraryInputs.ts`'s and
- * adjusting it to bounds `core/modelSwitch.ts`'s; both depend on this module,
+ * Turning a slot into the library's inputs is `core/libraryInputs.ts`'s and
+ * cutting it to bounds `core/modelSwitch.ts`'s; both depend on this module,
  * and this module on neither.
  */
-import { t_o, v_relative } from "jsthermalcomfort";
-import { clo_dynamic_inverse } from "$lib/temporary-library/clo_dynamic_inverse";
+import { operative_tmp, v_relative } from "jsthermalcomfort";
 import { v_relative_inverse } from "$lib/temporary-library/v_relative_inverse";
+import type { ClothingCorrectionInputs } from "./clothingCorrection";
 import {
   airSpeedMode,
   clothingMode,
@@ -25,19 +25,20 @@ import {
 import {
   axisRangeFor,
   clothingCorrectionOf,
+  declaredQuantitiesOf,
+  hasAirSpeedGroup,
   hasClothingGroup,
   hasHumidityGroup,
   hasTemperatureGroup,
-  inputsOf,
   optionsOf,
   standardOf,
-  takesRelativeAirSpeed,
   type DeclaredOption,
   type DeclaredQuantity,
+  type ModelDeclaration,
   type OptionSpec,
-  type RegisteredModel,
 } from "./modelDeclaration";
 import { quantities, type Quantity } from "./quantities";
+import { isAshraeStandard } from "./standard";
 
 /**
  * The slice of an input slot that core reads. A plain interface, so core/
@@ -67,8 +68,8 @@ export type ValueEntryModes = Pick<Slot, "temperature" | "airSpeed" | "clothing"
 /** The entry modes a slot starts in, which are those a declaration writes its inputs in. */
 export const defaultEntryModes: ValueEntryModes = {
   temperature: { mode: temperatureMode.separate },
-  airSpeed: { mode: airSpeedMode.uncorrected },
-  clothing: { mode: clothingMode.uncorrected },
+  airSpeed: { mode: airSpeedMode.airSpeed },
+  clothing: { mode: clothingMode.clothingInsulation },
 };
 
 /** The entry modes `slot` is in, apart from the slot. */
@@ -99,13 +100,13 @@ export function areSameEntryModes(a: ValueEntryModes, b: ValueEntryModes): boole
  * axis is the library's `rh` in every mode ({@link panelQuantities}).
  */
 export interface ValueEntryGroup {
-  /** The slot's field that holds the group's mode: how the input panel tells the groups apart. */
-  readonly field: keyof ValueEntryModes;
+  /** The group's name, the slot's field that holds its mode: how the input panel tells the groups apart. */
+  readonly name: keyof ValueEntryModes;
   /** Every mode of the group, the one in {@link defaultEntryModes} among them. */
   readonly modes: readonly ValueEntryMode[];
   /** Whether `model` has the group: read from the model, not declared (ADR §4.2). */
-  readonly appliesTo: (model: RegisteredModel) => boolean;
-  /** The group's mode among `modes`, read from its {@link field}. */
+  readonly appliesTo: (model: ModelDeclaration) => boolean;
+  /** The group's mode among `modes`, read from the field named {@link ValueEntryGroup.name}. */
   readonly modeOf: (modes: ValueEntryModes) => ValueEntryMode;
   /**
    * `slot` re-expressed under `mode`, one of the group's, for `model`: the
@@ -115,7 +116,7 @@ export interface ValueEntryGroup {
    * ({@link withEntryModes}), and `core/modelSwitch.ts` to a slot bound for a
    * model that has no such group, under the model it leaves.
    */
-  readonly convert: (slot: Slot, mode: ValueEntryMode, model: RegisteredModel) => Slot;
+  readonly convert: (slot: Slot, mode: ValueEntryMode, model: ModelDeclaration) => Slot;
   /** Set for an activity-adjusted group, whose model is given the entry of one mode as it is and of the other corrected. */
   readonly correction?: EntryCorrection;
 }
@@ -131,36 +132,36 @@ export interface ValueEntryGroup {
  */
 export interface EntryCorrection {
   /** The quantity the model's info names what the model is given by, and so bounds. */
-  readonly taken: Quantity;
+  readonly takenByModel: Quantity;
   /** The mode whose entry the model is given as it is. */
   readonly corrected: ValueEntryMode;
 }
 
-// Each group's mode is read from its field, so the table names the field once.
+// Each group's mode is read from the field of the same name, so the table names the field once.
 export const valueEntryGroups: readonly ValueEntryGroup[] = (
   [
     {
-      field: "temperature",
+      name: "temperature",
       modes: Object.values(temperatureMode),
       appliesTo: hasTemperatureGroup,
       convert: withTemperatureMode,
     },
     {
-      field: "airSpeed",
+      name: "airSpeed",
       modes: Object.values(airSpeedMode),
-      appliesTo: takesRelativeAirSpeed,
+      appliesTo: hasAirSpeedGroup,
       convert: withAirSpeedMode,
-      correction: { taken: q.vr, corrected: airSpeedMode.corrected },
+      correction: { takenByModel: q.vr, corrected: airSpeedMode.relativeAirSpeed },
     },
     {
-      field: "clothing",
+      name: "clothing",
       modes: Object.values(clothingMode),
       appliesTo: hasClothingGroup,
       convert: withClothingMode,
-      correction: { taken: q.clo, corrected: clothingMode.corrected },
+      correction: { takenByModel: q.clo, corrected: clothingMode.dynamicClothingInsulation },
     },
   ] satisfies Omit<ValueEntryGroup, "modeOf">[]
-).map((group) => ({ ...group, modeOf: (modes: ValueEntryModes) => modes[group.field].mode }));
+).map((group) => ({ ...group, modeOf: (modes: ValueEntryModes) => modes[group.name].mode }));
 
 /**
  * The quantity that stands in for `quantity` under `modes`.
@@ -203,7 +204,7 @@ export function requireHumidity(slot: Slot): NonNullable<Slot["humidity"]> {
  * The slot's dry-bulb temperature: the entered `tdb`, or the operative entry
  * standing in for it under operative mode.
  */
-export function resolvedTdb(slot: Slot): number {
+export function dryBulbTemperatureOf(slot: Slot): number {
   return slot.values.get(q.tdb) ?? requireValue(slot.values, q.operative_tmp);
 }
 
@@ -216,13 +217,14 @@ export function resolvedTdb(slot: Slot): number {
  */
 export function relativeHumidityOf(slot: Slot, atmosphericPressure: number): number {
   const { mode, value } = requireHumidity(slot);
-  return mode.toRelativeHumidity(value, resolvedTdb(slot), atmosphericPressure);
+  return mode.toRelativeHumidity(value, dryBulbTemperatureOf(slot), atmosphericPressure);
 }
 
 /**
  * The slot's operative temperature: the entry itself under operative entry,
- * else the library's `t_o(tdb, tr, v, standardOf(model))`, weighed by the
- * model's own standard, or by the library's default for a model that has none.
+ * else the library's `operative_tmp(tdb, tr, v, method)`, by its ASHRAE
+ * method for a model of an ASHRAE standard and by its ISO method, the
+ * library's default, for any other model or one with no standard.
  * The air speed it weighs by is the slot's air-speed entry: the relative air
  * speed under relative air speed entry, the one air speed the slot then holds,
  * as the library's own ASHRAE 55 check weighs by the `vr` it is given.
@@ -230,21 +232,20 @@ export function relativeHumidityOf(slot: Slot, atmosphericPressure: number): num
  * marks a slot in separate entry (ADR-0002 decisions 37 and 62), and the
  * value the switch into operative entry stores ({@link withTemperatureMode},
  * decision 39), so the click does not move the marker. The one place the app
- * calls `t_o`.
+ * calls `operative_tmp`.
  *
  * Off the deployed chart's marker, the plain mean `(tdb + tr) / 2`, whenever
  * `tdb ≠ tr`, except under ASHRAE 55 below 0.2 m/s and under ISO 7726 at
  * exactly 0.1 m/s, where the library's weighting is one half.
  */
-export function operativeTemperatureOf(slot: Slot, model: RegisteredModel): number {
+export function operativeTemperatureOf(slot: Slot, model: ModelDeclaration): number {
   if (slot.temperature.mode === temperatureMode.operative) {
     return requireValue(slot.values, q.operative_tmp);
   }
-  // `t_o` names fewer standards than a model may have (not ISO 7933), and
-  // throws on one it does not; the cast leaves that call to the library.
-  const standard = standardOf(model) as Parameters<typeof t_o>[3];
+  const standard = standardOf(model);
+  const method = standard !== undefined && isAshraeStandard(standard) ? "ashrae" : "ISO";
   const airSpeed = requireValue(slot.values, slot.airSpeed.mode.axis);
-  return t_o(requireValue(slot.values, q.tdb), requireValue(slot.values, q.tr), airSpeed, standard);
+  return operative_tmp(requireValue(slot.values, q.tdb), requireValue(slot.values, q.tr), airSpeed, method);
 }
 
 /**
@@ -257,7 +258,7 @@ export function operativeTemperatureOf(slot: Slot, model: RegisteredModel): numb
  * `v_relative`.
  */
 export function relativeAirSpeedOf(slot: Slot): number {
-  if (slot.airSpeed.mode === airSpeedMode.corrected) {
+  if (slot.airSpeed.mode === airSpeedMode.relativeAirSpeed) {
     return requireValue(slot.values, q.vr);
   }
   return v_relative(requireValue(slot.values, q.v), requireValue(slot.values, q.met));
@@ -273,32 +274,25 @@ export function relativeAirSpeedOf(slot: Slot): number {
  * the value the switch into dynamic clothing entry stores
  * ({@link withClothingMode}), so the person sees the number the model was
  * getting. The one place the app corrects a clothing insulation, by the one
- * rule {@link withClothingMode} and {@link clothingGiving} invert
- * ({@link clothingCorrectionAt}).
+ * rule {@link withClothingMode} and {@link clothingGiving} invert, at
+ * {@link correctionInputsOf}.
  */
-export function dynamicClothingOf(slot: Slot, model: RegisteredModel): number {
-  if (slot.clothing.mode === clothingMode.corrected) {
+export function dynamicClothingInsulationOf(slot: Slot, model: ModelDeclaration): number {
+  if (slot.clothing.mode === clothingMode.dynamicClothingInsulation) {
     return requireValue(slot.values, q.clo_dynamic);
   }
   const clothing = requireValue(slot.values, q.clo);
-  return clothingCorrectionAt(slot, model)?.(clothing) ?? clothing;
+  return clothingCorrectionOf(model)?.correct(clothing, correctionInputsOf(slot)) ?? clothing;
 }
 
 /**
- * The clothing correction of `model`'s standard at the slot's own metabolic
- * rate and relative air speed ({@link relativeAirSpeedOf}), a function of the
- * clothing insulation alone: what {@link dynamicClothingOf} corrects by and
- * {@link withClothingMode} and {@link clothingGiving} invert.
- * `undefined` for a model without the
- * clothing entry group.
+ * The slot's own metabolic rate and relative air speed
+ * ({@link relativeAirSpeedOf}), as a clothing correction reads them: where
+ * {@link dynamicClothingInsulationOf} corrects and {@link clothingGiving} inverts.
  */
-function clothingCorrectionAt(slot: Slot, model: RegisteredModel): ((clo: number) => number) | undefined {
-  const correct = clothingCorrectionOf(model);
-  if (!correct) {
-    return undefined;
-  }
+function correctionInputsOf(slot: Slot): ClothingCorrectionInputs {
   // Getters: a rule reads only what it takes, so ASHRAE 55's asks for no air speed.
-  const resolved = {
+  return {
     get met() {
       return requireValue(slot.values, q.met);
     },
@@ -306,7 +300,6 @@ function clothingCorrectionAt(slot: Slot, model: RegisteredModel): ((clo: number
       return relativeAirSpeedOf(slot);
     },
   };
-  return (clo) => correct(clo, resolved);
 }
 
 /**
@@ -316,19 +309,18 @@ function clothingCorrectionAt(slot: Slot, model: RegisteredModel): ((clo: number
  * given exactly `vr`.
  */
 function airSpeedGiving(vr: number, slot: Slot): number {
-  return v_relative_inverse({ vr, met: requireValue(slot.values, q.met) });
+  return v_relative_inverse(vr, requireValue(slot.values, q.met));
 }
 
 /**
  * The clothing insulation `model`'s rule corrects to `dynamic` at the slot's
- * own values ({@link clothingCorrectionAt}), by the temporary library's
- * `clo_dynamic_inverse`, what the switch back to clothing insulation entry
+ * own values ({@link correctionInputsOf}), by the rule's inverse in the
+ * temporary library, what the switch back to clothing insulation entry
  * stores ({@link withClothingMode}). The number itself for a model without a
  * rule.
  */
-function clothingGiving(dynamic: number, slot: Slot, model: RegisteredModel): number {
-  const correction = clothingCorrectionAt(slot, model);
-  return correction ? clo_dynamic_inverse({ clo_dynamic: dynamic, correction }) : dynamic;
+function clothingGiving(dynamic: number, slot: Slot, model: ModelDeclaration): number {
+  return clothingCorrectionOf(model)?.invert(dynamic, correctionInputsOf(slot)) ?? dynamic;
 }
 
 /**
@@ -360,9 +352,9 @@ export type PanelRow = Required<Pick<DeclaredQuantity, "quantity" | "calculators
  * mean radiant temperature's does, and the dynamic clothing row what the
  * clothing insulation's does (ADR-0002 decision 75 rule 3).
  */
-function enteredRows(model: RegisteredModel, modes: ValueEntryModes): PanelRow[] {
-  let rows = model.inputs.map((entry): PanelRow =>
-    "option" in entry ? entry : { quantity: entry.quantity, calculators: entry.calculators ?? [] },
+function enteredRows(model: ModelDeclaration, modes: ValueEntryModes): PanelRow[] {
+  let rows = model.inputs.map((input): PanelRow =>
+    "option" in input ? input : { quantity: input.quantity, calculators: input.calculators ?? [] },
   );
   for (const group of valueEntryGroups) {
     if (!group.appliesTo(model)) {
@@ -396,7 +388,7 @@ function quantitiesOf(rows: readonly PanelRow[]): Quantity[] {
  * modes in `modes` ({@link enteredRows}). The dynamic chart offers them as
  * axes; the input panel lays out {@link panelRows}.
  */
-export function enteredQuantities(model: RegisteredModel, modes: ValueEntryModes): Quantity[] {
+export function enteredQuantities(model: ModelDeclaration, modes: ValueEntryModes): Quantity[] {
   return quantitiesOf(enteredRows(model, modes));
 }
 
@@ -406,26 +398,26 @@ export function enteredQuantities(model: RegisteredModel, modes: ValueEntryModes
  * itself for a slot that holds none. Only the panel swaps humidity; the
  * dynamic chart's axes keep the library's `rh`.
  */
-export function panelRows(model: RegisteredModel, slot: Slot): PanelRow[] {
+export function panelRows(model: ModelDeclaration, slot: Slot): PanelRow[] {
   return enteredRows(model, slot).map((row) =>
     "option" in row || row.quantity !== q.rh ? row : { ...row, quantity: slot.humidity?.mode.quantity ?? row.quantity },
   );
 }
 
 /** The quantities among {@link panelRows}, in order. */
-export function panelQuantities(model: RegisteredModel, slot: Slot): Quantity[] {
+export function panelQuantities(model: ModelDeclaration, slot: Slot): Quantity[] {
   return quantitiesOf(panelRows(model, slot));
 }
 
 /**
- * An entry group as the row that offers its modes reads it: the slot's field
- * that holds the group's mode, the group's modes in its table's order, and the
- * mode the slot is in. The humidity group is told apart by its field, since
- * its modes are another shape.
+ * An entry group as the row that offers its modes reads it: the group's name
+ * (the slot's field that holds its mode), the group's modes in its table's
+ * order, and the mode the slot is in. The humidity group is told apart by its
+ * name, since its modes are another shape.
  */
 export type RowEntryGroup =
-  | { readonly field: keyof ValueEntryModes; readonly modes: readonly ValueEntryMode[]; readonly mode: ValueEntryMode }
-  | { readonly field: "humidity"; readonly modes: readonly HumidityMode[]; readonly mode: HumidityMode };
+  | { readonly name: keyof ValueEntryModes; readonly modes: readonly ValueEntryMode[]; readonly mode: ValueEntryMode }
+  | { readonly name: "humidity"; readonly modes: readonly HumidityMode[]; readonly mode: HumidityMode };
 
 /**
  * The entry group whose modes the row of `quantity` offers, among the rows
@@ -435,12 +427,12 @@ export type RowEntryGroup =
  * dry-bulb row, which folds the mean radiant row with it, or on the operative
  * row; the humidity group on the row of the humidity entered.
  */
-export function rowEntryGroupOf(model: RegisteredModel, slot: Slot, quantity: Quantity): RowEntryGroup | undefined {
+export function rowEntryGroupOf(model: ModelDeclaration, slot: Slot, quantity: Quantity): RowEntryGroup | undefined {
   if (hasHumidityGroup(model) && quantity === slot.humidity?.mode.quantity) {
-    return { field: "humidity", modes: Object.values(humidityMode), mode: slot.humidity.mode };
+    return { name: "humidity", modes: Object.values(humidityMode), mode: slot.humidity.mode };
   }
   const group = valueEntryGroups.find((candidate) => candidate.appliesTo(model) && candidate.modeOf(slot).panel[0] === quantity);
-  return group && { field: group.field, modes: group.modes, mode: group.modeOf(slot) };
+  return group && { name: group.name, modes: group.modes, mode: group.modeOf(slot) };
 }
 
 /**
@@ -451,7 +443,7 @@ export function rowEntryGroupOf(model: RegisteredModel, slot: Slot, quantity: Qu
  * at `model`'s {@link operativeTemperatureOf}. A slot that holds no humidity
  * has no entered value for any humidity quantity.
  */
-export function enteredValue(slot: Slot, quantity: Quantity, model: RegisteredModel, atmosphericPressure: number): number | undefined {
+export function enteredValue(slot: Slot, quantity: Quantity, model: ModelDeclaration, atmosphericPressure: number): number | undefined {
   const { humidity } = slot;
   if (quantity === humidity?.mode.quantity) {
     return humidity.value;
@@ -517,28 +509,28 @@ export function withEnteredValues(slot: Slot, overrides: ReadonlyMap<Quantity, n
 }
 
 /**
- * The share of a quantity's axis range a slot first enabled is moved by, per
+ * The part of a quantity's axis range a slot first enabled is moved by, per
  * position past slot 1: the app's policy, not a library constant
  * (GLOSSARY.md, **Slot offset**).
  */
-const SLOT_OFFSET_SHARE = 1 / 20;
+const SLOT_OFFSET_PER_POSITION = 1 / 20;
 
 /**
- * The same slot with each value it holds moved up by `shares` times
- * {@link SLOT_OFFSET_SHARE} of its quantity's axis range on `model`
+ * The same slot with each value it holds moved up by `position` times
+ * {@link SLOT_OFFSET_PER_POSITION} of its quantity's axis range on `model`
  * ({@link axisRangeFor}): the Slot offset (GLOSSARY.md) of a slot first
- * enabled, one share for slot 2 and two for slot 3 (ADR-0002 decision 89's
+ * enabled at `position`, 1 for slot 2 and 2 for slot 3 (ADR-0002 decision 89's
  * revision of rule 8). A value whose quantity has no axis range on `model`,
  * as one only another model names, is left. Humidity is held apart from the
- * values, so no share reaches it; nor the options or the entry modes. Nothing
+ * values, so no offset reaches it; nor the options or the entry modes. Nothing
  * is cut here; the session cuts the slot it lands.
  */
-export function withSlotOffset(slot: Slot, model: RegisteredModel, shares: number): Slot {
+export function withSlotOffset(slot: Slot, model: ModelDeclaration, position: number): Slot {
   const values = new Map(slot.values);
   for (const [quantity, value] of slot.values) {
     const range = axisRangeFor(model, quantity);
     if (range) {
-      values.set(quantity, value + shares * SLOT_OFFSET_SHARE * (range.max - range.min));
+      values.set(quantity, value + position * SLOT_OFFSET_PER_POSITION * (range.max - range.min));
     }
   }
   return changedSlot(slot, { values });
@@ -553,8 +545,8 @@ export function withOption(slot: Slot, option: OptionSpec, value: boolean): Slot
 
 /**
  * The same slot with its temperatures re-expressed under `mode`. Separate →
- * operative stores {@link operativeTemperatureOf}'s answer, the library's `t_o`
- * by the model's own standard as pythermalcomfort's models weigh it (ADR-0002
+ * operative stores {@link operativeTemperatureOf}'s answer, the library's
+ * `operative_tmp` by the model's own standard's method (ADR-0002
  * decision 39), so the slot lands where the chart marked it; operative →
  * separate sets `tdb = tr = operative_tmp`. Lossy and one-way, and a removal
  * from the bag: the two representations never coexist. The
@@ -566,7 +558,7 @@ export function withOption(slot: Slot, option: OptionSpec, value: boolean): Slot
  * different act — it stands the operative entry in for the two temperatures of
  * one library call and changes no entry mode.
  */
-export function withTemperatureMode(slot: Slot, mode: TemperatureMode, model: RegisteredModel): Slot {
+export function withTemperatureMode(slot: Slot, mode: TemperatureMode, model: ModelDeclaration): Slot {
   if (mode === slot.temperature.mode) {
     return slot;
   }
@@ -582,12 +574,12 @@ export function withTemperatureMode(slot: Slot, mode: TemperatureMode, model: Re
 }
 
 /**
- * The same slot with its air speed re-expressed under `mode`. Uncorrected →
- * corrected stores {@link relativeAirSpeedOf}'s answer, the relative air speed
- * the model was given at the slot's own air speed and metabolic rate;
- * corrected → uncorrected stores the temporary library's `v_relative_inverse`,
- * the air speed that gives that relative air speed at the slot's metabolic
- * rate (ADR-0002 decision 54 as revised). Exact both ways to `v_relative`'s
+ * The same slot with its air speed re-expressed under `mode`. Into relative
+ * air speed entry it stores {@link relativeAirSpeedOf}'s answer, the relative
+ * air speed the model was given at the slot's own air speed and metabolic
+ * rate; back into air speed entry, the temporary library's
+ * `v_relative_inverse`, the air speed that gives that relative air speed at
+ * the slot's metabolic rate (ADR-0002 decision 54 as revised). Exact both ways to `v_relative`'s
  * rounding of 0.001: the model is given the same relative air speed before and
  * after, but for an entry finer than that rounding, which comes back rounded. Unlike
  * {@link withTemperatureMode}, which is lossy; the two representations never
@@ -603,7 +595,7 @@ export function withAirSpeedMode(slot: Slot, mode: AirSpeedMode): Slot {
     return slot;
   }
   const values = new Map(slot.values);
-  if (mode === airSpeedMode.corrected) {
+  if (mode === airSpeedMode.relativeAirSpeed) {
     values.set(q.vr, relativeAirSpeedOf(slot));
     values.delete(q.v);
   } else {
@@ -614,18 +606,19 @@ export function withAirSpeedMode(slot: Slot, mode: AirSpeedMode): Slot {
 }
 
 /**
- * The same slot with its clothing re-expressed under `mode`. Uncorrected →
- * corrected stores {@link dynamicClothingOf}'s answer, the dynamic clothing
- * insulation `model` was given at the slot's own values, by its standard's
- * rule; corrected → uncorrected stores the clothing insulation that rule
- * corrects to the entry, by the temporary library's `clo_dynamic_inverse`,
- * which searches the rule itself: ISO 7730's has no closed inverse, and the
+ * The same slot with its clothing re-expressed under `mode`. Into dynamic
+ * clothing entry it stores {@link dynamicClothingInsulationOf}'s answer, the
+ * dynamic clothing insulation `model` was given at the slot's own values, by
+ * its standard's rule; back into clothing insulation entry, the clothing
+ * insulation that rule corrects to the entry, by the rule's inverse in the
+ * temporary library (`clo_dynamic_ashrae_inverse`,
+ * `clo_dynamic_iso_vr_inverse`), which searches the rule itself: ISO 7730's has no closed inverse, and the
  * app writes neither standard's formula (ADR-0002 decision 54 as revised a
  * third time). So `model` is given the same dynamic clothing insulation
  * before and after, as {@link withAirSpeedMode} leaves the relative air
  * speed: exactly for a clothing insulation a person entered, and within the
  * rule's rounding for a dynamic one typed in that no such entry gives (under
- * ASHRAE 55 the inverse moves it by up to 0.001; see `clo_dynamic_inverse`).
+ * ASHRAE 55 the inverse moves it by up to 0.001; see `clo_dynamic_ashrae_inverse`).
  * `model` is the model the slot is on: the rule inverted is the one that
  * corrected the entry, and for a model without the group nothing did, so the
  * number is kept. The two representations never coexist.
@@ -635,13 +628,13 @@ export function withAirSpeedMode(slot: Slot, mode: AirSpeedMode): Slot {
  * The clothing group's {@link ValueEntryGroup.convert}, which says who
  * applies it.
  */
-export function withClothingMode(slot: Slot, mode: ClothingMode, model: RegisteredModel): Slot {
+export function withClothingMode(slot: Slot, mode: ClothingMode, model: ModelDeclaration): Slot {
   if (mode === slot.clothing.mode) {
     return slot;
   }
   const values = new Map(slot.values);
-  if (mode === clothingMode.corrected) {
-    values.set(q.clo_dynamic, dynamicClothingOf(slot, model));
+  if (mode === clothingMode.dynamicClothingInsulation) {
+    values.set(q.clo_dynamic, dynamicClothingInsulationOf(slot, model));
     values.delete(q.clo);
   } else {
     values.set(q.clo, clothingGiving(requireValue(values, q.clo_dynamic), slot, model));
@@ -656,13 +649,13 @@ export function withClothingMode(slot: Slot, mode: ClothingMode, model: Register
  * does. How a chart builder draws a slot kept in other entry modes than the
  * session's (ADR-0002 decision 51).
  */
-export function withEntryModes(slot: Slot, modes: ValueEntryModes, model: RegisteredModel): Slot {
+export function withEntryModes(slot: Slot, modes: ValueEntryModes, model: ModelDeclaration): Slot {
   return valueEntryGroups.reduce((converted, group) => group.convert(converted, group.modeOf(modes), model), slot);
 }
 
 /**
  * The same slot with its humidity entry re-expressed under `mode`, at the
- * slot's {@link resolvedTdb}: the entered dry-bulb temperature, or the
+ * slot's {@link dryBulbTemperatureOf}: the entered dry-bulb temperature, or the
  * operative temperature under operative entry, and at the session's
  * atmospheric pressure. Lossy and one-way, like {@link withTemperatureMode}.
  * Throws for a slot that holds no humidity: there is nothing to re-express.
@@ -671,7 +664,7 @@ export function withHumidityMode(slot: Slot, mode: HumidityMode, atmosphericPres
   if (mode === slot.humidity?.mode) {
     return slot;
   }
-  const tdb = resolvedTdb(slot);
+  const tdb = dryBulbTemperatureOf(slot);
   const humidity = { mode, value: mode.fromRelativeHumidity(relativeHumidityOf(slot, atmosphericPressure), tdb, atmosphericPressure) };
   return changedSlot(slot, { humidity });
 }
@@ -695,8 +688,8 @@ function holdsEntry(slot: Slot, quantity: Quantity): boolean {
  * one. `rh` is walked like any other; a slot keeps humidity apart from its
  * values, so a reader of the values leaves it out.
  */
-export function inputsUnderEntryModes(model: RegisteredModel, modes: ValueEntryModes): { input: DeclaredQuantity; held: Quantity }[] {
-  return inputsOf(model).map((input) => ({ input, held: underEntryModes(input.quantity, modes) }));
+export function declaredQuantitiesUnderEntryModes(model: ModelDeclaration, modes: ValueEntryModes): { input: DeclaredQuantity; held: Quantity }[] {
+  return declaredQuantitiesOf(model).map((input) => ({ input, held: underEntryModes(input.quantity, modes) }));
 }
 
 /**
@@ -716,11 +709,11 @@ export function inputsUnderEntryModes(model: RegisteredModel, modes: ValueEntryM
  *
  * Options are seeded the same way: an option the new model declares and the
  * slot has no value for starts at its default, and every other is kept
- * (ADR-0002 decision 36). The gate never sees them — an option has no range.
+ * (ADR-0002 decision 36). The gate never sees them — an option has no bound.
  */
-export function seedDeclaredDefaults(slot: Slot, model: RegisteredModel): Slot {
+export function seedDeclaredDefaults(slot: Slot, model: ModelDeclaration): Slot {
   const defaults = new Map<Quantity, number>();
-  for (const { input, held } of inputsUnderEntryModes(model, slot)) {
+  for (const { input, held } of declaredQuantitiesUnderEntryModes(model, slot)) {
     // Two declared temperatures stand in one operative entry, so the first of
     // them — the entry mode's own axis — is the one whose default applies.
     if (!holdsEntry(slot, held) && !defaults.has(held)) {
@@ -743,6 +736,6 @@ export function seedDeclaredDefaults(slot: Slot, model: RegisteredModel): Slot {
  * holding no humidity and no option, put through {@link seedDeclaredDefaults}
  * as a switch is, so starting and switching are one rule.
  */
-export function startingSlot(model: RegisteredModel): Slot {
+export function defaultSlot(model: ModelDeclaration): Slot {
   return seedDeclaredDefaults({ values: new Map(), ...defaultEntryModes, options: new Map() }, model);
 }

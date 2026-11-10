@@ -1,9 +1,9 @@
 <!--
-  The Bands panel on Explore (ADR-0002 decision 59): one row per band of a
+  The Bands table on Explore (ADR-0002 decision 59): one row per band of a
   draft of the model's Band list, in the chart's order, each with its label,
   its colour and its upper Edge; the first band is open below, so no row has a
   lower Edge. Every edit goes to the draft, which calls the Band list module;
-  the panel writes nothing itself, and the chart reads nothing of it until the
+  the table writes nothing itself, and the chart reads nothing of it until the
   dialog's Apply (decision 84, rule 6). An Edge box's verdict is whether the
   Edge stays in order: one out of order is refused at its commit, the box
   shows the Edge as it was, and the cell says why until that Edge is next
@@ -11,8 +11,8 @@
   Reset bands, Close and Apply (decision 73, rule 8).
 -->
 <script lang="ts">
-  import { chartInk } from "$lib/core/bandPalette";
-  import type { RegisteredModel } from "$lib/core/modelDeclaration";
+  import { chartColors } from "$lib/core/bandPalette";
+  import type { ModelDeclaration } from "$lib/core/modelDeclaration";
   import { displayUnitFor, labelWithUnit, numberWithUnit, type DisplayUnit } from "$lib/core/units";
   import type { UnitSystem } from "$lib/core/unitSystem";
   import type { BandListDraft, EdgeRefusal } from "$lib/state/bandListDraft.svelte";
@@ -26,7 +26,7 @@
   import NumberInput from "./NumberInput.svelte";
 
   interface Props {
-    model: RegisteredModel;
+    model: ModelDeclaration;
     draft: BandListDraft;
     unitSystem: UnitSystem;
   }
@@ -72,10 +72,10 @@
           </Table.Cell>
           <Table.Cell>
             <Inline gap="2" align="center">
-              <!-- A colour input must hold a colour: a band painted nowhere shows the ground it leaves bare. -->
+              <!-- A colour input must hold a colour: a band painted nowhere shows the plot background it leaves bare. -->
               <Input
                 type="color"
-                value={color ?? chartInk.ground}
+                value={color ?? chartColors.plotBackground}
                 aria-label={copy.bandControl(copy.bandColorColumn, index)}
                 oninput={(event) => draft.setColor(index, event.currentTarget.value)}
               />
@@ -103,7 +103,7 @@
               <NumberInput
                 value={bands.edges[index]}
                 {unit}
-                isLegal={(si) => draft.isInOrder(index, si)}
+                isWithinBounds={(si) => draft.isInOrder(index, si)}
                 ariaLabel={copy.bandControl(edgeColumn, index)}
                 oncommit={(si) => draft.moveEdge(index, si)}
               />

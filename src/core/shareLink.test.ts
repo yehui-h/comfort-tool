@@ -2,12 +2,14 @@
  * The share link's codec at the core seam (ADR-0002 decision 63, rules 1, 6
  * and 10): a written session in, a text out, and back. Every expected value
  * is the app's own object: the written session before the round trip is the
- * one expected after it. No expected text is written out but the prefix, so
- * the encoding may change until the format is frozen (rule 9); a refused text
- * is a valid one changed in one place, read and written again through Node's
- * own raw DEFLATE and URL-safe Base64 (decision 88 rule 1), not the codec's
- * `fflate`, so its edits name rule 1's members and the wire format is checked
- * apart from the library that writes it.
+ * one expected after it. Besides the prefix, one text alone is written out,
+ * {@link GOLDEN_TEXT}, so that a rename that leaks into the format fails a
+ * test; the format may still change before the official release (decision 91
+ * rule 6), and a change that does replaces that text in the same commit. A
+ * refused text is a valid one changed in one place, read and written again
+ * through Node's own raw DEFLATE and URL-safe Base64 (decision 88 rule 1), not
+ * the codec's `fflate`, so its edits name rule 1's members and the wire format
+ * is checked apart from the library that writes it.
  */
 import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
@@ -19,7 +21,7 @@ import { heatIndexRothfusz } from "$lib/models/heatIndexRothfusz";
 import { addEdge, moveEdge, setColor, setLabel } from "./bands";
 import { chartType } from "./chartType";
 import { airSpeedMode, clothingMode, humidityMode, temperatureMode } from "./entryModes";
-import { optionsOf, type RegisteredModel } from "./modelDeclaration";
+import { classifierOf, optionsOf, type ModelDeclaration } from "./modelDeclaration";
 import { rehearseSwitch } from "./modelSwitch";
 import { page, pagesOf, paintsBandsOn, type Page } from "./page";
 import { DEFAULT_ATMOSPHERIC_PRESSURE, quantities, type Quantity } from "./quantities";
@@ -27,7 +29,7 @@ import { narrowedToPage, toText, toDecodedSession } from "./shareLink";
 import {
   enteredQuantities,
   isHumidityQuantity,
-  startingSlot,
+  defaultSlot,
   withAirSpeedMode,
   withClothingMode,
   withEnteredValues,
@@ -37,12 +39,12 @@ import {
   type Slot,
 } from "./slot";
 import { unitSystem } from "./unitSystem";
-import { startingChartSettings, startingSession, type ChartSettings, type WrittenSession } from "./writtenSession";
+import { defaultChartSettings, defaultSession, type ChartSettings, type WrittenSession } from "./writtenSession";
 
 const q = quantities;
 const PREFIX = "v1.";
-/** A pressure below the bound's 30 000 Pa (ADR-0002 decision 49). */
-const PRESSURE_OUT_OF_RANGE = 20000;
+/** An atmospheric pressure below the bound's 30 000 Pa (ADR-0002 decision 49). */
+const ATMOSPHERIC_PRESSURE_OUT_OF_RANGE = 20000;
 
 /** `session` written out and read back, with the registry the app has. */
 function roundTrip(session: WrittenSession): WrittenSession | undefined {
@@ -50,9 +52,9 @@ function roundTrip(session: WrittenSession): WrittenSession | undefined {
 }
 
 /** `slot` on `model` in every entry group's other mode: operative, relative air speed, dynamic clothing, dew point. */
-function inOtherEntryModes(slot: Slot, model: RegisteredModel): Slot {
+function inOtherEntryModes(slot: Slot, model: ModelDeclaration): Slot {
   const operative = withTemperatureMode(slot, temperatureMode.operative, model);
-  const corrected = withClothingMode(withAirSpeedMode(operative, airSpeedMode.corrected), clothingMode.corrected, model);
+  const corrected = withClothingMode(withAirSpeedMode(operative, airSpeedMode.relativeAirSpeed), clothingMode.dynamicClothingInsulation, model);
   return withHumidityMode(corrected, humidityMode.dewPoint, DEFAULT_ATMOSPHERIC_PRESSURE);
 }
 
@@ -62,32 +64,32 @@ const FAR_LABEL = "很冷 ❄️";
 /**
  * A session on PMV (ASHRAE 55) with three slots, slot 3 held and disabled,
  * Compare on, every entry group off its default mode, an option ticked, a
- * value of many decimals, a value and the pressure out of range, IP, and
- * edited chart settings on PMV (ASHRAE 55) and PMV (ISO 7730), the second
- * with a label outside Latin-1 and a band with no colour, beside Adaptive's
- * defaults.
+ * value of many decimals, a value and the atmospheric pressure out of range,
+ * IP, and edited chart settings on PMV (ASHRAE 55) and PMV (ISO 7730), the
+ * second with a label outside Latin-1 and a band with no colour, beside
+ * Adaptive's defaults.
  */
 function editedSession(): WrittenSession {
   const model = pmvPpdAshrae;
   const [airSpeedControl] = optionsOf(model);
-  const first = withEnteredValues(inOtherEntryModes(startingSlot(model), model), new Map([[q.met, 1.2345678901234567]]));
+  const first = withEnteredValues(inOtherEntryModes(defaultSlot(model), model), new Map([[q.met, 1.2345678901234567]]));
   // Past PMV (ASHRAE 55)'s 30 °C, as a written session may carry it in slot 2.
   const second = withOption(withEnteredValues(first, new Map([[q.operative_tmp, 60]])), airSpeedControl, true);
   const third = withEnteredValues(first, new Map([[q.met, 1.4]]));
-  const ashraeBands = startingChartSettings(pmvPpdAshrae).bands;
-  const isoBands = startingChartSettings(pmvPpdIso).bands;
+  const ashraeBands = defaultChartSettings(pmvPpdAshrae).bands;
+  const isoBands = defaultChartSettings(pmvPpdIso).bands;
   if (!ashraeBands || !isoBands) {
     throw new Error("Both PMV models scan");
   }
-  const charts = new Map<RegisteredModel, ChartSettings>([
+  const charts = new Map<ModelDeclaration, ChartSettings>([
     [pmvPpdAshrae, { type: chartType.dynamic, axes: { x: q.tdb, y: q.rh }, bands: moveEdge(setColor(ashraeBands, 1, "#00FF7f"), 3, 0.4) }],
-    [pmvPpdIso, { type: chartType.dynamic, axes: { x: q.met, y: q.v }, bands: setColor(setLabel(addEdge(isoBands, 2, pmvPpdIso.scan.classifier), 0, FAR_LABEL), 4, undefined) }],
-    [adaptiveAshrae, startingChartSettings(adaptiveAshrae)],
+    [pmvPpdIso, { type: chartType.dynamic, axes: { x: q.met, y: q.v }, bands: setColor(setLabel(addEdge(isoBands, 2, classifierOf(pmvPpdIso.info, pmvPpdIso.scan.bands)), 0, FAR_LABEL), 4, undefined) }],
+    [adaptiveAshrae, defaultChartSettings(adaptiveAshrae)],
   ]);
   return {
     model,
     unitSystem: unitSystem.ip,
-    atmosphericPressure: PRESSURE_OUT_OF_RANGE,
+    atmosphericPressure: ATMOSPHERIC_PRESSURE_OUT_OF_RANGE,
     compare: true,
     enabled: [true, false],
     slots: [first, second, third],
@@ -95,14 +97,23 @@ function editedSession(): WrittenSession {
   };
 }
 
+/**
+ * {@link editedSession} as the codec wrote it at `383aa03`, before the naming
+ * rename (`.scratch/naming/`), its every member of rule 1's JSON exercised. Not
+ * written by hand: an edit to the session or the format writes it again, with
+ * its commit named here.
+ */
+const GOLDEN_TEXT =
+  "v1.zVLNitswEH6VZfZqL5azdhxfF5Ze2ksOPYTFyJYSC2RLyHK6JuRWSm99gj5He-rDFPbcV-iMknT7syVQSmkC9sw3I883n74ddEZIDSXYbltZKyo-tI5LiGDslV9Og5cdVpVFxFbcY5Im-IugMZ3lTkLp3SgjkD2vtRRQrkK-5nqQdwR7Nz3HGQOUO8CPWem4H-kcmBCrLU3jyi2tpPPgpA5ojFg8BBCnaeNb1W-wLqaed6qJT1Cs-mGkI6bHxnbslFB-okb5KrZG9R72EQzYjRxWO9hyPR7odNJDya7S2XWWz4tFwg5R9Mis8p3FjbMItg7K5IrNApXqyIEgrOGgKgw6tLPZVZGxrJhli0WxYHnOcL6xRDCM_UlqRHDTsGjVGNTL4H0E_fb7ffQnfHO8nn_Mly79N3Sv_yc90ZJNyx1Z4amDfrLkzBMd9OX9YZd7RL2oESFnuZYsVfNehKIUG-paxSmyjxk9aI8EV6eEUJbgZM1rqakRbowmV98Y5BbBUqtN6_V0ccxfyNE7_kPlJXcd5sfXM-OBNjHauPC9yxRl4UT4Mklub-drigST2TqhaD2nf4iEqJsQyXXB85SiOmVFWsMdXt83SdRgzupB93vQY3tODnZSBJV4WpGHT28f3ny4-Pz-9ZeP7x6l-dvq5HO-aFCdftT6O4mO6Tl1uOBoO7TxL445VQA99hU";
+
 describe("toText and toDecodedSession", () => {
   it("are the identity on every registered model's defaults", () => {
     for (const model of registeredModels) {
-      expect(roundTrip(startingSession(model)), model.info.label).toEqual(startingSession(model));
+      expect(roundTrip(defaultSession(model)), model.info.label).toEqual(defaultSession(model));
     }
   });
 
-  it("are the identity on an edited session: three slots, every entry group's other mode, an option, values and the pressure out of range, two models' edited Band lists", () => {
+  it("are the identity on an edited session: three slots, every entry group's other mode, an option, values and the atmospheric pressure out of range, two models' edited Band lists", () => {
     const session = editedSession();
     const back = roundTrip(session);
     expect(back).toEqual(session);
@@ -111,12 +122,17 @@ describe("toText and toDecodedSession", () => {
     expect(back?.charts.get(pmvPpdIso)?.bands?.colors[4]).toBeUndefined();
   });
 
-  it("are the identity on a session in every entry group's other mode that has been on every registered model, each on its starting chart", () => {
+  it("read a text written before the naming rename as the edited session, which writes that text back byte for byte", () => {
+    expect(toDecodedSession(GOLDEN_TEXT, registeredModels)).toEqual(editedSession());
+    expect(toText(editedSession(), registeredModels)).toBe(GOLDEN_TEXT);
+  });
+
+  it("are the identity on a session in every entry group's other mode that has been on every registered model, each on its default chart", () => {
     const session = editedSession();
     const charts = new Map(session.charts);
     for (const model of registeredModels) {
       if (!charts.has(model)) {
-        charts.set(model, startingChartSettings(model));
+        charts.set(model, defaultChartSettings(model));
       }
     }
     expect(roundTrip({ ...session, charts })).toEqual({ ...session, charts });
@@ -135,7 +151,7 @@ describe("toText and toDecodedSession", () => {
   });
 
   it("write a text that starts with the prefix and holds only URL-safe characters", () => {
-    for (const session of [editedSession(), ...registeredModels.map(startingSession)]) {
+    for (const session of [editedSession(), ...registeredModels.map(defaultSession)]) {
       const text = toText(session, registeredModels);
       expect(text.startsWith(PREFIX)).toBe(true);
       expect(text.slice(PREFIX.length)).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -230,7 +246,7 @@ describe("toDecodedSession", () => {
     expect(read(changed(valid, ["enabled"], [true]))).toBeUndefined();
     expect(read(changed(valid, ["slots"], [jsonOf(valid)]))).toBeUndefined();
     expect(read(changed(valid, ["slots", 0, "options"], undefined))).toBeUndefined();
-    // A dynamic chart's entry without its axes (B19), and a chart entry without its type.
+    // A dynamic chart's `charts` member without its axes (B19), and a `charts` member without its type.
     expect(read(changed(valid, ["charts", ashrae, "axes"], undefined))).toBeUndefined();
     expect(read(changed(valid, ["charts", ashrae, "type"], undefined))).toBeUndefined();
     expect(read(changed(valid, ["charts", ashrae, "bands", "colors", 0], 5))).toBeUndefined();
@@ -271,17 +287,17 @@ describe("toDecodedSession", () => {
     expect(read(changed(changed(valid, ["slots", 2], null), ["enabled", 1], true))).toBeUndefined();
   });
 
-  it("takes a disabled slot nothing, an entered value outside its bound and a pressure out of range, as written", () => {
+  it("takes a disabled slot nothing, an entered value outside its bound and an atmospheric pressure out of range, as written", () => {
     expect(read(changed(valid, ["slots", 2], null))?.slots[2]).toBeNull();
     expect(read(changed(valid, [...values, q.met.key], 100))?.slots[0].values.get(q.met)).toBe(100);
     expect(read(changed(valid, [q.p_atm.key], 1))?.atmosphericPressure).toBe(1);
   });
 
-  it("takes a scanning model's chart entry without a Band list, a link copied on the Standard page (rule 5), and starts it on the classifier's list", () => {
+  it("takes a scanning model's `charts` member without a Band list, a link copied on the Standard page (rule 5), and starts it on the classifier's list", () => {
     const decoded = read(changed(valid, ["charts", ashrae, "bands"], undefined));
     expect(decoded?.charts.get(pmvPpdAshrae)).toEqual({
       ...editedSession().charts.get(pmvPpdAshrae),
-      bands: startingChartSettings(pmvPpdAshrae).bands,
+      bands: defaultChartSettings(pmvPpdAshrae).bands,
     });
   });
 
@@ -322,7 +338,7 @@ describe("toDecodedSession", () => {
     }
   });
 
-  it("refuses a text without a chart entry for its own model", () => {
+  it("refuses a text without a `charts` member for its own model", () => {
     expect(read(changed(valid, ["charts", ashrae], undefined))).toBeUndefined();
   });
 });
@@ -339,14 +355,14 @@ describe("narrowedToPage", () => {
     return { ...written, slots: [seeded(one), two && seeded(two), three && seeded(three)] };
   };
   /** `session` holding Adaptive's value, moved to `model` as a switch moves it, with `model`'s chart settings. */
-  const switchedTo = (model: RegisteredModel): WrittenSession => {
+  const switchedTo = (model: ModelDeclaration): WrittenSession => {
     const switched = (slot: Slot) => rehearseSwitch(slot, pmvPpdAshrae, model, session.atmosphericPressure).slot;
     const [one, two, three] = holdingAdaptive(session).slots;
     return {
       ...session,
       model,
       slots: [switched(one), two && switched(two), three && switched(three)],
-      charts: new Map([...session.charts, [model, session.charts.get(model) ?? startingChartSettings(model)]]),
+      charts: new Map([...session.charts, [model, session.charts.get(model) ?? defaultChartSettings(model)]]),
     };
   };
 
@@ -414,13 +430,13 @@ describe("narrowedToPage", () => {
   const readBack = (narrowed: WrittenSession, onPage: Page): WrittenSession =>
     paintsBandsOn(onPage)
       ? narrowed
-      : { ...narrowed, charts: new Map([...narrowed.charts].map(([model, settings]) => [model, { ...settings, bands: startingChartSettings(model).bands }])) };
+      : { ...narrowed, charts: new Map([...narrowed.charts].map(([model, settings]) => [model, { ...settings, bands: defaultChartSettings(model).bands }])) };
 
   it("writes a text that reads back as the narrowed session for every registered model on each of its pages, a Band list it does not carry on the classifier's", () => {
     for (const model of registeredModels) {
       for (const onPage of pagesOf(model).filter((candidate) => candidate !== page.timeSeries)) {
         const narrowed = narrowedToPage(switchedTo(model), onPage);
-        expect(roundTrip(narrowed), `${model.info.label} on ${onPage.title}`).toEqual(readBack(narrowed, onPage));
+        expect(roundTrip(narrowed), `${model.info.label} on ${onPage.label}`).toEqual(readBack(narrowed, onPage));
       }
     }
     // Heat Index has no Standard page: its link is Explore's alone.

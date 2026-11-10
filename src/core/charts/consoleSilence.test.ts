@@ -8,13 +8,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { registeredModels } from "$lib/models";
 import { pmvPpdIso } from "$lib/models/pmvPpdIso";
-import { startingSlot } from "$lib/core/slot";
+import { defaultSlot } from "$lib/core/slot";
 import {
   adaptiveChartOf,
   dynamicChartOf,
   psychrometricChartOf,
-  type RegisteredModel,
-  type Values,
+  type LibraryInputs,
+  type ModelDeclaration,
 } from "$lib/core/modelDeclaration";
 import { adaptiveSpec } from "./adaptiveChart";
 import { chartRequestFor, chartRequestForSlots } from "./chartTestRequests";
@@ -29,10 +29,10 @@ const consoleMethods = ["warn", "log", "error"] as const;
  * slot and of three compared ones. Each write reads
  * `console.<method>: <args>`.
  */
-function consoleWritesWhileDrawing(model: RegisteredModel): string[] {
+function consoleWritesWhileDrawing(model: ModelDeclaration): string[] {
   const spies = consoleMethods.map((method) => [method, vi.spyOn(console, method).mockImplementation(() => undefined)] as const);
   try {
-    const slot = startingSlot(model);
+    const slot = defaultSlot(model);
     for (const request of [chartRequestFor(model, slot), chartRequestForSlots(model, [slot, slot, slot])]) {
       const dynamic = dynamicChartOf(model);
       if (dynamic) {
@@ -65,14 +65,14 @@ describe("drawing a model's charts", () => {
     let logged = false;
     const logsOnce = {
       ...pmvPpdIso,
-      run: (values: Values) => {
+      run: (inputs: LibraryInputs) => {
         if (!logged) {
           logged = true;
           console.warn("cooling effect assumed 0");
         }
-        return pmvPpdIso.run(values);
+        return pmvPpdIso.run(inputs);
       },
-    } satisfies RegisteredModel;
+    } satisfies ModelDeclaration;
     expect(consoleWritesWhileDrawing(logsOnce)).toEqual(["console.warn: cooling effect assumed 0"]);
   });
 });

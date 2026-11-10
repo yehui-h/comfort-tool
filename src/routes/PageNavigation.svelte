@@ -16,7 +16,7 @@
   import { copy } from "$lib/text/copy";
   import NavGroup, { type InAppItem, type NavItem } from "$lib/ui/layout/NavGroup.svelte";
   import * as Sidebar from "$lib/ui/primitives/sidebar";
-  import { inAppLinkTo } from "./inAppSwitch";
+  import { inAppLinkTo } from "./inAppNavigation";
   import { ariaCurrentOf, standardLinks } from "./navigation";
 
   interface Props {
@@ -34,14 +34,14 @@
     return { label, current: ariaCurrentOf(target, session), ...inAppLinkTo(target, onfollow) };
   }
 
-  const standardItems = $derived(standardLinks().map(({ standard, address }) => itemTo(address, standard.name)));
+  const standardItems = $derived(standardLinks().map(({ standard, address }) => itemTo(address, standard.label)));
   const toolItems: NavItem[] = $derived([
-    itemTo({ page: page.explore, model: session.model }, page.explore.title),
+    itemTo({ page: page.explore, model: session.model }, page.explore.label),
     ...(sidebar.isMobile ? [{ label: copy.documentation, href: copy.documentationAddress, leavesApp: true }] : []),
   ]);
 </script>
 
 <nav>
-  <NavGroup label={page.standard.title} items={standardItems} />
+  <NavGroup label={page.standard.label} items={standardItems} />
   <NavGroup label={copy.tools} items={toolItems} />
 </nav>

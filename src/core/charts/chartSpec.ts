@@ -16,23 +16,23 @@
 export type HoverMode = "off" | "field";
 
 /**
- * What the pointer reads at one cell of a field, one line per entry, already
+ * What the pointer reads at one cell of a field, one line per reading, already
  * formatted: each axis value as `Label: value unit`, then whatever that chart
  * reads there. The chart component only lays the lines out.
  */
 export type HoverReadout = readonly string[];
 
-/** How a legend entry is drawn. */
+/** How a legend item is drawn. */
 export type Swatch = "fill" | "line" | "marker";
 
-export interface LegendEntry {
+export interface LegendItem {
   readonly label: string;
   readonly swatch: Swatch;
   readonly color: string;
 }
 
 export interface AxisSpec {
-  /** Already includes the unit symbol; the name itself comes from `Quantity.label`. */
+  /** Already includes the unit symbol; the label itself comes from `Quantity.label`. */
   readonly title: string;
   readonly range: readonly [number, number];
 }
@@ -67,7 +67,7 @@ export interface PathTrace {
   readonly fill?: string;
   readonly hover: HoverMode;
   /**
-   * The path's name (a zone's, a Band's or an isoline's), handed to Plotly as
+   * The path's label (a zone's, a Band's or an isoline's), handed to Plotly as
    * its trace name; no path takes the pointer today, so nothing shows it.
    */
   readonly label?: string;
@@ -121,7 +121,7 @@ export interface ChartSpec {
   readonly traces: readonly Trace[];
   readonly layout: { readonly x: AxisSpec; readonly y: YAxisSpec };
   /** The chart's one legend (ADR §4.4). Plotly's own is switched off. */
-  readonly legend: readonly LegendEntry[];
+  readonly legend: readonly LegendItem[];
   readonly annotations: readonly Annotation[];
   /** The lines under the plot, one per slot whose Comfort zones are all empty, in slot order; an Image draws none. */
   readonly notes: readonly ChartNote[];
