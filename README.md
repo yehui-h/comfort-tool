@@ -45,9 +45,12 @@ file plus one registry line once its model is ported to the library.
 - **Node.js** ≥ 24 (`engines` in `package.json`, `.nvmrc`)
 - **npm** (ships with Node)
 
-`jsthermalcomfort` resolves to `../jsthermalcomfort`, a local checkout of the main
-repository (on the branch carrying the humidity-inverses PR until it merges). The app
-consumes its build output `lib/esm/`, so run `npm run build` there after changing it.
+`jsthermalcomfort` is the published package at the exact version `package.json`
+names, a `2.0.0-next.N` prerelease (ADR-0002 decision 92). `npm install` installs
+it, and the app imports that package's `lib/esm/`. A checkout at
+`../jsthermalcomfort` is for trying a change before it is published. A link to
+that checkout is never committed. After publication, move the version with
+`npm install jsthermalcomfort@<version> --save-exact`.
 
 ## Development
 
